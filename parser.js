@@ -39,9 +39,11 @@ class Round {
 }
 
 class Point {
-  constructor(hits) {
+  constructor(hits, isSender, reason) {
     this.hits = hits
-    this.didIWin = false
+    this.isSender = isSender
+    this.didIWin = (reason.startsWith('ReceiverLoss') && isSender) || (reason.startsWith('SenderLoss') && !isSender)
+    this.lostBy = reason
   }
 }
 
@@ -108,11 +110,16 @@ const pointParser = (point) => {
 }
 
 const roundParser = (round) => {
-  const points = round.split(/ProcessGameEvent result of eleven collision:[^C]/)
+  const points = round.split(/writing: potential point ender:reason/)
   const allPoints =  points.map(point => {
     const hits = pointParser(point)
-    if (hits)
-      return new Point(hits)
+    const collisionMatch = point.match(/ProcessGameEvent result of eleven collision:.*/g)
+    if (hits && collisionMatch) {
+      const reasonMatch = collisionMatch.slice(-1)[0].match(/ProcessGameEvent result of eleven collision:(.*?) /)
+
+      const isSender = !!point.match(/MPMatch]Received ball toss from opponent/)
+      return new Point(hits, isSender, reasonMatch[1])
+    }
   }).filter(x => x)
   return new Round(allPoints)
 }
