@@ -1,32 +1,55 @@
 const fs = require('fs')
 
+class PlayerSessions {
+  constructor(sessions) {
+    this.sessions = sessions
+  }
+
+  forEach(func) {
+    return this.sessions.forEach(func)
+  }
+}
+
+class PlaySession {
+  constructor(date, matches) {
+    this.date = date
+    this.matches = matches
+  }
+}
+
 class Match {
-  constructor(opponent) {
+  constructor(opponent, rounds) {
     this.opponent = opponent
-    this.rounds = []
+    this.rounds = rounds
   }
 }
 
 class Round {
-  constructor() {
-    this.points = []
+  constructor(points) {
+    this.points = points
   }
 }
 
 class Point {
-  constructor() {
-    this.hits = []
+  constructor(hits) {
+    this.hits = hits
     this.didIWin = false
   }
 }
 
 class Hit {
-  constructor(metersPerSecond, revolutions) {
-    this.metersPerSecond = metersPerSecond
-    this.revolutions = revolutions
+  constructor(vx, vy, vz, rx, ry, rz) {
+    this.vx = vx
+    this.vy = vy
+    this.vz = vz
+    this.rx = rx
+    this.ry = ry
+    this.rz = rz
+
+    this.metersPerSecond = magnitude(vx, vy, vz)
+    this.revolutions = magnitude(rx, ry, rz)
   }
 }
-
 
 const magnitude = (a, b, c) => {
   return Math.sqrt(Math.abs(a) ** 2 + Math.abs(b) ** 2 + Math.abs(c) ** 2)
@@ -56,23 +79,95 @@ const velocity = (line) => {
   }
 }
 
-const files = fs.readdirSync(__dirname + '/logs/')
-files.forEach((file) => {
-  console.log(file)
+const pointParser = (point) => {
+  const matches = point.match(/postCollisionState:.*vel:\((-?\d+.\d+),(-?\d+.\d+),(-?\d+.\d+)\).*rRate:\((-?\d+.\d+),(-?\d+.\d+),(-?\d+.\d+)\)/g)
+  if (!matches)
+    return
 
-  const lines = fs.readFileSync(__dirname + '/logs/' + file, 'utf8').split('\n')
-  lines.forEach((line, i) => {
-    const metersPerSec = velocity(line)
-    const revsPerSec = revolutions(line)
-    if (revsPerSec) {
-      new Hit(metersPerSec, revsPerSec)
-    }
+  return matches.map(match => {
+    const vel = match.match(/vel:\((-?\d+.\d+),(-?\d+.\d+),(-?\d+.\d+)\)/)
+    const rrate = match.match(/rRate:\((-?\d+.\d+),(-?\d+.\d+),(-?\d+.\d+)\)/)
 
-    if (line.match(/\[Activity\]Sending MP match prefab activity/)) {
-      const nextLine = lines[i + 1]
-      console.log(JSON.parse(nextLine)["PlayerNames"])
-    }
+    return new Hit(
+      parseFloat(vel[1]),
+      parseFloat(vel[2]),
+      parseFloat(vel[3]),
+      parseFloat(rrate[1]) / 360.0,
+      parseFloat(rrate[2]) / 360.0,
+      parseFloat(rrate[3]) / 360.0,
+    )
+  })
+}
 
+const roundParser = (round) => {
+  const points = round.split(/ProcessGameEvent result of eleven collision:[^C]/)
+  const allPoints =  points.map(point => {
+    const hits = pointParser(point)
+    if (hits)
+      return new Point(hits)
+  }).filter(x => x)
+  return new Round(allPoints)
+}
+
+const gameParser = (game, username) => {
+  const match = game.match(/^(\{"PlayerIds":.*)$/mg)
+  const playerNames = JSON.parse(match[0])["PlayerNames"]
+
+  let isFirst = true
+  let opponent
+  if (playerNames[0] === username) {
+    opponent = playerNames[1]
+    isFirst = false
+  } else {
+    opponent = playerNames[0]
+  }
+
+  let roundLines = game.split(/"RoundScores":\[\[\d+,\d+\],\[0,0\]\]/, 2)
+  if (roundLines[1]) {
+    const moreRounds = roundLines[1].split(/"RoundScores":\[\[\d+,\d+\],\[\d+,\d+\],\[0,0\]\]/, 2)
+    roundLines = [roundLines[0], ...moreRounds]
+  }
+
+  const rounds = roundLines.map(round => {
+    return roundParser(round)
   })
 
-})
+  return new Match(opponent, rounds)
+}
+
+const allFileParser = () => {
+  const files = fs.readdirSync(__dirname + '/logs/')
+  const allPlaySessions = files.map((file) => {
+    console.log(file)
+
+    const contents = fs.readFileSync(__dirname + '/logs/' + file, 'utf8')
+    const userNameMatch = contents.match(/Properly authenticated (\w+)/)
+    if (!userNameMatch)
+      return
+    const username = userNameMatch[1]
+
+    const gamesLines = contents.split('Sending MP match prefab activity')
+    gamesLines.shift()
+    const games = gamesLines.map((game) => {
+      return gameParser(game, username)
+      // const metersPerSec = velocity(line)
+      // const revsPerSec = revolutions(line)
+      // if (revsPerSec) {
+      //   new Hit(metersPerSec, revsPerSec)
+      // }
+
+      // if (line.match(/\[Activity\]Sending MP match prefab activity/)) {
+      //   const nextLine = lines[i + 1]
+      //   console.log(JSON.parse(nextLine)["PlayerNames"])
+      // }
+    })
+
+    const date = Date.parse(file.replace('ALL-', '').replace('.log', '').replace(/^(\d+)\.(\d+)\./g, '$1/$1/', 2).replace('.', ' ').replace('.', ':').replace('.', ':').replace('.', ' '))
+    return new PlaySession(date, games)
+  })
+  return new PlayerSessions(allPlaySessions.filter(x => x))
+}
+
+module.exports = {
+  allFileParser
+}
