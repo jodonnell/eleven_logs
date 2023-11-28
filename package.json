@@ -1,0 +1,14 @@
+{
+  "name": "tt_logs",
+  "version": "1.0.0",
+  "description": "",
+  "main": "parser.js",
+  "scripts": {
+    "test": "jest ./test/"
+  },
+  "author": "Jacob",
+  "license": "ISC",
+  "dependencies": {
+    "jest": "^29.7.0"
+  }
+}

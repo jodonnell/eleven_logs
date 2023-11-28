@@ -8,7 +8,7 @@ const average = (array) => {
   return total / array.length;
 }
 
-const sessions = parser.allFileParser()
+const sessions = parser.allFileParser('/logs/')
 
 const allHits = []
 sessions.sessions.forEach(s => s.allHits().forEach(h => allHits.push(h.metersPerSecond)))
@@ -17,3 +17,5 @@ console.log(average(allHits))
 const lastWeek = []
 sessions.lastWeek().forEach(s => s.allHits().forEach(h => lastWeek.push(h.metersPerSecond)))
 console.log(average(lastWeek))
+
+console.log(sessions.sessions.map(s => s.matches))

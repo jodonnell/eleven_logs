@@ -39,10 +39,10 @@ class Round {
 }
 
 class Point {
-  constructor(hits, isSender, reason) {
+  constructor(hits, isServer, reason) {
     this.hits = hits
-    this.isSender = isSender
-    this.didIWin = (reason.startsWith('ReceiverLoss') && isSender) || (reason.startsWith('SenderLoss') && !isSender)
+    this.isServer = isServer
+    this.didIWin = (reason.startsWith('ReceiverLoss') && isServer) || (reason.startsWith('SenderLoss') && !isServer)
     this.lostBy = reason
   }
 }
@@ -117,8 +117,8 @@ const roundParser = (round) => {
     if (hits && collisionMatch) {
       const reasonMatch = collisionMatch.slice(-1)[0].match(/ProcessGameEvent result of eleven collision:(.*?) /)
 
-      const isSender = !!point.match(/MPMatch]Received ball toss from opponent/)
-      return new Point(hits, isSender, reasonMatch[1])
+      const isServer = !!point.match(/MPMatch]Received ball toss from opponent/)
+      return new Point(hits, isServer, reasonMatch[1])
     }
   }).filter(x => x)
   return new Round(allPoints)
@@ -150,12 +150,12 @@ const gameParser = (game, username) => {
   return new Match(opponent, rounds)
 }
 
-const allFileParser = () => {
-  const files = fs.readdirSync(__dirname + '/logs/')
+const allFileParser = (dir) => {
+  const files = fs.readdirSync(__dirname + dir)
   const allPlaySessions = files.map((file) => {
     console.log(file)
 
-    const contents = fs.readFileSync(__dirname + '/logs/' + file, 'utf8')
+    const contents = fs.readFileSync(__dirname + dir + file, 'utf8')
     const userNameMatch = contents.match(/Properly authenticated (\w+)/)
     if (!userNameMatch)
       return
