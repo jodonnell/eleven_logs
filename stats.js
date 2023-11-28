@@ -1,16 +1,19 @@
 const parser = require('./parser')
 
+const average = (array) => {
+  let total = 0;
+  for(let i = 0; i < array.length; i++) {
+    total += array[i];
+  }
+  return total / array.length;
+}
+
 const sessions = parser.allFileParser()
 
 const allHits = []
+sessions.sessions.forEach(s => s.allHits().forEach(h => allHits.push(h.metersPerSecond)))
+console.log(average(allHits))
 
-console.log(sessions.forEach(x => x))
-
-sessions.forEach(s => s.matches.forEach(m => m.rounds.forEach(r => r.points.forEach(p => p.hits.forEach(h => allHits.push(h.metersPerSecond))))))
-
-var total = 0;
-for(var i = 0; i < allHits.length; i++) {
-    total += allHits[i];
-}
-var avg = total / allHits.length;
-console.log(avg)
+const lastWeek = []
+sessions.lastWeek().forEach(s => s.allHits().forEach(h => lastWeek.push(h.metersPerSecond)))
+console.log(average(lastWeek))

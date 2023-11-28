@@ -5,8 +5,10 @@ class PlayerSessions {
     this.sessions = sessions
   }
 
-  forEach(func) {
-    return this.sessions.forEach(func)
+  lastWeek() {
+    const currentDate = new Date()
+    const lastWeekDate = new Date(currentDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+    return this.sessions.filter(s => s.date > lastWeekDate)
   }
 }
 
@@ -14,6 +16,12 @@ class PlaySession {
   constructor(date, matches) {
     this.date = date
     this.matches = matches
+  }
+
+  allHits() {
+    const hits = []
+    this.matches.forEach(m => m.rounds.forEach(r => r.points.forEach(p => p.hits.forEach(h => hits.push(h)))))
+    return hits
   }
 }
 
@@ -162,7 +170,8 @@ const allFileParser = () => {
       // }
     })
 
-    const date = Date.parse(file.replace('ALL-', '').replace('.log', '').replace(/^(\d+)\.(\d+)\./g, '$1/$1/', 2).replace('.', ' ').replace('.', ':').replace('.', ':').replace('.', ' '))
+    const stringDate = file.replace('ALL-', '').replace('.log', '').replace('.', '/').replace('.', '/').replace('.', ' ').replace('.', ':').replace('.', ':').replace('.', ' ')
+    const date = new Date(stringDate)
     return new PlaySession(date, games)
   })
   return new PlayerSessions(allPlaySessions.filter(x => x))
