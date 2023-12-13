@@ -39,10 +39,10 @@ class Round {
 }
 
 class Point {
-  constructor(hits, isServer, reason) {
+  constructor(hits, reason) {
     this.hits = hits
-    this.isServer = isServer
-    this.didIWin = (reason.startsWith('ReceiverLoss') && isServer) || (reason.startsWith('SenderLoss') && !isServer)
+    this.isServer = null
+    this.didIWin = null
     this.lostBy = reason
   }
 }
@@ -109,18 +109,53 @@ const pointParser = (point) => {
   })
 }
 
-const roundParser = (round) => {
+const addPointInfo = (pointInfo, allPoints, username) => {
+  const playerId = pointInfo[0]["PlayerNames"][0] === "username" ? pointInfo[0]["PlayerIds"][0] : pointInfo[0]["PlayerIds"][1]
+
+  let totalScore = 0
+  pointInfo = pointInfo.filter(p => {
+    const scores = p["RoundScores"].slice(-1)[0]
+    const equal = totalScore === (scores[0] + scores[1])
+    if (equal)
+      totalScore++
+    return equal
+  })
+
+  for (let i = 0; i < allPoints.length; i++) {
+    if (!pointInfo[i])
+      allPoints[i].isServer = null
+    else {
+      allPoints[i].isServer = parseInt(pointInfo[i]["CurrentServer"]) === playerId
+      allPoints[i].score = pointInfo[i]["RoundScores"]
+    }
+  }
+
+}
+
+const roundParser = (round, username) => {
   const points = round.split(/writing: potential point ender:reason/)
   const allPoints =  points.map(point => {
     const hits = pointParser(point)
     const collisionMatch = point.match(/ProcessGameEvent result of eleven collision:.*/g)
     if (hits && collisionMatch) {
       const reasonMatch = collisionMatch.slice(-1)[0].match(/ProcessGameEvent result of eleven collision:(.*?) /)
-
-      const isServer = !!point.match(/MPMatch]Received ball toss from opponent/)
-      return new Point(hits, isServer, reasonMatch[1])
+      return new Point(hits, reasonMatch[1])
     }
   }).filter(x => x)
+
+  const pointInfoMatch = round.match(/Snapshot reads:? \{"PlayerIds".*\}/g)
+  // broken round in ALL-11.17.2023.7.09.47.PM.log
+
+
+  //if (!pointInfoMatch)
+    //return null
+  const pointInfo = pointInfoMatch.map(s => JSON.parse(s.replace(/Snapshot reads:? /, '')))
+  if (allPoints.length > pointInfo.length) {
+    console.log('uhoh')
+    return null
+  }
+  addPointInfo(pointInfo, allPoints, username)
+
   return new Round(allPoints)
 }
 
@@ -144,8 +179,8 @@ const gameParser = (game, username) => {
   }
 
   const rounds = roundLines.map(round => {
-    return roundParser(round)
-  })
+    return roundParser(round, username)
+  }).filter(x => x)
 
   return new Match(opponent, rounds)
 }
