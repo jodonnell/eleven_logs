@@ -39,11 +39,10 @@ class Round {
 }
 
 class Point {
-  constructor(hits, reason) {
+  constructor(hits) {
     this.hits = hits
     this.isServer = null
     this.didIWin = null
-    this.lostBy = reason
   }
 }
 
@@ -133,16 +132,19 @@ const addPointInfo = (pointInfo, allPoints, username) => {
 }
 
 const roundParser = (round, username) => {
-  const points = round.split(/writing: potential point ender:reason/)
+  const points = round.split(/"PongGameState":"PrePoint"/)
+  points.shift()
+  console.log('NUM POINTS', points.length)
+
   const allPoints =  points.map(point => {
     const hits = pointParser(point)
-    const collisionMatch = point.match(/ProcessGameEvent result of eleven collision:.*/g)
-    if (hits && collisionMatch) {
-      const reasonMatch = collisionMatch.slice(-1)[0].match(/ProcessGameEvent result of eleven collision:(.*?) /)
-      return new Point(hits, reasonMatch[1])
+    if (hits) {
+      return new Point(hits)
+    } else {
+      return new Point([])
     }
   }).filter(x => x)
-
+  console.log('NUM POINTS filtered', allPoints.length)
   const pointInfoMatch = round.match(/Snapshot reads:? \{"PlayerIds".*\}/g)
   // broken round in ALL-11.17.2023.7.09.47.PM.log
 
@@ -200,16 +202,6 @@ const allFileParser = (dir) => {
     gamesLines.shift()
     const games = gamesLines.map((game) => {
       return gameParser(game, username)
-      // const metersPerSec = velocity(line)
-      // const revsPerSec = revolutions(line)
-      // if (revsPerSec) {
-      //   new Hit(metersPerSec, revsPerSec)
-      // }
-
-      // if (line.match(/\[Activity\]Sending MP match prefab activity/)) {
-      //   const nextLine = lines[i + 1]
-      //   console.log(JSON.parse(nextLine)["PlayerNames"])
-      // }
     })
 
     const stringDate = file.replace('ALL-', '').replace('.log', '').replace('.', '/').replace('.', '/').replace('.', ' ').replace('.', ':').replace('.', ':').replace('.', ' ')

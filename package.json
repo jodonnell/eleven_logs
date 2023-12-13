@@ -4,7 +4,8 @@
   "description": "",
   "main": "parser.js",
   "scripts": {
-    "test": "jest ./test/"
+    "test": "jest ./test/",
+    "test:watch": "jest --watch ./test/"
   },
   "author": "Jacob",
   "license": "ISC",

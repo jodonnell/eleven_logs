@@ -37,11 +37,6 @@ describe("log parse", () => {
     expect(round1Points[3].didIWin).toBe(true)
   })
 
-  it("has reason the point was lost", () => {
-    expect(round1Points[0].lostBy).toBe("SenderLoss_DidNotHitFarSide")
-    expect(round1Points[1].lostBy).toBe("ReceiverLoss_DidNotHitBallAfterBounce")
-  })
-
   it.skip("has the correct round score", () => {
     expect(round1.myScore).toEqual(11)
     expect(round1.opponentScore).toEqual(9)
@@ -54,7 +49,7 @@ describe("log parse", () => {
     expect(round2.iWon).toEqual(true)
   })
 
-  it.skip("has the correct amount of points", () => {
+  it("has the correct amount of points", () => {
     expect(round1Points.length).toBe(20)
     expect(round2Points.length).toBe(22)
   })
