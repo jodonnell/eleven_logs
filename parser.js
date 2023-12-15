@@ -39,10 +39,10 @@ class Round {
 }
 
 class Point {
-  constructor(hits) {
+  constructor(hits, didIWin, isServer) {
     this.hits = hits
-    this.isServer = null
-    this.didIWin = null
+    this.isServer = isServer
+    this.didIWin = didIWin
   }
 }
 
@@ -108,6 +108,15 @@ const pointParser = (point) => {
   })
 }
 
+const didIServe = (serverId, playerId) => {
+  return parseInt(serverId) === playerId
+}
+
+const didIWin = (pointInfo) => {
+
+  //console.log(pointInfo.RoundScores)
+}
+
 const addPointInfo = (pointInfo, allPoints, username) => {
   const playerId = pointInfo[0]["PlayerNames"][0] === "username" ? pointInfo[0]["PlayerIds"][0] : pointInfo[0]["PlayerIds"][1]
 
@@ -134,29 +143,30 @@ const addPointInfo = (pointInfo, allPoints, username) => {
 const roundParser = (round, username) => {
   const points = round.split(/"PongGameState":"PrePoint"/)
   points.shift()
-  console.log('NUM POINTS', points.length)
 
+  let lastPointInfo = null
   const allPoints =  points.map(point => {
-    const hits = pointParser(point)
-    if (hits) {
-      return new Point(hits)
-    } else {
-      return new Point([])
-    }
+
+    const pointInfoMatch = point.match(/Snapshot reads:? \{"PlayerIds".*/)
+    // broken round in ALL-11.17.2023.7.09.47.PM.log
+    const fullString = pointInfoMatch[0].indexOf("PongGameState") === -1 ? pointInfoMatch[0] + '"PongGameState":"PrePoint"}' : pointInfoMatch[0]
+    const json = '{' + fullString.split('{')[1]
+
+    //try { JSON.parse(json) } catch (e) {console.log('JSON BREAKS', json)}
+    const pointInfo = JSON.parse(json)
+
+    const myPlayerIdString = pointInfo["PlayerNames"][0] === username ? pointInfo["PlayerIds"][0] : pointInfo["PlayerIds"][1]
+    const myPlayerId = parseInt(myPlayerIdString)
+
+    const served = didIServe(lastPointInfo?.CurrentServer || pointInfo?.InitialServer, myPlayerId)
+    const hits = pointParser(point) || []
+
+    lastPointInfo = pointInfo
+
+    return new Point(hits, didIWin(pointInfo), served)
   }).filter(x => x)
-  console.log('NUM POINTS filtered', allPoints.length)
-  const pointInfoMatch = round.match(/Snapshot reads:? \{"PlayerIds".*\}/g)
-  // broken round in ALL-11.17.2023.7.09.47.PM.log
 
-
-  //if (!pointInfoMatch)
-    //return null
-  const pointInfo = pointInfoMatch.map(s => JSON.parse(s.replace(/Snapshot reads:? /, '')))
-  if (allPoints.length > pointInfo.length) {
-    console.log('uhoh')
-    return null
-  }
-  addPointInfo(pointInfo, allPoints, username)
+  //addPointInfo(pointInfo, allPoints, username)
 
   return new Round(allPoints)
 }

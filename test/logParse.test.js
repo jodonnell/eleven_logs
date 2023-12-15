@@ -30,7 +30,7 @@ describe("log parse", () => {
     expect(match.rounds.length).toBe(2)
   })
 
-  it.skip("has points winner", () => {
+  it("has points winner", () => {
     expect(round1Points[0].didIWin).toBe(false)
     expect(round1Points[1].didIWin).toBe(true)
     expect(round1Points[2].didIWin).toBe(false)
@@ -54,7 +54,7 @@ describe("log parse", () => {
     expect(round2Points.length).toBe(22)
   })
 
-  it.skip("has serves correct for round 1", () => {
+  it("has serves correct for round 1", () => {
     let isServer = false
     for (let i = 0; i < 20; i+= 2) {
       expect(round1Points[i].isServer).toBe(isServer)
@@ -67,6 +67,7 @@ describe("log parse", () => {
   it.skip("has serves correct for round 2", () => {
     let isServer = false
     for (let i = 0; i < 20; i+= 2) {
+      console.log(i)
       expect(round2Points[i].isServer).toBe(isServer)
       expect(round2Points[i + 1].isServer).toBe(isServer)
 
