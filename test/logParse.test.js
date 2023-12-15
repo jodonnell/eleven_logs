@@ -35,6 +35,25 @@ describe("log parse", () => {
     expect(round1Points[1].didIWin).toBe(true)
     expect(round1Points[2].didIWin).toBe(false)
     expect(round1Points[3].didIWin).toBe(true)
+    expect(round1Points[4].didIWin).toBe(false)
+    expect(round1Points[5].didIWin).toBe(false)
+    expect(round1Points[6].didIWin).toBe(true)
+    expect(round1Points[7].didIWin).toBe(true)
+    expect(round1Points[8].didIWin).toBe(false)
+    expect(round1Points[9].didIWin).toBe(true)
+    expect(round1Points[10].didIWin).toBe(true)
+    expect(round1Points[11].didIWin).toBe(false)
+    expect(round1Points[12].didIWin).toBe(true)
+    expect(round1Points[13].didIWin).toBe(true)
+    expect(round1Points[14].didIWin).toBe(true)
+    expect(round1Points[15].didIWin).toBe(true)
+    expect(round1Points[16].didIWin).toBe(false)
+    expect(round1Points[17].didIWin).toBe(false)
+    expect(round1Points[18].didIWin).toBe(false)
+    expect(round1Points[19].didIWin).toBe(true)
+
+    expect(round2Points[0].didIWin).toBe(true)
+
   })
 
   it.skip("has the correct round score", () => {

@@ -1,4 +1,5 @@
 const fs = require('fs')
+const _ = require('lodash')
 
 class PlayerSessions {
   constructor(sessions) {
@@ -112,9 +113,29 @@ const didIServe = (serverId, playerId) => {
   return parseInt(serverId) === playerId
 }
 
-const didIWin = (pointInfo) => {
+const didIWin = (roundScore, lastRoundScore, isFirst) => {
+  const currentRound = _.last(roundScore)
+  if (!lastRoundScore) {
+    if (currentRound[0] === 1 && isFirst)
+      return true
 
-  //console.log(pointInfo.RoundScores)
+    if (currentRound[0] === 1 && !isFirst)
+      return false
+
+    return currentRound[1] === 1 && !isFirst
+  }
+
+  const lastRound = _.last(lastRoundScore)
+
+  if (!currentRound) {// someone one
+    if (lastRound[0] > lastRound[1])
+      return isFirst
+    return !isFirst
+  }
+  if (currentRound[0] > lastRound[0]) {
+    return isFirst
+  }
+  return !isFirst
 }
 
 const addPointInfo = (pointInfo, allPoints, username) => {
@@ -140,7 +161,7 @@ const addPointInfo = (pointInfo, allPoints, username) => {
 
 }
 
-const roundParser = (round, username) => {
+const roundParser = (round, username, isFirst) => {
   const points = round.split(/"PongGameState":"PrePoint"/)
   points.shift()
 
@@ -161,9 +182,10 @@ const roundParser = (round, username) => {
     const served = didIServe(lastPointInfo?.CurrentServer || pointInfo?.CurrentServer, myPlayerId)
     const hits = pointParser(point) || []
 
+    const won = didIWin(pointInfo.RoundScores, lastPointInfo?.RoundScores, isFirst)
     lastPointInfo = pointInfo
 
-    return new Point(hits, didIWin(pointInfo), served)
+    return new Point(hits, won, served)
   }).filter(x => x)
 
   //addPointInfo(pointInfo, allPoints, username)
@@ -179,9 +201,9 @@ const gameParser = (game, username) => {
   let opponent
   if (playerNames[0] === username) {
     opponent = playerNames[1]
-    isFirst = false
   } else {
     opponent = playerNames[0]
+    isFirst = false
   }
 
   let roundLines = game.split(/"RoundScores":\[\[\d+,\d+\],\[0,0\]\]/, 2)
@@ -191,7 +213,7 @@ const gameParser = (game, username) => {
   }
 
   const rounds = roundLines.map(round => {
-    return roundParser(round, username)
+    return roundParser(round, username, isFirst)
   }).filter(x => x)
 
   return new Match(opponent, rounds)
