@@ -158,7 +158,7 @@ const roundParser = (round, username) => {
     const myPlayerIdString = pointInfo["PlayerNames"][0] === username ? pointInfo["PlayerIds"][0] : pointInfo["PlayerIds"][1]
     const myPlayerId = parseInt(myPlayerIdString)
 
-    const served = didIServe(lastPointInfo?.CurrentServer || pointInfo?.InitialServer, myPlayerId)
+    const served = didIServe(lastPointInfo?.CurrentServer || pointInfo?.CurrentServer, myPlayerId)
     const hits = pointParser(point) || []
 
     lastPointInfo = pointInfo

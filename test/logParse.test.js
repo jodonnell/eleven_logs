@@ -64,17 +64,15 @@ describe("log parse", () => {
     }
   })
 
-  it.skip("has serves correct for round 2", () => {
-    let isServer = false
+  it("has serves correct for round 2", () => {
+    let isServer = true
     for (let i = 0; i < 20; i+= 2) {
-      console.log(i)
       expect(round2Points[i].isServer).toBe(isServer)
       expect(round2Points[i + 1].isServer).toBe(isServer)
 
       isServer = !isServer
     }
-
-    expect(round2Points[21].isServer).toBe(true)
-    expect(round2Points[22].isServer).toBe(false)
+    expect(round2Points[20].isServer).toBe(true)
+    expect(round2Points[21].isServer).toBe(false)
   })
 })
