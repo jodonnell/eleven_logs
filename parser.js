@@ -180,8 +180,8 @@ const roundParser = (round, username, isFirst) => {
     const myPlayerIdString = pointInfo["PlayerNames"][0] === username ? pointInfo["PlayerIds"][0] : pointInfo["PlayerIds"][1]
     const myPlayerId = parseInt(myPlayerIdString)
 
-    const served = didIServe(lastPointInfo?.CurrentServer || pointInfo?.CurrentServer, myPlayerId)
     const hits = pointParser(point) || []
+    const served = didIServe(lastPointInfo?.CurrentServer || pointInfo?.CurrentServer, myPlayerId)
 
     const won = didIWin(pointInfo.RoundScores, lastPointInfo?.RoundScores, isFirst)
     lastPointInfo = pointInfo
@@ -220,6 +220,23 @@ const gameParser = (game, username) => {
   return new Match(opponent, rounds)
 }
 
+const getDateFromFilename = (filename) => {
+  const stringDate = filename.replace('ALL-', '').replace('.log', '').replace('.', '/').replace('.', '/').replace('.', ' ').replace('.', ':').replace('.', ':').replace('.', ' ')
+  const splitDate = stringDate.split(' ')
+  const dateParts = splitDate[0].split('/')
+  const timeParts = splitDate[1].split(':')
+  const amOrPm = splitDate[2]
+  let hours = timeParts[0]
+  if (hours === "12")
+    hours = "00"
+
+  if (amOrPm === "PM")
+    hours = parseInt(hours, 10) + 12
+
+  return new Date(dateParts[2], parseInt(dateParts[0]) - 1, dateParts[1], hours, timeParts[1], timeParts[2])
+}
+
+
 const allFileParser = (dir) => {
   const files = fs.readdirSync(__dirname + dir)
   const allPlaySessions = files.map((file) => {
@@ -237,9 +254,7 @@ const allFileParser = (dir) => {
       return gameParser(game, username)
     })
 
-    const stringDate = file.replace('ALL-', '').replace('.log', '').replace('.', '/').replace('.', '/').replace('.', ' ').replace('.', ':').replace('.', ':').replace('.', ' ')
-    const date = new Date(stringDate)
-    return new PlaySession(date, games)
+    return new PlaySession(getDateFromFilename(file), games)
   })
   return new PlayerSessions(allPlaySessions.filter(x => x))
 }
