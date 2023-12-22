@@ -61,14 +61,14 @@ describe("log parse", () => {
 
     })
 
-    it.skip("has the correct round score", () => {
+    it("has the correct round score", () => {
       expect(round1.myScore).toEqual(11)
-      expect(round1.opponentScore).toEqual(9)
+      expect(round1.theirScore).toEqual(9)
       expect(round2.myScore).toEqual(12)
-      expect(round2.opponentScore).toEqual(10)
+      expect(round2.theirScore).toEqual(10)
     })
 
-    it.skip("has the correct round winner", () => {
+    it("has the correct round winner", () => {
       expect(round1.won).toEqual(true)
       expect(round2.won).toEqual(true)
     })
