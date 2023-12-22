@@ -104,6 +104,7 @@ describe("log parse", () => {
   describe("second session", () => {
     const session = sessions.sessions[1]
     const match = session.matches[0]
+    const thirdMatch = session.matches[2]
 
     const round1 = match.rounds[0]
     const round2 = match.rounds[1]
@@ -118,7 +119,14 @@ describe("log parse", () => {
       expect(session.date.getHours()).toBe(18)
       expect(session.date.getMinutes()).toBe(50)
       expect(session.date.getSeconds()).toBe(38)
+    })
 
+    it("has the right amount of matches", () => {
+      expect(session.matches.length).toBe(6)
+    })
+
+    it("has three rounds", () => {
+      expect(thirdMatch.rounds.length).toBe(3)
     })
 
   })
