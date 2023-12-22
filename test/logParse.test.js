@@ -12,8 +12,8 @@ const round1Points = match.rounds[0].points
 const round2Points = match.rounds[1].points
 
 describe("log parse", () => {
-  it("has one session", () => {
-    expect(sessions.sessions.length).toBe(1)
+  it("has two play sessions", () => {
+    expect(sessions.sessions.length).toBe(2)
   })
 
   it("has the right date", () => {
