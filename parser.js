@@ -34,8 +34,9 @@ class Match {
 }
 
 class Round {
-  constructor(points) {
+  constructor(points, won) {
     this.points = points
+    this.won = won
   }
 }
 
@@ -190,7 +191,7 @@ const roundParser = (round, username, isFirst) => {
 
   //addPointInfo(pointInfo, allPoints, username)
 
-  return new Round(allPoints)
+  return new Round(allPoints, false)
 }
 
 const gameParser = (game, username) => {
