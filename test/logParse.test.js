@@ -7,6 +7,14 @@ describe("log parse", () => {
   it("has two play sessions", () => {
     expect(sessions.sessions.length).toBe(2)
   })
+
+  it("has correct wins", () => {
+    expect(sessions.sessions[0].matchesWon).toBe(1)
+    expect(sessions.sessions[1].matchesWon).toBe(5)
+    expect(sessions.sessions[1].matches.length).toBe(6)
+    expect(sessions.matchesWon).toBe(6)
+  })
+
   describe("first session", () => {
     const session = sessions.sessions[0]
     const match = session.matches[0]
@@ -29,6 +37,10 @@ describe("log parse", () => {
 
     it("has the right amount of matches", () => {
       expect(session.matches.length).toBe(1)
+    })
+
+    it("has the right match winner", () => {
+      expect(match.won).toBe(true)
     })
 
     it("has the right amount of rounds", () => {
@@ -129,5 +141,13 @@ describe("log parse", () => {
       expect(thirdMatch.rounds.length).toBe(3)
     })
 
+    it("has the right matches won", () => {
+      expect(session.matches[0].won).toBe(false)
+      expect(session.matches[1].won).toBe(true)
+      expect(session.matches[2].won).toBe(true)
+      expect(session.matches[3].won).toBe(true)
+      expect(session.matches[4].won).toBe(true)
+      expect(session.matches[5].won).toBe(true)
+    })
   })
 })

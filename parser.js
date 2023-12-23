@@ -11,6 +11,10 @@ class PlayerSessions {
     const lastWeekDate = new Date(currentDate.getTime() - 7 * 24 * 60 * 60 * 1000);
     return this.sessions.filter(s => s.date > lastWeekDate)
   }
+
+  get matchesWon() {
+    return _.sum(this.sessions.map(s => s.matchesWon))
+  }
 }
 
 class PlaySession {
@@ -24,6 +28,10 @@ class PlaySession {
     this.matches.forEach(m => m.rounds.forEach(r => r.points.forEach(p => p.hits.forEach(h => hits.push(h)))))
     return hits
   }
+
+  get matchesWon() {
+    return this.matches.filter(m => m.won).length
+  }
 }
 
 class Match {
@@ -31,6 +39,11 @@ class Match {
     this.opponent = opponent
     this.rounds = rounds
   }
+
+  get won() {
+    return this.rounds.filter(r => r.won).length > 1
+  }
+
 }
 
 class Round {
