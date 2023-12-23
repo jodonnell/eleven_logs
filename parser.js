@@ -163,29 +163,6 @@ const didIWin = (roundScore, lastRoundScore, isFirst) => {
   return !isFirst
 }
 
-const addPointInfo = (pointInfo, allPoints, username) => {
-  const playerId = pointInfo[0]["PlayerNames"][0] === "username" ? pointInfo[0]["PlayerIds"][0] : pointInfo[0]["PlayerIds"][1]
-
-  let totalScore = 0
-  pointInfo = pointInfo.filter(p => {
-    const scores = p["RoundScores"].slice(-1)[0]
-    const equal = totalScore === (scores[0] + scores[1])
-    if (equal)
-      totalScore++
-    return equal
-  })
-
-  for (let i = 0; i < allPoints.length; i++) {
-    if (!pointInfo[i])
-      allPoints[i].isServer = null
-    else {
-      allPoints[i].isServer = parseInt(pointInfo[i]["CurrentServer"]) === playerId
-      allPoints[i].score = pointInfo[i]["RoundScores"]
-    }
-  }
-
-}
-
 const roundParser = (round, username, isFirst) => {
   const points = round.split(/"PongGameState":"PrePoint"/)
   points.shift()
@@ -197,7 +174,6 @@ const roundParser = (round, username, isFirst) => {
     const fullString = pointInfoMatch[0].indexOf("PongGameState") === -1 ? pointInfoMatch[0] + '"PongGameState":"PrePoint"}' : pointInfoMatch[0]
     const json = '{' + fullString.split('{')[1]
 
-    //try { JSON.parse(json) } catch (e) {console.log('JSON BREAKS', json)}
     const pointInfo = JSON.parse(json)
 
     const myPlayerIdString = pointInfo["PlayerNames"][0] === username ? pointInfo["PlayerIds"][0] : pointInfo["PlayerIds"][1]
@@ -212,7 +188,6 @@ const roundParser = (round, username, isFirst) => {
     return new Point(hits, won, served)
   }).filter(x => x)
 
-  //addPointInfo(pointInfo, allPoints, username)
 
   return new Round(allPoints, false)
 }
