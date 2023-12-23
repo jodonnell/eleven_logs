@@ -260,26 +260,28 @@ const getDateFromFilename = (filename) => {
   return new Date(dateParts[2], parseInt(dateParts[0]) - 1, dateParts[1], hours, timeParts[1], timeParts[2])
 }
 
+const getUsername = (fileContents) => {
+  const userNameMatch = fileContents.match(/Properly authenticated (\w+)/)
+  return userNameMatch[1]
+}
+
+const fileParse = (dir, file) => {
+  console.log(file)
+
+  const contents = fs.readFileSync(__dirname + dir + file, 'utf8')
+
+  const gamesLines = contents.split('Sending MP match prefab activity')
+  gamesLines.shift()
+  const games = gamesLines.map((game) => {
+    return gameParser(game, getUsername(contents))
+  })
+
+  return new PlaySession(getDateFromFilename(file), games)
+}
 
 const allFileParser = (dir) => {
   const files = fs.readdirSync(__dirname + dir)
-  const allPlaySessions = files.map((file) => {
-    console.log(file)
-
-    const contents = fs.readFileSync(__dirname + dir + file, 'utf8')
-    const userNameMatch = contents.match(/Properly authenticated (\w+)/)
-    if (!userNameMatch)
-      return
-    const username = userNameMatch[1]
-
-    const gamesLines = contents.split('Sending MP match prefab activity')
-    gamesLines.shift()
-    const games = gamesLines.map((game) => {
-      return gameParser(game, username)
-    })
-
-    return new PlaySession(getDateFromFilename(file), games)
-  })
+  const allPlaySessions = files.map((file) => fileParse(dir, file))
   return new PlayerSessions(allPlaySessions.filter(x => x))
 }
 
