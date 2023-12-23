@@ -194,7 +194,6 @@ const roundParser = (round, username, isFirst) => {
   const allPoints =  points.map(point => {
 
     const pointInfoMatch = point.match(/Snapshot reads:? \{"PlayerIds".*/)
-    // broken round in ALL-11.17.2023.7.09.47.PM.log
     const fullString = pointInfoMatch[0].indexOf("PongGameState") === -1 ? pointInfoMatch[0] + '"PongGameState":"PrePoint"}' : pointInfoMatch[0]
     const json = '{' + fullString.split('{')[1]
 
@@ -218,7 +217,7 @@ const roundParser = (round, username, isFirst) => {
   return new Round(allPoints, false)
 }
 
-const gameParser = (game, username) => {
+const getOppenentAndIsFirst = (game, username) => {
   const match = game.match(/^(\{"PlayerIds":.*)$/mg)
   const playerNames = JSON.parse(match[0])["PlayerNames"]
 
@@ -231,13 +230,22 @@ const gameParser = (game, username) => {
     isFirst = false
   }
 
+  return { opponent, isFirst }
+}
+
+const getRoundChunks = (game) => {
   let roundLines = game.split(/"RoundScores":\[\[\d+,\d+\],\[0,0\]\]/, 2)
   if (roundLines[1]) {
     const moreRounds = roundLines[1].split(/"RoundScores":\[\[\d+,\d+\],\[\d+,\d+\],\[0,0\]\]/, 2)
     roundLines = [roundLines[0], ...moreRounds]
   }
+  return roundLines
+}
 
-  const rounds = roundLines.map(round => {
+const gameParser = (game, username) => {
+  const { opponent, isFirst } = getOppenentAndIsFirst(game, username)
+
+  const rounds = getRoundChunks(game).map(round => {
     return roundParser(round, username, isFirst)
   }).filter(x => x)
 
