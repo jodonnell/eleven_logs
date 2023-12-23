@@ -163,21 +163,27 @@ const didIWin = (roundScore, lastRoundScore, isFirst) => {
   return !isFirst
 }
 
+const getPointInfo = (point) => {
+  const pointInfoMatch = point.match(/Snapshot reads:? \{"PlayerIds".*/)
+  const fullString = pointInfoMatch[0].indexOf("PongGameState") === -1 ? pointInfoMatch[0] + '"PongGameState":"PrePoint"}' : pointInfoMatch[0]
+  const json = '{' + fullString.split('{')[1]
+
+  return JSON.parse(json)
+}
+
+const getMyPlayerId = (pointInfo, username) => {
+  const myPlayerIdString = pointInfo["PlayerNames"][0] === username ? pointInfo["PlayerIds"][0] : pointInfo["PlayerIds"][1]
+  return parseInt(myPlayerIdString)
+}
+
 const roundParser = (round, username, isFirst) => {
   const points = round.split(/"PongGameState":"PrePoint"/)
   points.shift()
 
   let lastPointInfo = null
   const allPoints =  points.map(point => {
-
-    const pointInfoMatch = point.match(/Snapshot reads:? \{"PlayerIds".*/)
-    const fullString = pointInfoMatch[0].indexOf("PongGameState") === -1 ? pointInfoMatch[0] + '"PongGameState":"PrePoint"}' : pointInfoMatch[0]
-    const json = '{' + fullString.split('{')[1]
-
-    const pointInfo = JSON.parse(json)
-
-    const myPlayerIdString = pointInfo["PlayerNames"][0] === username ? pointInfo["PlayerIds"][0] : pointInfo["PlayerIds"][1]
-    const myPlayerId = parseInt(myPlayerIdString)
+    const pointInfo = getPointInfo(point)
+    const myPlayerId = getMyPlayerId(pointInfo, username)
 
     const hits = pointParser(point) || []
     const served = didIServe(lastPointInfo?.CurrentServer || pointInfo?.CurrentServer, myPlayerId)
