@@ -95,6 +95,7 @@ describe("log parse", () => {
     it("has hits", () => {
       expect(hits.length).toBe(1)
       expect(hits[0].posx).toBe(0.611844658851624)
+      expect(hits[0].isForehand).toBe(true)
     })
 
     it("has serves correct for round 1", () => {

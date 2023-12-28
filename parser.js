@@ -87,6 +87,11 @@ class Hit {
     this.metersPerSecond = magnitude(vx, vy, vz)
     this.revolutions = magnitude(rx, ry, rz)
   }
+
+  get isForehand() {
+    return this.posx > 0
+  }
+
 }
 
 const magnitude = (a, b, c) => {
