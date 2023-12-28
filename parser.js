@@ -73,13 +73,16 @@ class Point {
 }
 
 class Hit {
-  constructor(vx, vy, vz, rx, ry, rz) {
+  constructor(vx, vy, vz, rx, ry, rz, posx, posy, posz) {
     this.vx = vx
     this.vy = vy
     this.vz = vz
     this.rx = rx
     this.ry = ry
     this.rz = rz
+    this.posx = posx
+    this.posy = posy
+    this.posz = posz
 
     this.metersPerSecond = magnitude(vx, vy, vz)
     this.revolutions = magnitude(rx, ry, rz)
@@ -90,21 +93,9 @@ const magnitude = (a, b, c) => {
   return Math.sqrt(Math.abs(a) ** 2 + Math.abs(b) ** 2 + Math.abs(c) ** 2)
 }
 
-const revolutions = (line) => {
-  if (!line.match)
-    console.log(line)
-  const match = line.match(/postCollisionState:.*rRate:\((-?\d+.\d+),(-?\d+.\d+),(-?\d+.\d+)\)/)
-  if (match) {
-    const a = parseFloat(match[1]) / 360.0
-    const b = parseFloat(match[2]) / 360.0
-    const c = parseFloat(match[3]) / 360.0
 
-    return magnitude(a, b, c)
-  }
-}
-
-const velocity = (line) => {
-  const match = line.match(/postCollisionState:.*vel:\((-?\d+.\d+),(-?\d+.\d+),(-?\d+.\d+)\)/)
+const pos = (line) => {
+  const match = line.match(/postCollisionState:.*pos:\((-?\d+.\d+),(-?\d+.\d+),(-?\d+.\d+)\)/)
   if (match) {
     const a = parseFloat(match[1])
     const b = parseFloat(match[2])
@@ -122,6 +113,7 @@ const pointParser = (point) => {
   return matches.map(match => {
     const vel = match.match(/vel:\((-?\d+.\d+),(-?\d+.\d+),(-?\d+.\d+)\)/)
     const rrate = match.match(/rRate:\((-?\d+.\d+),(-?\d+.\d+),(-?\d+.\d+)\)/)
+    const pos = match.match(/pos:\((-?\d+.\d+),(-?\d+.\d+),(-?\d+.\d+)\)/)
 
     return new Hit(
       parseFloat(vel[1]),
@@ -130,6 +122,9 @@ const pointParser = (point) => {
       parseFloat(rrate[1]) / 360.0,
       parseFloat(rrate[2]) / 360.0,
       parseFloat(rrate[3]) / 360.0,
+      parseFloat(pos[1]),
+      parseFloat(pos[2]),
+      parseFloat(pos[3]),
     )
   })
 }

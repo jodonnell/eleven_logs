@@ -25,6 +25,8 @@ describe("log parse", () => {
     const round1Points = match.rounds[0].points
     const round2Points = match.rounds[1].points
 
+    const hits = round1Points[0].hits
+
 
     it("has the right date", () => {
       expect(session.date.getMonth()).toBe(10)
@@ -88,6 +90,11 @@ describe("log parse", () => {
     it("has the correct amount of points", () => {
       expect(round1Points.length).toBe(20)
       expect(round2Points.length).toBe(22)
+    })
+
+    it("has hits", () => {
+      expect(hits.length).toBe(1)
+      expect(hits[0].posx).toBe(0.611844658851624)
     })
 
     it("has serves correct for round 1", () => {
