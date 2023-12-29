@@ -129,6 +129,9 @@ class Point {
   }
 
   get isServiceFault() {
+    if (this.collisions.length < 2)
+      return false
+
     if (this.isServer) {
       if (this.collisions[0].with !== 'MyToss')
 	return true
