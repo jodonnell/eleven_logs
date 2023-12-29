@@ -16,7 +16,7 @@ describe("log parse", () => {
   })
 
   it("can get service fault percentage", () => {
-    expect(sessions.serviceFaultPercentage).toBe(0.08387096774193549)
+    expect(sessions.serviceFaultPercentage).toBe(0.0967741935483871)
   })
 
   it("shows serve ace percentage", () => {
@@ -116,15 +116,16 @@ describe("log parse", () => {
     })
 
     it("has collisions", () => {
-      expect(collisions.length).toBe(4)
-      expect(collisions[0].posx).toBe(0.67126739025116)
+      expect(collisions.length).toBe(5)
+      expect(collisions[0].posx).toBe(0.71672260761261)
     })
 
     it("collisions have what they collided with", () => {
-      expect(collisions[0].with).toBe('TheirTable')
-      expect(collisions[1].with).toBe('MyTable')
-      expect(collisions[2].with).toBe('MyHit')
-      expect(collisions[3].with).toBe('MyTable')
+      expect(collisions[0].with).toBe('TheirHit')
+      expect(collisions[1].with).toBe('TheirTable')
+      expect(collisions[2].with).toBe('MyTable')
+      expect(collisions[3].with).toBe('MyHit')
+      expect(collisions[4].with).toBe('MyTable')
     })
 
     it("has service faults", () => {

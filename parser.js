@@ -155,13 +155,16 @@ class Point {
 	return true
 
     } else {
-      if (this.collisions[0].with !== 'TheirTable')
+      if (this.collisions[0].with !== 'TheirHit')
 	return true
 
-      if (!this.collisions[1])
+      if (this.collisions[1].with !== 'TheirTable')
 	return true
 
-      if (this.collisions[1].with !== 'MyTable')
+      if (!this.collisions[2])
+	return true
+
+      if (this.collisions[2].with !== 'MyTable')
 	return true
     }
     return false
@@ -237,33 +240,43 @@ const xyzParser = (anchor) => {
 }
 
 const collisionParser = (point, isFirst) => {
-  const collisions = point.split(/MyCollision:/)
-  collisions.shift()
+  const collisionChunks = point.split(/(?:MyCollision:)|(?:Received ball hit from opponent:)/)
+  collisionChunks.shift()
   //console.log('NEW POINT')
 
-  return collisions.map((collision) => {
+  const collisions = collisionChunks.map((collision) => {
+    collision = collision.replace('pos:', 'position:')
+    collision = collision.replace('vel:', 'velocity:')
+    collision = collision.replace('rrate:', 'rotationRate:')
+
     const vel = collision.match(xyzParser('velocity:'))
     const rrate = collision.match(xyzParser('rotationRate:'))
     const pos = collision.match(xyzParser('position:'))
     const collidedWithMatch = collision.match(/pongGameCollisionType:(.*)/)
 
-    let collidedWith = collidedWithMatch[1]
-    if (isFirst) {
-      if (collidedWith.endsWith('A')) {
-	collidedWith = 'My' + collidedWith.slice(0, -1)
-      }
-      if (collidedWith.endsWith('B')) {
-	collidedWith = 'Their' + collidedWith.slice(0, -1)
-      }
+    let collidedWith
+    if (!collidedWithMatch) {
+      collidedWith = 'TheirHit'
     } else {
-      if (collidedWith.endsWith('A')) {
-	collidedWith = 'Their' + collidedWith.slice(0, -1)
-      }
-      if (collidedWith.endsWith('B')) {
-	collidedWith = 'My' + collidedWith.slice(0, -1)
+      collidedWith = collidedWithMatch[1]
+      if (isFirst) {
+	if (collidedWith.endsWith('A')) {
+	  collidedWith = 'My' + collidedWith.slice(0, -1)
+	}
+	if (collidedWith.endsWith('B')) {
+	  collidedWith = 'Their' + collidedWith.slice(0, -1)
+	}
+      } else {
+	if (collidedWith.endsWith('A')) {
+	  collidedWith = 'Their' + collidedWith.slice(0, -1)
+	}
+	if (collidedWith.endsWith('B')) {
+	  collidedWith = 'My' + collidedWith.slice(0, -1)
+	}
       }
     }
 
+    //console.log('POOP', collidedWith)
     return new Collision(
       collidedWith,
       parseFloat(vel?.[1] || 0),
@@ -277,6 +290,15 @@ const collisionParser = (point, isFirst) => {
       parseFloat(pos?.[3] || 0),
     )
   })
+
+  while (true) {
+    if (collisions?.[0]?.with === 'TheirHit' && collisions?.[1].with === 'TheirHit')
+      collisions.shift()
+    else
+      break
+  }
+
+  return collisions
 }
 
 
