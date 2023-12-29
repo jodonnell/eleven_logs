@@ -71,6 +71,34 @@ class Point {
     this.isServer = isServer
     this.didIWin = didIWin
   }
+
+  get isServiceFault() {
+    if (this.isServer) {
+      if (this.collisions[0].with !== 'MyToss')
+	return true
+
+      if (this.collisions[1].with !== 'MyHit')
+	return true
+
+      if (this.collisions[2].with !== 'MyTable')
+	return true
+
+      if (this.collisions[3].with === 'Net') {
+	return this.collisions[4].with !== 'TheirTable'
+      }
+
+      if (this.collisions[3].with !== 'TheirTable')
+	return true
+
+    } else {
+      if (this.collisions[0].with !== 'TheirTable')
+	return true
+
+      if (this.collisions[1].with !== 'MyTable')
+	return true
+    }
+    return false
+  }
 }
 
 class Hit {
@@ -144,6 +172,7 @@ const xyzParser = (anchor) => {
 const collisionParser = (point, isFirst) => {
   const collisions = point.split(/MyCollision:/)
   collisions.shift()
+  //console.log('NEW POINT')
 
   return collisions.map((collision) => {
     const vel = collision.match(xyzParser('velocity:'))
@@ -168,6 +197,7 @@ const collisionParser = (point, isFirst) => {
       }
     }
 
+    //console.log('POOP', collidedWith)
     return new Collision(
       collidedWith,
       parseFloat(vel[1]),
@@ -185,9 +215,6 @@ const collisionParser = (point, isFirst) => {
 
 
 const pointParser = (point) => {
-  //const cool = point.match(/pongGameCollisionType:(.*)/g)
-  //cool.map(c => console.log(c))
-
   const matches = point.match(/postCollisionState:.*vel:\((-?\d+.\d+),(-?\d+.\d+),(-?\d+.\d+)\).*rRate:\((-?\d+.\d+),(-?\d+.\d+),(-?\d+.\d+)\)/g)
   if (!matches)
     return

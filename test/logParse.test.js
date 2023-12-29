@@ -111,6 +111,25 @@ describe("log parse", () => {
       expect(collisions[3].with).toBe('MyTable')
     })
 
+    it("has service faults", () => {
+      expect(round1Points[0].isServiceFault).toBe(false)
+      expect(round1Points[1].isServiceFault).toBe(true)
+      expect(round1Points[2].isServiceFault).toBe(false)
+      expect(round1Points[3].isServiceFault).toBe(false)
+      expect(round1Points[4].isServiceFault).toBe(false)
+      expect(round1Points[5].isServiceFault).toBe(false)
+      expect(round1Points[6].isServiceFault).toBe(false)
+      expect(round1Points[7].isServiceFault).toBe(false)
+      expect(round1Points[8].isServiceFault).toBe(false)
+      expect(round1Points[9].isServiceFault).toBe(false)
+      expect(round1Points[10].isServiceFault).toBe(false)
+      expect(round1Points[11].isServiceFault).toBe(false)
+      expect(round1Points[12].isServiceFault).toBe(true)
+      expect(round1Points[13].isServiceFault).toBe(false)
+      expect(round1Points[14].isServiceFault).toBe(false)
+      expect(round1Points[15].isServiceFault).toBe(false)
+    })
+
     it("has serves correct for round 1", () => {
       let isServer = false
       for (let i = 0; i < 20; i+= 2) {
