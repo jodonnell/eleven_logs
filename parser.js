@@ -103,7 +103,12 @@ class Point {
       if (this.collisions[2].with !== 'MyTable')
 	return true
 
+      if (!this.collisions[3])
+	return true
+
       if (this.collisions[3].with === 'Net') {
+	if (!this.collisions[4])
+	  return true
 	return this.collisions[4].with !== 'TheirTable'
       }
 
@@ -183,7 +188,7 @@ const pos = (line) => {
 }
 
 const xyzParser = (anchor) => {
-  const number = '(-?\\d+(?:.\\d+(?:E-05)?)?)'
+  const number = '(-?\\d+(?:.\\d+(?:E-\\d+)?)?)'
   const regexString = `\\(${number},${number},${number}\\)`
   const re = new RegExp(`${anchor}${regexString}`)
   return re
@@ -217,18 +222,17 @@ const collisionParser = (point, isFirst) => {
       }
     }
 
-    //console.log('POOP', collidedWith)
     return new Collision(
       collidedWith,
-      parseFloat(vel[1]),
-      parseFloat(vel[2]),
-      parseFloat(vel[3]),
+      parseFloat(vel?.[1] || 0),
+      parseFloat(vel?.[2] || 0),
+      parseFloat(vel?.[3] || 0),
       parseFloat(rrate[1]) / 360.0,
       parseFloat(rrate[2]) / 360.0,
       parseFloat(rrate[3]) / 360.0,
-      parseFloat(pos[1]),
-      parseFloat(pos[2]),
-      parseFloat(pos[3]),
+      parseFloat(pos?.[1] || 0),
+      parseFloat(pos?.[2] || 0),
+      parseFloat(pos?.[3] || 0),
     )
   })
 }
@@ -289,6 +293,8 @@ const didIWin = (roundScore, lastRoundScore, isFirst) => {
 
 const getPointInfo = (point) => {
   const pointInfoMatch = point.match(/Snapshot reads:? \{"PlayerIds".*/)
+  if (!pointInfoMatch)
+    return null
   const fullString = pointInfoMatch[0].indexOf("PongGameState") === -1 ? pointInfoMatch[0] + '"PongGameState":"PrePoint"}' : pointInfoMatch[0]
   const json = '{' + fullString.split('{')[1]
 
@@ -307,6 +313,8 @@ const roundParser = (round, username, isFirst) => {
   let lastPointInfo = null
   const allPoints =  points.map(point => {
     const pointInfo = getPointInfo(point)
+    if (!pointInfo)
+      return null
     const myPlayerId = getMyPlayerId(pointInfo, username)
 
     const hits = pointParser(point) || []
@@ -377,7 +385,7 @@ const getDateFromFilename = (filename) => {
 
 const getUsername = (fileContents) => {
   const userNameMatch = fileContents.match(/Properly authenticated (\w+)/)
-  return userNameMatch[1]
+  return userNameMatch?.[1] || 'wagonman'
 }
 
 const fileParse = (dir, file) => {
