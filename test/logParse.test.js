@@ -15,6 +15,10 @@ describe("log parse", () => {
     expect(sessions.matchesWon).toBe(6)
   })
 
+  it("can get service fault percentage", () => {
+    expect(sessions.serviceFaultPercentage).toBe(0.08387096774193549)
+  })
+
   describe("first session", () => {
     const session = sessions.sessions[0]
     const match = session.matches[0]
@@ -121,7 +125,7 @@ describe("log parse", () => {
       expect(round1Points[6].isServiceFault).toBe(false)
       expect(round1Points[7].isServiceFault).toBe(false)
       expect(round1Points[8].isServiceFault).toBe(false)
-      expect(round1Points[9].isServiceFault).toBe(false)
+      expect(round1Points[9].isServiceFault).toBe(true)
       expect(round1Points[10].isServiceFault).toBe(false)
       expect(round1Points[11].isServiceFault).toBe(false)
       expect(round1Points[12].isServiceFault).toBe(true)

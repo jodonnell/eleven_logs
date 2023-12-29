@@ -15,6 +15,26 @@ class PlayerSessions {
   get matchesWon() {
     return _.sum(this.sessions.map(s => s.matchesWon))
   }
+
+  get serviceFaultPercentage() {
+    let serveCount = 0
+    let faultCount = 0
+    this.allPoints.forEach((p) => {
+      if (p.isServer)
+	serveCount += 1
+
+      if (p.isServer && p.isServiceFault)
+	faultCount += 1
+    })
+
+    return faultCount / serveCount
+  }
+
+  get allPoints() {
+    const points = []
+    this.sessions.forEach(s => s.matches.forEach(m => m.rounds.forEach(r => r.points.forEach(p => points.push(p)))))
+    return points
+  }
 }
 
 class PlaySession {
@@ -291,6 +311,8 @@ const roundParser = (round, username, isFirst) => {
 
     const hits = pointParser(point) || []
     const collisions = collisionParser(point, isFirst) || []
+    if (collisions.length === 0)
+      return null
     const served = didIServe(lastPointInfo?.CurrentServer || pointInfo?.CurrentServer, myPlayerId)
 
     const won = didIWin(pointInfo.RoundScores, lastPointInfo?.RoundScores, isFirst)
