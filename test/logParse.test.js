@@ -26,6 +26,7 @@ describe("log parse", () => {
     const round2Points = match.rounds[1].points
 
     const hits = round1Points[0].hits
+    const collisions = round1Points[0].collisions
 
 
     it("has the right date", () => {
@@ -96,6 +97,11 @@ describe("log parse", () => {
       expect(hits.length).toBe(1)
       expect(hits[0].posx).toBe(0.611844658851624)
       expect(hits[0].isForehand).toBe(true)
+    })
+
+    it("has collisions", () => {
+      expect(collisions.length).toBe(4)
+      expect(collisions[0].posx).toBe(0.67126739025116)
     })
 
     it("has serves correct for round 1", () => {

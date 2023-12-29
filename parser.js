@@ -65,14 +65,37 @@ class Round {
 }
 
 class Point {
-  constructor(hits, didIWin, isServer) {
+  constructor(hits, collisions, didIWin, isServer) {
     this.hits = hits
+    this.collisions = collisions
     this.isServer = isServer
     this.didIWin = didIWin
   }
 }
 
 class Hit {
+  constructor(vx, vy, vz, rx, ry, rz, posx, posy, posz) {
+    this.vx = vx
+    this.vy = vy
+    this.vz = vz
+    this.rx = rx
+    this.ry = ry
+    this.rz = rz
+    this.posx = posx
+    this.posy = posy
+    this.posz = posz
+
+    this.metersPerSecond = magnitude(vx, vy, vz)
+    this.revolutions = magnitude(rx, ry, rz)
+  }
+
+  get isForehand() {
+    return this.posx > 0
+  }
+
+}
+
+class Collision {
   constructor(vx, vy, vz, rx, ry, rz, posx, posy, posz) {
     this.vx = vx
     this.vy = vy
@@ -110,15 +133,49 @@ const pos = (line) => {
   }
 }
 
+const xyzParser = (anchor) => {
+  const number = '(-?\\d+(?:.\\d+(?:E-05)?)?)'
+  const regexString = `\\(${number},${number},${number}\\)`
+  const re = new RegExp(`${anchor}${regexString}`)
+  return re
+}
+
+const collisionParser = (point) => {
+  const collisions = point.split(/MyCollision:/)
+  collisions.shift()
+
+  return collisions.map((collision) => {
+    const vel = collision.match(xyzParser('velocity:'))
+    const rrate = collision.match(xyzParser('rotationRate:'))
+    const pos = collision.match(xyzParser('position:'))
+
+    return new Collision(
+      parseFloat(vel[1]),
+      parseFloat(vel[2]),
+      parseFloat(vel[3]),
+      parseFloat(rrate[1]) / 360.0,
+      parseFloat(rrate[2]) / 360.0,
+      parseFloat(rrate[3]) / 360.0,
+      parseFloat(pos[1]),
+      parseFloat(pos[2]),
+      parseFloat(pos[3]),
+    )
+  })
+}
+
+
 const pointParser = (point) => {
+  //const cool = point.match(/pongGameCollisionType:(.*)/g)
+  //cool.map(c => console.log(c))
+
   const matches = point.match(/postCollisionState:.*vel:\((-?\d+.\d+),(-?\d+.\d+),(-?\d+.\d+)\).*rRate:\((-?\d+.\d+),(-?\d+.\d+),(-?\d+.\d+)\)/g)
   if (!matches)
     return
 
   return matches.map(match => {
-    const vel = match.match(/vel:\((-?\d+.\d+),(-?\d+.\d+),(-?\d+.\d+)\)/)
-    const rrate = match.match(/rRate:\((-?\d+.\d+),(-?\d+.\d+),(-?\d+.\d+)\)/)
-    const pos = match.match(/pos:\((-?\d+.\d+),(-?\d+.\d+),(-?\d+.\d+)\)/)
+    const vel = match.match(xyzParser('vel:'))
+    const rrate = match.match(xyzParser('rRate:'))
+    const pos = match.match(xyzParser('pos:'))
 
     return new Hit(
       parseFloat(vel[1]),
@@ -186,12 +243,12 @@ const roundParser = (round, username, isFirst) => {
     const myPlayerId = getMyPlayerId(pointInfo, username)
 
     const hits = pointParser(point) || []
+    const collisions = collisionParser(point) || []
     const served = didIServe(lastPointInfo?.CurrentServer || pointInfo?.CurrentServer, myPlayerId)
 
     const won = didIWin(pointInfo.RoundScores, lastPointInfo?.RoundScores, isFirst)
     lastPointInfo = pointInfo
-
-    return new Point(hits, won, served)
+    return new Point(hits, collisions, won, served)
   }).filter(x => x)
 
 
