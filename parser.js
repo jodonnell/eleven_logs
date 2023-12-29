@@ -96,7 +96,8 @@ class Hit {
 }
 
 class Collision {
-  constructor(vx, vy, vz, rx, ry, rz, posx, posy, posz) {
+  constructor(with_, vx, vy, vz, rx, ry, rz, posx, posy, posz) {
+    this.with = with_
     this.vx = vx
     this.vy = vy
     this.vz = vz
@@ -140,7 +141,7 @@ const xyzParser = (anchor) => {
   return re
 }
 
-const collisionParser = (point) => {
+const collisionParser = (point, isFirst) => {
   const collisions = point.split(/MyCollision:/)
   collisions.shift()
 
@@ -148,8 +149,27 @@ const collisionParser = (point) => {
     const vel = collision.match(xyzParser('velocity:'))
     const rrate = collision.match(xyzParser('rotationRate:'))
     const pos = collision.match(xyzParser('position:'))
+    const collidedWithMatch = collision.match(/pongGameCollisionType:(.*)/)
+
+    let collidedWith = collidedWithMatch[1]
+    if (isFirst) {
+      if (collidedWith.endsWith('A')) {
+	collidedWith = 'My' + collidedWith.slice(0, -1)
+      }
+      if (collidedWith.endsWith('B')) {
+	collidedWith = 'Their' + collidedWith.slice(0, -1)
+      }
+    } else {
+      if (collidedWith.endsWith('A')) {
+	collidedWith = 'Their' + collidedWith.slice(0, -1)
+      }
+      if (collidedWith.endsWith('B')) {
+	collidedWith = 'My' + collidedWith.slice(0, -1)
+      }
+    }
 
     return new Collision(
+      collidedWith,
       parseFloat(vel[1]),
       parseFloat(vel[2]),
       parseFloat(vel[3]),
@@ -243,7 +263,7 @@ const roundParser = (round, username, isFirst) => {
     const myPlayerId = getMyPlayerId(pointInfo, username)
 
     const hits = pointParser(point) || []
-    const collisions = collisionParser(point) || []
+    const collisions = collisionParser(point, isFirst) || []
     const served = didIServe(lastPointInfo?.CurrentServer || pointInfo?.CurrentServer, myPlayerId)
 
     const won = didIWin(pointInfo.RoundScores, lastPointInfo?.RoundScores, isFirst)

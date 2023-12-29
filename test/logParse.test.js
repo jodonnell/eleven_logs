@@ -104,6 +104,13 @@ describe("log parse", () => {
       expect(collisions[0].posx).toBe(0.67126739025116)
     })
 
+    it("collisions have what they collided with", () => {
+      expect(collisions[0].with).toBe('TheirTable')
+      expect(collisions[1].with).toBe('MyTable')
+      expect(collisions[2].with).toBe('MyHit')
+      expect(collisions[3].with).toBe('MyTable')
+    })
+
     it("has serves correct for round 1", () => {
       let isServer = false
       for (let i = 0; i < 20; i+= 2) {
