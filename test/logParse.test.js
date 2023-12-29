@@ -19,6 +19,18 @@ describe("log parse", () => {
     expect(sessions.serviceFaultPercentage).toBe(0.08387096774193549)
   })
 
+  it("shows serve ace percentage", () => {
+    expect(sessions.serviceAcePercentage).toBe(0.21935483870967742)
+  })
+
+  it("shows serve return ace percentage", () => {
+    expect(sessions.serviceReturnAcePercentage).toBe(0.2037037037037037)
+  })
+
+  it("shows the percent you win on your serve", () => {
+    expect(sessions.winServePercentage).toBe(0.5419354838709678)
+  })
+
   describe("first session", () => {
     const session = sessions.sessions[0]
     const match = session.matches[0]

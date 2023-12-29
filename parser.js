@@ -17,17 +17,53 @@ class PlayerSessions {
   }
 
   get serviceFaultPercentage() {
-    let serveCount = 0
     let faultCount = 0
     this.allPoints.forEach((p) => {
-      if (p.isServer)
-	serveCount += 1
-
       if (p.isServer && p.isServiceFault)
 	faultCount += 1
     })
 
-    return faultCount / serveCount
+    return faultCount / this.allServingPoints.length
+  }
+
+  get allServingPoints() {
+    return this.allPoints.filter((p) => {
+      return p.isServer
+    })
+  }
+
+  get allReturningPoints() {
+    return this.allPoints.filter((p) => {
+      return !p.isServer
+    })
+  }
+
+  get winServePercentage() {
+    const wins = this.allServingPoints.filter((p) => {
+      return p.didIWin
+    })
+
+    return wins.length / this.allServingPoints.length
+  }
+
+  get serviceAcePercentage() {
+    const aceServeCount = this.allServingPoints.filter((point) => {
+      if (point.isServiceFault)
+	return false
+
+      return point.collisions.filter(c => c.with === 'MyTable').length < 2
+    })
+    return aceServeCount.length / this.allServingPoints.length
+  }
+
+  get serviceReturnAcePercentage() {
+    const aceServeCount = this.allReturningPoints.filter((point) => {
+      if (point.isServiceFault)
+	return false
+
+      return point.collisions.filter(c => c.with === 'TheirTable').length < 2
+    })
+    return aceServeCount.length / this.allReturningPoints.length
   }
 
   get allPoints() {
@@ -117,6 +153,9 @@ class Point {
 
     } else {
       if (this.collisions[0].with !== 'TheirTable')
+	return true
+
+      if (!this.collisions[1])
 	return true
 
       if (this.collisions[1].with !== 'MyTable')
