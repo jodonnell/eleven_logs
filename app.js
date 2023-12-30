@@ -1,4 +1,4 @@
-import { parseFiles } from './parser.js'
+import { playerSessions, fileParse } from './parser.js'
 
 const template = (sessions) => (
 `
@@ -19,17 +19,23 @@ win point on serve percentage: ${sessions.winServePercentage}
 
 const logsUpload = document.getElementById('logs-upload')
 logsUpload.onchange = function () {
-  const file = logsUpload.files[0]
+  const files = logsUpload.files
 
-  const reader = new FileReader();
-  reader.readAsText(file, "UTF-8");
-  reader.onload = function (evt) {
-    const contents = evt.target.result
-    const sessions = parseFiles(file.name, contents)
+  Object.keys(files).forEach(i => {
+    const file = files[i]
+    const reader = new FileReader();
+    reader.readAsText(file, "UTF-8");
+    reader.onload = function (evt) {
+      const contents = evt.target.result
 
-    document.getElementById("page").innerHTML = template(sessions)
-  }
-  reader.onerror = function (evt) {
-    document.getElementById("page").innerHTML = "error reading file";
-  }
+      const sessions = playerSessions([fileParse(contents, file.name)])
+      //return fileParse(contents, file)
+      // const sessions = parseFiles(file.name, contents)
+
+      document.getElementById("page").innerHTML = template(sessions)
+    }
+    reader.onerror = function (evt) {
+      document.getElementById("page").innerHTML = "error reading file";
+    }
+  })
 }
