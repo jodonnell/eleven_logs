@@ -38,6 +38,18 @@ class PlayerSessions {
     })
   }
 
+  get allMyHitsToTable() {
+    return this.allPoints.map((p) => {
+      return p.collisions.filter(c => c.with === 'TheirTable')
+    }).flat()
+  }
+
+  get allTheirHitsToTable() {
+    return this.allPoints.map((p) => {
+      return p.collisions.filter(c => c.with === 'MyTable')
+    }).flat()
+  }
+
   get winServePercentage() {
     const wins = this.allServingPoints.filter((p) => {
       return p.didIWin
