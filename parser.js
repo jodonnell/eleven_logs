@@ -465,22 +465,22 @@ const getUsername = (fileContents) => {
   return userNameMatch?.[1] || 'wagonman'
 }
 
-const fileParse = (dir, file) => {
-  console.log(file)
-
-  const contents = fs.readFileSync(dirname + dir + file, 'utf8')
-
+const fileParse = (contents, filename) => {
   const gamesLines = contents.split('Sending MP match prefab activity')
   gamesLines.shift()
   const games = gamesLines.map((game) => {
     return gameParser(game, getUsername(contents))
   })
 
-  return new PlaySession(getDateFromFilename(file), games)
+  return new PlaySession(getDateFromFilename(filename), games)
 }
 
 export const allFileParser = (dir) => {
   const files = fs.readdirSync(dirname + dir)
-  const allPlaySessions = files.map((file) => fileParse(dir, file))
+  const allPlaySessions = files.map((file) => {
+    console.log(file)
+    const contents = fs.readFileSync(dirname + dir + file, 'utf8')
+    return fileParse(contents, file)
+  })
   return new PlayerSessions(allPlaySessions.filter(x => x))
 }
