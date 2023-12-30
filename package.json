@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "esbuild app.js --bundle --outfile=out.js",
+    "build:watch": "esbuild app.js --bundle --outfile=out.js --watch",
     "console": "node stats.js",
     "test": "jest ./test/",
     "test:watch": "jest --watch ./test/"
