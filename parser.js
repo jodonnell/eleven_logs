@@ -344,17 +344,15 @@ const didIServe = (serverId, playerId) => {
 
 const didIWin = (roundScore, lastRoundScore, isFirst) => {
   const currentRound = last(roundScore)
-  if (!currentRound)
-    return false
 
   if (!lastRoundScore) {
-    if (currentRound[0] === 1 && isFirst)
+    if (currentRound?.[0] === 1 && isFirst)
       return true
 
-    if (currentRound[0] === 1 && !isFirst)
+    if (currentRound?.[0] === 1 && !isFirst)
       return false
 
-    return currentRound[1] === 1 && !isFirst
+    return currentRound?.[1] === 1 && !isFirst
   }
 
   const lastRound = last(lastRoundScore)
