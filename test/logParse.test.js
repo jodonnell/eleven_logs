@@ -1,6 +1,6 @@
-const parser = require('../parser')
+import { allFileParser } from '../parser.js'
 
-const sessions = parser.allFileParser('/test_logs/')
+const sessions = allFileParser('/test_logs/')
 
 
 describe("log parse", () => {

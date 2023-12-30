@@ -1,5 +1,17 @@
-const fs = require('fs')
-const _ = require('lodash')
+import fs from 'fs'
+import sum from 'lodash/sum.js'
+import last from 'lodash/last.js'
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+let dirname
+if (import.meta.url) {
+  const filename = fileURLToPath(import.meta.url); // get the resolved path to the file
+  dirname = path.dirname(filename); // get the name of the directory
+}
+else {
+  dirname = __dirname
+}
 
 class PlayerSessions {
   constructor(sessions) {
@@ -13,7 +25,7 @@ class PlayerSessions {
   }
 
   get matchesWon() {
-    return _.sum(this.sessions.map(s => s.matchesWon))
+    return sum(this.sessions.map(s => s.matchesWon))
   }
 
   get serviceFaultPercentage() {
@@ -282,9 +294,9 @@ const collisionParser = (point, isFirst) => {
       parseFloat(vel?.[1] || 0),
       parseFloat(vel?.[2] || 0),
       parseFloat(vel?.[3] || 0),
-      parseFloat(rrate[1]) / 360.0,
-      parseFloat(rrate[2]) / 360.0,
-      parseFloat(rrate[3]) / 360.0,
+      parseFloat(rrate?.[1]) / 360.0,
+      parseFloat(rrate?.[2]) / 360.0,
+      parseFloat(rrate?.[3]) / 360.0,
       parseFloat(pos?.[1] || 0),
       parseFloat(pos?.[2] || 0),
       parseFloat(pos?.[3] || 0),
@@ -292,7 +304,7 @@ const collisionParser = (point, isFirst) => {
   })
 
   while (true) {
-    if (collisions?.[0]?.with === 'TheirHit' && collisions?.[1].with === 'TheirHit')
+    if (collisions?.[0]?.with === 'TheirHit' && collisions?.[1]?.with === 'TheirHit')
       collisions.shift()
     else
       break
@@ -331,7 +343,10 @@ const didIServe = (serverId, playerId) => {
 }
 
 const didIWin = (roundScore, lastRoundScore, isFirst) => {
-  const currentRound = _.last(roundScore)
+  const currentRound = last(roundScore)
+  if (!currentRound)
+    return false
+
   if (!lastRoundScore) {
     if (currentRound[0] === 1 && isFirst)
       return true
@@ -342,7 +357,7 @@ const didIWin = (roundScore, lastRoundScore, isFirst) => {
     return currentRound[1] === 1 && !isFirst
   }
 
-  const lastRound = _.last(lastRoundScore)
+  const lastRound = last(lastRoundScore)
 
   if (!currentRound) {// someone one
     if (lastRound[0] > lastRound[1])
@@ -455,7 +470,7 @@ const getUsername = (fileContents) => {
 const fileParse = (dir, file) => {
   console.log(file)
 
-  const contents = fs.readFileSync(__dirname + dir + file, 'utf8')
+  const contents = fs.readFileSync(dirname + dir + file, 'utf8')
 
   const gamesLines = contents.split('Sending MP match prefab activity')
   gamesLines.shift()
@@ -466,12 +481,8 @@ const fileParse = (dir, file) => {
   return new PlaySession(getDateFromFilename(file), games)
 }
 
-const allFileParser = (dir) => {
-  const files = fs.readdirSync(__dirname + dir)
+export const allFileParser = (dir) => {
+  const files = fs.readdirSync(dirname + dir)
   const allPlaySessions = files.map((file) => fileParse(dir, file))
   return new PlayerSessions(allPlaySessions.filter(x => x))
-}
-
-module.exports = {
-  allFileParser
 }

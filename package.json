@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "",
   "main": "parser.js",
+  "type": "module",
   "scripts": {
     "test": "jest ./test/",
     "test:watch": "jest --watch ./test/"
@@ -12,5 +13,9 @@
   "dependencies": {
     "jest": "^29.7.0",
     "lodash": "^4.17.21"
+  },
+  "devDependencies": {
+    "esbuild": "^0.19.11",
+    "esbuild-jest": "^0.5.0"
   }
 }

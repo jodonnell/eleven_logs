@@ -1,6 +1,6 @@
-const parser = require('./parser')
+import { allFileParser } from './parser.js'
 
-const sessions = parser.allFileParser('/logs/')
+const sessions = allFileParser('/logs/')
 
 console.log('service fault percentage: ', sessions.serviceFaultPercentage)
 console.log('win on service percentage: ', sessions.serviceAcePercentage)
