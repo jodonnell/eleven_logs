@@ -1,17 +1,5 @@
-import fs from 'fs'
 import sum from 'lodash/sum.js'
 import last from 'lodash/last.js'
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-let dirname
-if (import.meta.url) {
-  const filename = fileURLToPath(import.meta.url); // get the resolved path to the file
-  dirname = path.dirname(filename); // get the name of the directory
-}
-else {
-  dirname = __dirname
-}
 
 class PlayerSessions {
   constructor(sessions) {
@@ -465,7 +453,7 @@ const getUsername = (fileContents) => {
   return userNameMatch?.[1] || 'wagonman'
 }
 
-const fileParse = (contents, filename) => {
+export const fileParse = (contents, filename) => {
   const gamesLines = contents.split('Sending MP match prefab activity')
   gamesLines.shift()
   const games = gamesLines.map((game) => {
@@ -475,12 +463,11 @@ const fileParse = (contents, filename) => {
   return new PlaySession(getDateFromFilename(filename), games)
 }
 
-export const allFileParser = (dir) => {
-  const files = fs.readdirSync(dirname + dir)
-  const allPlaySessions = files.map((file) => {
-    console.log(file)
-    const contents = fs.readFileSync(dirname + dir + file, 'utf8')
-    return fileParse(contents, file)
-  })
+export const parseFiles = (filename, contents) => {
+  const allPlaySessions = [fileParse(contents, filename)]
   return new PlayerSessions(allPlaySessions.filter(x => x))
+}
+
+export const playerSessions = (playSessions) => {
+  return new PlayerSessions(playSessions.filter(x => x))
 }

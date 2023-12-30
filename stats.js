@@ -1,6 +1,8 @@
-import { allFileParser } from './parser.js'
+import { parseDirectory } from './directory_parser.js'
 
-const sessions = allFileParser('/logs/')
+
+
+const sessions = parseDirectory('/logs/')
 
 console.log('service fault percentage: ', sessions.serviceFaultPercentage)
 console.log('win on service percentage: ', sessions.serviceAcePercentage)

@@ -1,6 +1,6 @@
-import { allFileParser } from '../parser.js'
+import { parseDirectory } from '../directory_parser.js'
 
-const sessions = allFileParser('/test_logs/')
+const sessions = parseDirectory('/test_logs/')
 
 
 describe("log parse", () => {
