@@ -266,6 +266,11 @@ const collisionParser = (point, isFirst) => {
     const pos = collision.match(xyzParser('position:'))
     const collidedWithMatch = collision.match(/pongGameCollisionType:(.*)/)
 
+    if (!isFirst) {
+      pos[1] = parseFloat(pos[1]) * -1
+      pos[3] = parseFloat(pos[3]) * -1
+    }
+
     let collidedWith
     if (!collidedWithMatch) {
       collidedWith = 'TheirHit'

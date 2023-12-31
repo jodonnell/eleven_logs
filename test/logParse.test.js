@@ -117,8 +117,13 @@ describe("log parse", () => {
 
     it("has collisions", () => {
       expect(collisions.length).toBe(5)
-      expect(collisions[0].posx).toBe(0.71672260761261)
     })
+
+    it("does flip coords when you are side B", () => {
+	expect(collisions[0].posx).toBe(-0.71672260761261)
+	expect(collisions[0].posz).toBe(1.82300412654877)
+    })
+
 
     it("collisions have what they collided with", () => {
       expect(collisions[0].with).toBe('TheirHit')
@@ -181,6 +186,8 @@ describe("log parse", () => {
     const round1Points = match.rounds[0].points
     const round2Points = match.rounds[1].points
 
+    const collisions = round1Points[0].collisions
+
     it("has the right date", () => {
       expect(session.date.getMonth()).toBe(10)
       expect(session.date.getDate()).toBe(19)
@@ -205,6 +212,11 @@ describe("log parse", () => {
       expect(session.matches[3].won).toBe(true)
       expect(session.matches[4].won).toBe(true)
       expect(session.matches[5].won).toBe(true)
+    })
+
+    it("does not flip coords when you are side A", () => {
+      expect(collisions[0].posx).toBe(0.288470834493637)
+      expect(collisions[0].posz).toBe(1.73829102516174)
     })
   })
 })
