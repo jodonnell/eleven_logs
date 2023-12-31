@@ -53,7 +53,7 @@ const createHeatmap = (sessions) => {
     const heatmapInstance = h337.create({
       // only container is required, the rest will be defaults
       container: document.querySelector('#table'),
-      radius: 8
+      radius: 10
     });
 
 
@@ -66,14 +66,22 @@ const createHeatmap = (sessions) => {
   const positions = {}
   sessions.allMyHitsToTable.forEach((collision) => {
 
-    const posx = parseInt((collision.posx + 0.8) * 250) // 400 / range
-    const posz = flipOnAxis(parseInt(collision.posz * 250), 350)
+    let posx = parseInt((collision.posx + 0.8) * 250) // 400 / range
+    let posz = flipOnAxis(parseInt(collision.posz * 250), 350)
 
     if (posx > 400 || posx < 0)
       return
 
     if (posz > 350 || posz < 0)
       return
+
+      if (!(posx % 5 === 0)) {
+	  posx = posx - (posx % 5)
+      }
+
+      if (!(posz % 5 === 0)) {
+	  posz = posz - (posz % 5)
+      }
 
     if (!positions[posx])
       positions[posx] = {}
