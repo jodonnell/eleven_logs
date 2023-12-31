@@ -45,6 +45,10 @@ logsUpload.onchange = function () {
   })
 }
 
+const flipOnAxis = (value, axisMax) => {
+  return axisMax - value
+}
+
 const createHeatmap = (sessions) => {
     const heatmapInstance = h337.create({
       // only container is required, the rest will be defaults
@@ -61,9 +65,9 @@ const createHeatmap = (sessions) => {
 
   const positions = {}
   sessions.allMyHitsToTable.forEach((collision) => {
-    //const posx = parseInt((collision.posx + 1) * 400)
-    const posx = parseInt((collision.posx + 0.5) * 400)
-    const posz = parseInt((collision.posz + 1.4) * 350)
+
+    const posx = parseInt((collision.posx + 0.8) * 250) // 400 / range
+    const posz = flipOnAxis(parseInt(collision.posz * 250), 350)
 
     if (posx > 400 || posx < 0)
       return
