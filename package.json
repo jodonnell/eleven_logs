@@ -8,6 +8,7 @@
     "build": "esbuild app.js --bundle --outfile=out.js",
     "build:watch": "esbuild app.js --bundle --outfile=out.js --servedir=.",
     "console": "node stats.js",
+    "deploy": "./bin/deploy.sh",
     "lint": "eslint *.js",
     "prettier": "prettier *.js --write",
     "test": "jest ./test/",
