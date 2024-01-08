@@ -143,8 +143,19 @@ describe("log parse", () => {
       expect(collisions[0].point.collisions.length).toBe(5)
     })
 
-    it("collision is forehand", () => {
+    it("points have rounds", () => {
+      expect(round1Points[0].round).toBe(round1)
+    })
 
+    it("rounds have matches", () => {
+      expect(round1.match).toBe(match)
+    })
+
+    it("matches to have session", () => {
+      expect(match.session).toBe(session)
+    })
+
+    it("collision is forehand", () => {
       expect(collisions[0].isForehand).toBe(false)
       expect(collisions[0].isBackhand).toBe(true)
 

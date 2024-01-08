@@ -203,7 +203,9 @@ const roundParser = (round, username, isFirst) => {
     })
     .filter((x) => x)
 
-  return new Round(allPoints, false)
+  const roundObj = new Round(allPoints, false)
+  allPoints.forEach(p => p.round = roundObj)
+  return roundObj
 }
 
 const getOppenentAndIsFirst = (game, username) => {
@@ -243,7 +245,9 @@ const gameParser = (game, username) => {
     })
     .filter((x) => x)
 
-  return new Match(opponent, rounds)
+  const match = new Match(opponent, rounds)
+  rounds.forEach(r => r.match = match)
+  return match
 }
 
 const getDateFromFilename = (filename) => {
@@ -287,7 +291,9 @@ export const fileParse = (contents, filename) => {
     return gameParser(game, getUsername(contents))
   })
 
-  return new PlaySession(getDateFromFilename(filename), games)
+  const playSession = new PlaySession(getDateFromFilename(filename), games)
+  games.forEach(g => g.session = playSession)
+  return playSession
 }
 
 export const parseFiles = (filename, contents) => {
