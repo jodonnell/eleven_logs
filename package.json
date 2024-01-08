@@ -8,6 +8,8 @@
     "build": "esbuild app.js --bundle --outfile=out.js",
     "build:watch": "esbuild app.js --bundle --outfile=out.js --servedir=.",
     "console": "node stats.js",
+    "lint": "eslint *.js",
+    "prettier": "prettier *.js --write",
     "test": "jest ./test/",
     "test:watch": "jest --watch ./test/"
   },
@@ -15,11 +17,14 @@
   "license": "ISC",
   "dependencies": {
     "heatmap.js": "^2.0.5",
-    "jest": "^29.7.0",
     "lodash": "^4.17.21"
   },
   "devDependencies": {
     "esbuild": "^0.19.11",
-    "esbuild-jest": "^0.5.0"
+    "esbuild-jest": "^0.5.0",
+    "eslint": "^8.56.0",
+    "eslint-config-prettier": "^9.1.0",
+    "jest": "^29.7.0",
+    "prettier": "^3.1.1"
   }
 }
