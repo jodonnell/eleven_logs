@@ -8,6 +8,12 @@ describe("log parse", () => {
     expect(sessions.sessions.length).toBe(2)
   })
 
+  it("has all my its tot table", () => {
+    expect(sessions.allMyHitsToTable().length).toBe(590)
+    expect(sessions.allMyHitsToTable(false).length).toBe(267)
+    expect(sessions.allMyHitsToTable(false, false).length).toBe(1)
+  })
+
   it("has correct wins", () => {
     expect(sessions.sessions[0].matchesWon).toBe(1)
     expect(sessions.sessions[1].matchesWon).toBe(5)
@@ -131,6 +137,22 @@ describe("log parse", () => {
       expect(collisions[2].with).toBe('MyTable')
       expect(collisions[3].with).toBe('MyHit')
       expect(collisions[4].with).toBe('MyTable')
+    })
+
+    it("collisions have points", () => {
+      expect(collisions[0].point.collisions.length).toBe(5)
+    })
+
+    it("collision is forehand", () => {
+
+      expect(collisions[0].isForehand).toBe(false)
+      expect(collisions[0].isBackhand).toBe(true)
+
+      expect(round1Points[2].collisions[1].isForehand).toBe(true)
+    })
+
+    it("collisions have last hits", () => {
+      expect(collisions[4].lastHit).toBe(collisions[3])
     })
 
     it("has service faults", () => {

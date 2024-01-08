@@ -38,9 +38,25 @@ class PlayerSessions {
     })
   }
 
-  get allMyHitsToTable() {
+  allMyHitsToTable(forehand=true, backhand=true, net=true, serve=true) {
     return this.allPoints.map((p) => {
-      return p.collisions.filter(c => c.with === 'TheirTable')
+	return p.collisions.map((c, i) => {
+	  if (c.with === 'TheirTable') {
+	    const lastHitWasServe = p.collisions?.[i - 1]?.with === 'TheirHit'
+
+            let exclude = lastHitWasServe
+            if (!forehand)
+              exclude = exclude || c.lastHit?.isForehand
+
+            if (!backhand)
+              exclude = exclude || c.lastHit?.isBackhand
+
+
+            if (!exclude) {
+	      return c
+            }
+            }
+	}).filter(x => x)
     }).flat()
   }
 
@@ -206,7 +222,7 @@ class Hit {
 }
 
 class Collision {
-  constructor(with_, vx, vy, vz, rx, ry, rz, posx, posy, posz) {
+  constructor(with_, vx, vy, vz, rx, ry, rz, posx, posy, posz, lastHit) {
     this.with = with_
     this.vx = vx
     this.vy = vy
@@ -217,13 +233,18 @@ class Collision {
     this.posx = posx
     this.posy = posy
     this.posz = posz
+    this.lastHit = lastHit
 
     this.metersPerSecond = magnitude(vx, vy, vz)
     this.revolutions = magnitude(rx, ry, rz)
   }
 
   get isForehand() {
-    return this.posx > 0
+    return this.posx >= 0
+  }
+
+  get isBackhand() {
+    return this.posx < 0
   }
 
 }
@@ -254,8 +275,9 @@ const xyzParser = (anchor) => {
 const collisionParser = (point, isFirst) => {
   const collisionChunks = point.split(/(?:MyCollision:)|(?:Received ball hit from opponent:)/)
   collisionChunks.shift()
-  //console.log('NEW POINT')
+  //console.log('POOP NEW POINT')
 
+  let lastHit = null
   const collisions = collisionChunks.map((collision) => {
     collision = collision.replace('pos:', 'position:')
     collision = collision.replace('vel:', 'velocity:')
@@ -294,7 +316,7 @@ const collisionParser = (point, isFirst) => {
     }
 
     //console.log('POOP', collidedWith)
-    return new Collision(
+    const collisionObj = new Collision(
       collidedWith,
       parseFloat(vel?.[1] || 0),
       parseFloat(vel?.[2] || 0),
@@ -305,7 +327,13 @@ const collisionParser = (point, isFirst) => {
       parseFloat(pos?.[1] || 0),
       parseFloat(pos?.[2] || 0),
       parseFloat(pos?.[3] || 0),
+      lastHit
     )
+
+    if (collidedWith === 'MyHit' || collidedWith === 'TheirHit')
+      lastHit = collisionObj
+
+    return collisionObj
   })
 
   while (true) {
@@ -407,7 +435,9 @@ const roundParser = (round, username, isFirst) => {
 
     const won = didIWin(pointInfo.RoundScores, lastPointInfo?.RoundScores, isFirst)
     lastPointInfo = pointInfo
-    return new Point(hits, collisions, won, served)
+    const pointObj = new Point(hits, collisions, won, served)
+    pointObj.collisions.forEach(c => c.point = pointObj)
+    return pointObj
   }).filter(x => x)
 
 
