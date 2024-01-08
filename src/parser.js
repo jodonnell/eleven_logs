@@ -15,6 +15,32 @@ const xyzParser = (anchor) => {
   return re
 }
 
+const getCollidedWith = (collision, isFirst) => {
+  const collidedWithMatch = collision.match(/pongGameCollisionType:(.*)/)
+
+  if (!collidedWithMatch) {
+    return "TheirHit"
+  }
+
+  const collidedWithPart = collidedWithMatch[1]
+  const collidedWithSideRemoved = collidedWithPart.slice(0, -1)
+  if (isFirst) {
+    if (collidedWithPart.endsWith("A")) {
+      return "My" + collidedWithSideRemoved
+    }
+    if (collidedWithPart.endsWith("B")) {
+      return "Their" + collidedWithSideRemoved
+    }
+  } else {
+    if (collidedWithPart.endsWith("A")) {
+      return "Their" + collidedWithSideRemoved
+    }
+    if (collidedWithPart.endsWith("B")) {
+      return "My" + collidedWithSideRemoved
+    }
+  }
+}
+
 const collisionParser = (point, isFirst) => {
   const collisionChunks = point.split(
     /(?:MyCollision:)|(?:Received ball hit from opponent:)/,
@@ -31,34 +57,13 @@ const collisionParser = (point, isFirst) => {
     const vel = collision.match(xyzParser("velocity:"))
     const rrate = collision.match(xyzParser("rotationRate:"))
     const pos = collision.match(xyzParser("position:"))
-    const collidedWithMatch = collision.match(/pongGameCollisionType:(.*)/)
 
     if (!isFirst && pos) {
       pos[1] = parseFloat(pos[1]) * -1
       pos[3] = parseFloat(pos[3]) * -1
     }
 
-    let collidedWith
-    if (!collidedWithMatch) {
-      collidedWith = "TheirHit"
-    } else {
-      collidedWith = collidedWithMatch[1]
-      if (isFirst) {
-        if (collidedWith.endsWith("A")) {
-          collidedWith = "My" + collidedWith.slice(0, -1)
-        }
-        if (collidedWith.endsWith("B")) {
-          collidedWith = "Their" + collidedWith.slice(0, -1)
-        }
-      } else {
-        if (collidedWith.endsWith("A")) {
-          collidedWith = "Their" + collidedWith.slice(0, -1)
-        }
-        if (collidedWith.endsWith("B")) {
-          collidedWith = "My" + collidedWith.slice(0, -1)
-        }
-      }
-    }
+    const collidedWith = getCollidedWith(collision, isFirst)
 
     //console.log('POOP', collidedWith)
     const collisionObj = new Collision(
