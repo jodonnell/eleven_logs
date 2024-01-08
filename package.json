@@ -5,12 +5,12 @@
   "main": "parser.js",
   "type": "module",
   "scripts": {
-    "build": "esbuild app.js --bundle --outfile=out.js",
-    "build:watch": "esbuild app.js --bundle --outfile=out.js --servedir=.",
-    "console": "node stats.js",
+    "build": "esbuild src/app.js --bundle --outfile=out.js",
+    "build:watch": "esbuild src/app.js --bundle --outfile=out.js --servedir=.",
+    "console": "node src/stats.js",
     "deploy": "./bin/deploy.sh",
-    "lint": "eslint *.js",
-    "prettier": "prettier *.js --write",
+    "lint": "eslint src/*.js",
+    "prettier": "prettier src/*.js --write",
     "test": "jest ./test/",
     "test:watch": "jest --watch ./test/"
   },

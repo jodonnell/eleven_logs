@@ -1,6 +1,6 @@
-import { parseDirectory } from '../directory_parser.js'
+import { parseDirectory } from '../src/directory_parser.js'
 
-const sessions = parseDirectory('/test_logs/')
+const sessions = parseDirectory('/../test_logs/')
 
 
 describe("log parse", () => {
