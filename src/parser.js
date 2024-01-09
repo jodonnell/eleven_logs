@@ -39,6 +39,7 @@ const getCollidedWith = (collision, isFirst) => {
       return "My" + collidedWithSideRemoved
     }
   }
+  return collidedWithPart
 }
 
 const collisionParser = (point, isFirst) => {

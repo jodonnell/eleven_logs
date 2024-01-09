@@ -137,6 +137,8 @@ describe("log parse", () => {
       expect(collisions[2].with).toBe('MyTable')
       expect(collisions[3].with).toBe('MyHit')
       expect(collisions[4].with).toBe('MyTable')
+
+      expect(sessions.sessions[1].matches[1].rounds[1].points[13].collisions[4].with).toBe('Other')
     })
 
     it("collisions have points", () => {
