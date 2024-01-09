@@ -42,6 +42,18 @@ const getCollidedWith = (collision, isFirst) => {
   return collidedWithPart
 }
 
+const cleanUpCollisions = (collisions) => {
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    if (
+      collisions?.[0]?.with === "TheirHit" &&
+      collisions?.[1]?.with === "TheirHit"
+    )
+      collisions.shift()
+    else break
+  }
+}
+
 const collisionParser = (point, isFirst) => {
   const collisionChunks = point.split(
     /(?:MyCollision:)|(?:Received ball hit from opponent:)/,
@@ -87,15 +99,7 @@ const collisionParser = (point, isFirst) => {
     return collisionObj
   })
 
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    if (
-      collisions?.[0]?.with === "TheirHit" &&
-      collisions?.[1]?.with === "TheirHit"
-    )
-      collisions.shift()
-    else break
-  }
+  cleanUpCollisions(collisions)
 
   return collisions
 }
