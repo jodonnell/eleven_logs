@@ -1,7 +1,6 @@
-import { parseDirectory } from '../src/directory_parser.js'
+import { parseDirectory } from "../src/directory_parser.js"
 
-const sessions = parseDirectory('/../test_logs/')
-
+const sessions = parseDirectory("/../test_logs/")
 
 describe("log parse", () => {
   it("has two play sessions", () => {
@@ -50,7 +49,6 @@ describe("log parse", () => {
     const hits = round1Points[0].hits
     const collisions = round1Points[0].collisions
 
-
     it("has the right date", () => {
       expect(session.date.getMonth()).toBe(10)
       expect(session.date.getDate()).toBe(18)
@@ -95,7 +93,6 @@ describe("log parse", () => {
       expect(round1Points[19].didIWin).toBe(true)
 
       expect(round2Points[0].didIWin).toBe(true)
-
     })
 
     it("has the correct round score", () => {
@@ -126,19 +123,20 @@ describe("log parse", () => {
     })
 
     it("does flip coords when you are side B", () => {
-	expect(collisions[0].posx).toBe(-0.71672260761261)
-	expect(collisions[0].posz).toBe(1.82300412654877)
+      expect(collisions[0].posx).toBe(-0.71672260761261)
+      expect(collisions[0].posz).toBe(1.82300412654877)
     })
 
-
     it("collisions have what they collided with", () => {
-      expect(collisions[0].with).toBe('TheirHit')
-      expect(collisions[1].with).toBe('TheirTable')
-      expect(collisions[2].with).toBe('MyTable')
-      expect(collisions[3].with).toBe('MyHit')
-      expect(collisions[4].with).toBe('MyTable')
+      expect(collisions[0].with).toBe("TheirHit")
+      expect(collisions[1].with).toBe("TheirTable")
+      expect(collisions[2].with).toBe("MyTable")
+      expect(collisions[3].with).toBe("MyHit")
+      expect(collisions[4].with).toBe("MyTable")
 
-      expect(sessions.sessions[1].matches[1].rounds[1].points[13].collisions[4].with).toBe('Other')
+      expect(
+        sessions.sessions[1].matches[1].rounds[1].points[13].collisions[4].with,
+      ).toBe("Other")
     })
 
     it("collisions have points", () => {
@@ -189,21 +187,21 @@ describe("log parse", () => {
 
     it("has serves correct for round 1", () => {
       let isServer = false
-      for (let i = 0; i < 20; i+= 2) {
-	expect(round1Points[i].isServer).toBe(isServer)
-	expect(round1Points[i + 1].isServer).toBe(isServer)
+      for (let i = 0; i < 20; i += 2) {
+        expect(round1Points[i].isServer).toBe(isServer)
+        expect(round1Points[i + 1].isServer).toBe(isServer)
 
-	isServer = !isServer
+        isServer = !isServer
       }
     })
 
     it("has serves correct for round 2", () => {
       let isServer = true
-      for (let i = 0; i < 20; i+= 2) {
-	expect(round2Points[i].isServer).toBe(isServer)
-	expect(round2Points[i + 1].isServer).toBe(isServer)
+      for (let i = 0; i < 20; i += 2) {
+        expect(round2Points[i].isServer).toBe(isServer)
+        expect(round2Points[i + 1].isServer).toBe(isServer)
 
-	isServer = !isServer
+        isServer = !isServer
       }
       expect(round2Points[20].isServer).toBe(true)
       expect(round2Points[21].isServer).toBe(false)
@@ -216,10 +214,8 @@ describe("log parse", () => {
     const thirdMatch = session.matches[2]
 
     const round1 = match.rounds[0]
-    const round2 = match.rounds[1]
 
-    const round1Points = match.rounds[0].points
-    const round2Points = match.rounds[1].points
+    const round1Points = round1.points
 
     const collisions = round1Points[0].collisions
 

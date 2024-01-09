@@ -9,8 +9,8 @@
     "build:watch": "esbuild src/app.js --bundle --outfile=out.js --servedir=.",
     "console": "node src/stats.js",
     "deploy": "./bin/deploy.sh",
-    "lint": "eslint src/*.js",
-    "prettier": "prettier src/*.js --write",
+    "lint": "eslint src/*.js test/*.js",
+    "prettier": "prettier src/*.js test/*.js --write",
     "test": "jest ./test/",
     "test:watch": "jest --watch ./test/"
   },
