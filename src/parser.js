@@ -45,12 +45,20 @@ const getCollidedWith = (collision, isFirst) => {
 const cleanUpCollisions = (collisions) => {
   // eslint-disable-next-line no-constant-condition
   while (true) {
+    const theirServe = collisions?.[0]?.with === "TheirHit"
+    const myServe = collisions?.[0]?.with === "MyToss"
+
     if (
       collisions?.[0]?.with === "TheirHit" &&
       collisions?.[1]?.with === "TheirHit"
     )
       collisions.shift()
-    else break
+    else if (!(theirServe || myServe)) {
+      if (collisions.length === 0) {
+        break
+      }
+      collisions.shift()
+    } else break
   }
 }
 
@@ -63,6 +71,7 @@ const collisionParser = (point, isFirst) => {
 
   let lastHit = null
   const collisions = collisionChunks.map((collision) => {
+    collision = collision.split("YourCollision:")[0]
     collision = collision.replace("pos:", "position:")
     collision = collision.replace("vel:", "velocity:")
     collision = collision.replace("rrate:", "rotationRate:")
@@ -209,7 +218,7 @@ const roundParser = (round, username, isFirst) => {
     .filter((x) => x)
 
   const roundObj = new Round(allPoints, false)
-  allPoints.forEach(p => p.round = roundObj)
+  allPoints.forEach((p) => (p.round = roundObj))
   return roundObj
 }
 
@@ -251,7 +260,7 @@ const gameParser = (game, username) => {
     .filter((x) => x)
 
   const match = new Match(opponent, rounds)
-  rounds.forEach(r => r.match = match)
+  rounds.forEach((r) => (r.match = match))
   return match
 }
 
@@ -297,7 +306,7 @@ export const fileParse = (contents, filename) => {
   })
 
   const playSession = new PlaySession(getDateFromFilename(filename), games)
-  games.forEach(g => g.session = playSession)
+  games.forEach((g) => (g.session = playSession))
   return playSession
 }
 

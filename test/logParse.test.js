@@ -9,9 +9,9 @@ describe("log parse", () => {
   })
 
   it("has all my its tot table", () => {
-    expect(sessions.allMyHitsToTable().length).toBe(590)
-    expect(sessions.allMyHitsToTable(false).length).toBe(267)
-    expect(sessions.allMyHitsToTable(false, false).length).toBe(1)
+    expect(sessions.allMyHitsToTable().length).toBe(574)
+    expect(sessions.allMyHitsToTable(false).length).toBe(259)
+    expect(sessions.allMyHitsToTable(false, false).length).toBe(0)
   })
 
   it("has correct wins", () => {
@@ -30,7 +30,7 @@ describe("log parse", () => {
   })
 
   it("shows serve return ace percentage", () => {
-    expect(sessions.serviceReturnAcePercentage).toBe(0.2037037037037037)
+    expect(sessions.serviceReturnAcePercentage).toBe(0.20987654320987653)
   })
 
   it("shows the percent you win on your serve", () => {
