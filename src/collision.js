@@ -3,7 +3,21 @@ const magnitude = (a, b, c) => {
 }
 
 class Collision {
-  constructor(with_, vx, vy, vz, rx, ry, rz, posx, posy, posz, lastHit) {
+  constructor(
+    with_,
+    vx,
+    vy,
+    vz,
+    rx,
+    ry,
+    rz,
+    posx,
+    posy,
+    posz,
+    lastHit,
+    isServe,
+    offNet,
+  ) {
     this.with = with_
     this.vx = vx
     this.vy = vy
@@ -15,6 +29,8 @@ class Collision {
     this.posy = posy
     this.posz = posz
     this.lastHit = lastHit
+    this.isServe = isServe
+    this.offNet = offNet
 
     this.metersPerSecond = magnitude(vx, vy, vz)
     this.revolutions = magnitude(rx, ry, rz)

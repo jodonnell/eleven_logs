@@ -38,7 +38,13 @@ class PlaySessions {
     })
   }
 
-  allMyHitsToTable(forehand = true, backhand = true, net = true, serve = true) {
+  allMyHitsToTable(
+    forehand = true,
+    backhand = true,
+    net = true,
+    serve = true,
+    rally = true,
+  ) {
     return this.allPoints
       .map((p) => {
         return p.collisions
@@ -48,8 +54,10 @@ class PlaySessions {
 
               let exclude = lastHitWasServe
               if (!forehand) exclude = exclude || c.lastHit?.isForehand
-
               if (!backhand) exclude = exclude || c.lastHit?.isBackhand
+              if (!serve) exclude = exclude || c.lastHit?.isServe
+              if (!rally) exclude = exclude || !c.lastHit?.isServe
+              if (!net) exclude = exclude || c.offNet
 
               if (!exclude) {
                 return c

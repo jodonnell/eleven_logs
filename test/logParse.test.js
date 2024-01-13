@@ -7,10 +7,13 @@ describe("log parse", () => {
     expect(sessions.sessions.length).toBe(2)
   })
 
-  it("has all my its tot table", () => {
+  it("has all my hits to table", () => {
     expect(sessions.allMyHitsToTable().length).toBe(574)
     expect(sessions.allMyHitsToTable(false).length).toBe(259)
     expect(sessions.allMyHitsToTable(false, false).length).toBe(0)
+    expect(sessions.allMyHitsToTable(true, true, false).length).toBe(524)
+    expect(sessions.allMyHitsToTable(true, true, true, false).length).toBe(425)
+    expect(sessions.allMyHitsToTable(true, true, true, true, false).length).toBe(149)
   })
 
   it("has correct wins", () => {

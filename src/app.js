@@ -67,9 +67,10 @@ const createHeatmap = (sessions) => {
   const backhand = document.querySelector("#backhand").checked
   const net = document.querySelector("#net").checked
   const serve = document.querySelector("#serve").checked
+  const rally = document.querySelector("#rally").checked
 
   sessions
-    .allMyHitsToTable(forehand, backhand, net, serve)
+    .allMyHitsToTable(forehand, backhand, net, serve, rally)
     .forEach((collision) => {
       let posx = parseInt((collision.posx + 0.8) * 250) // 400 / range
       let posz = flipOnAxis(parseInt(collision.posz * 250), 350)

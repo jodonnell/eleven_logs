@@ -70,6 +70,8 @@ const collisionParser = (point, isFirst) => {
   //console.log('POOP NEW POINT')
 
   let lastHit = null
+  let lastCollision = null
+  let firstHitHappened = false
   const collisions = collisionChunks.map((collision) => {
     collision = collision.split("YourCollision:")[0]
     collision = collision.replace("pos:", "position:")
@@ -87,6 +89,15 @@ const collisionParser = (point, isFirst) => {
 
     const collidedWith = getCollidedWith(collision, isFirst)
 
+    const isServe =
+      (collidedWith === "MyHit" || collidedWith === "TheirHit") &&
+      !firstHitHappened
+    if (isServe) {
+      firstHitHappened = true
+    }
+
+    const offNet = lastCollision?.with === "Net"
+
     //console.log('POOP', collidedWith)
     const collisionObj = new Collision(
       collidedWith,
@@ -100,11 +111,14 @@ const collisionParser = (point, isFirst) => {
       parseFloat(pos?.[2] || 0),
       parseFloat(pos?.[3] || 0),
       lastHit,
+      isServe,
+      offNet,
     )
 
     if (collidedWith === "MyHit" || collidedWith === "TheirHit")
       lastHit = collisionObj
 
+    lastCollision = collisionObj
     return collisionObj
   })
 
