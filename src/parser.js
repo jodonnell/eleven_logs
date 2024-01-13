@@ -185,7 +185,7 @@ const getPointInfo = (point) => {
   if (!pointInfoMatch) return null
   const fullString =
     pointInfoMatch[0].indexOf("PongGameState") === -1
-      ? pointInfoMatch[0] + '"PongGameState":"PrePoint"}'
+      ? `${pointInfoMatch[0]}"PongGameState":"PrePoint"}`
       : pointInfoMatch[0]
   const json = "{" + fullString.split("{")[1]
 

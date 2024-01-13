@@ -1,5 +1,90 @@
 <html>
     <style>
+     .lds-spinner {
+         color: official;
+         display: inline-block;
+         position: relative;
+         width: 100vw;
+         height: 80px;
+
+         margin-top: 80px;
+         justify-content: center;
+         display: none;
+     }
+     .lds-spinner div {
+         transform-origin: 40px 40px;
+         animation: lds-spinner 1.2s linear infinite;
+     }
+     .lds-spinner div:after {
+         content: " ";
+         display: block;
+         position: absolute;
+         top: 3px;
+         left: 37px;
+         width: 6px;
+         height: 18px;
+         border-radius: 20%;
+         background: #fff;
+     }
+     .lds-spinner div:nth-child(1) {
+         transform: rotate(0deg);
+         animation-delay: -1.1s;
+     }
+     .lds-spinner div:nth-child(2) {
+         transform: rotate(30deg);
+         animation-delay: -1s;
+     }
+     .lds-spinner div:nth-child(3) {
+         transform: rotate(60deg);
+         animation-delay: -0.9s;
+     }
+     .lds-spinner div:nth-child(4) {
+         transform: rotate(90deg);
+         animation-delay: -0.8s;
+     }
+     .lds-spinner div:nth-child(5) {
+         transform: rotate(120deg);
+         animation-delay: -0.7s;
+     }
+     .lds-spinner div:nth-child(6) {
+         transform: rotate(150deg);
+         animation-delay: -0.6s;
+     }
+     .lds-spinner div:nth-child(7) {
+         transform: rotate(180deg);
+         animation-delay: -0.5s;
+     }
+     .lds-spinner div:nth-child(8) {
+         transform: rotate(210deg);
+         animation-delay: -0.4s;
+     }
+     .lds-spinner div:nth-child(9) {
+         transform: rotate(240deg);
+         animation-delay: -0.3s;
+     }
+     .lds-spinner div:nth-child(10) {
+         transform: rotate(270deg);
+         animation-delay: -0.2s;
+     }
+     .lds-spinner div:nth-child(11) {
+         transform: rotate(300deg);
+         animation-delay: -0.1s;
+     }
+     .lds-spinner div:nth-child(12) {
+         transform: rotate(330deg);
+         animation-delay: 0s;
+     }
+     @keyframes lds-spinner {
+         0% {
+             opacity: 1;
+         }
+         100% {
+             opacity: 0;
+         }
+     }
+
+
+
      body {
          background: #14213D;
          color: #FCA311;
@@ -49,6 +134,17 @@
          margin-left: 30px;
      }
 
+     #instructions {
+         margin-bottom: 20px;
+     }
+
+     .instructions-text {
+         line-height: 34px;
+     }
+
+     #uploaded {
+         display: none;
+     }
     </style>
 
     <body>
@@ -57,74 +153,102 @@
         </div>
 
         <div class="content">
-            <input type="file" id="logs-upload" name="logs" multiple />
+            <div id="instructions">
+                <h2>
+                    Instructions
+                </h2>
 
-            <div class="stats">
-                <h1>
-                    Stats
-                </h1>
+                <div class="instructions-text">
+                    For the quest plug you into your computer and click the popup that says allow this pc to connect.
+                    <br />
+                    Then navigate in explorer to
+                    <br />
+                    <code>\This PC\Quest 3\Internal shared storage\Android\data\quest.eleven.forfunlabs\logs</code>
 
-                <div class="stat">
-                    <div class="stat-label">
-                        Service fault percentage:
-                    </div>
-                    <div id="serviceFaultPercentage"></div>
-                </div>
-                <div class="stat">
-                    <div class="stat-label">
-                        Win on service percentage:
-                    </div>
-                    <div id="serviceAcePercentage"></div>
-                </div>
-                <div class="stat">
-                    <div class="stat-label">
-                        Win on service return percentage:
-                    </div>
-                    <div id="serviceReturnAcePercentage"></div>
-                </div>
-                <div class="stat">
-                    <div class="stat-label">
-                        Win point on serve percentage:
-                    </div>
-                    <div id="winServePercentage"></div>
+                    <br />
+                    These logs get deleted after some period of time so if you want to keep track of all your data you will need to copy them to a folder on your computer.
+                    <br />
+                    Click the Choose Files button.  The logs aren't actually uploaded, they are processed locally in your browser.
+
                 </div>
             </div>
 
+            <input type="file" id="logs-upload" name="logs" multiple />
 
-            <div class="heatmaps">
-                <h1>
-                    Heatmaps
-                </h1>
 
-                <div class="table-and-controls">
-                    <div id="table" style="width: 400px; height: 700px;">
-                        <img src="./table.png" />
+            <br/>
+            <div class="lds-spinner"><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div></div>
+
+
+
+            <div id="uploaded">
+                <div class="stats">
+                    <h2>
+                        Stats
+                    </h2>
+
+                    <div class="stat">
+                        <div class="stat-label">
+                            Service fault percentage:
+                        </div>
+                        <div id="serviceFaultPercentage"></div>
                     </div>
+                    <div class="stat">
+                        <div class="stat-label">
+                            Win on service percentage:
+                        </div>
+                        <div id="serviceAcePercentage"></div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-label">
+                            Win on service return percentage:
+                        </div>
+                        <div id="serviceReturnAcePercentage"></div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-label">
+                            Win point on serve percentage:
+                        </div>
+                        <div id="winServePercentage"></div>
+                    </div>
+                </div>
 
-                    <div class="controls">
-                        <div>
-                            <input type="checkbox" id="forehand" checked>
-                            <label for="forehand">Forehand</label>
+
+                <div class="heatmaps">
+                    <h2>
+                        Heatmaps
+                    </h2>
+
+                    <div class="table-and-controls">
+                        <div id="table" style="width: 400px; height: 700px;">
+                            <img src="./table.png" />
                         </div>
 
-                        <div>
-                            <input type="checkbox" id="backhand" checked>
-                            <label for="backhand">Backhand</label>
-                        </div>
+                        <div class="controls">
+                            <div>
+                                <input type="checkbox" id="forehand" checked>
+                                <label for="forehand">Forehand</label>
+                            </div>
 
-                        <div>
-                            <input type="checkbox" id="net" checked>
-                            <label for="net">Net</label>
-                        </div>
+                            <div>
+                                <input type="checkbox" id="backhand" checked>
+                                <label for="backhand">Backhand</label>
+                            </div>
 
-                        <div>
-                            <input type="checkbox" id="serve" checked>
-                            <label for="serve">Serve</label>
-                        </div>
+                            <div>
+                                <input type="checkbox" id="net" checked>
+                                <label for="net">Net</label>
+                            </div>
 
-                        <div>
-                            <input type="checkbox" id="rally" checked>
-                            <label for="rally">Rally</label>
+                            <div>
+                                <input type="checkbox" id="serve" checked>
+                                <label for="serve">Serve</label>
+                            </div>
+
+                            <div>
+                                <input type="checkbox" id="rally" checked>
+                                <label for="rally">Rally</label>
+                            </div>
                         </div>
                     </div>
                 </div>

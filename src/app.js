@@ -1,15 +1,15 @@
 import { playerSessions, fileParse } from "./parser.js"
 import h337 from "heatmap.js"
 
-
 const prettyPercentage = (float) => {
-  return (float * 100).toFixed(2) + '%'
+  return (float * 100).toFixed(2) + "%"
 }
 
 let sessions
 const logsUpload = document.getElementById("logs-upload")
 logsUpload.onchange = function () {
   const files = logsUpload.files
+  document.querySelector(".lds-spinner").style.display = "flex"
 
   const promises = Object.keys(files).map((i) => {
     return new Promise((resolve, reject) => {
@@ -25,12 +25,21 @@ logsUpload.onchange = function () {
   })
 
   Promise.all(promises).then((values) => {
+    document.querySelector("#instructions").style.display = "none"
+    document.querySelector("#uploaded").style.display = "block"
+    document.querySelector(".lds-spinner").style.display = "none"
+
     sessions = playerSessions(values)
 
-    document.getElementById("serviceFaultPercentage").innerHTML = prettyPercentage(sessions.serviceFaultPercentage)
-    document.getElementById("serviceAcePercentage").innerHTML = prettyPercentage(sessions.serviceAcePercentage)
-    document.getElementById("serviceReturnAcePercentage").innerHTML = prettyPercentage(sessions.serviceReturnAcePercentage)
-    document.getElementById("winServePercentage").innerHTML = prettyPercentage(sessions.winServePercentage)
+    document.getElementById("serviceFaultPercentage").innerHTML =
+      prettyPercentage(sessions.serviceFaultPercentage)
+    document.getElementById("serviceAcePercentage").innerHTML =
+      prettyPercentage(sessions.serviceAcePercentage)
+    document.getElementById("serviceReturnAcePercentage").innerHTML =
+      prettyPercentage(sessions.serviceReturnAcePercentage)
+    document.getElementById("winServePercentage").innerHTML = prettyPercentage(
+      sessions.winServePercentage,
+    )
 
     heatmapInstance = h337.create({
       // only container is required, the rest will be defaults

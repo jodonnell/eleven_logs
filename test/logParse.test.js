@@ -13,7 +13,9 @@ describe("log parse", () => {
     expect(sessions.allMyHitsToTable(false, false).length).toBe(0)
     expect(sessions.allMyHitsToTable(true, true, false).length).toBe(524)
     expect(sessions.allMyHitsToTable(true, true, true, false).length).toBe(425)
-    expect(sessions.allMyHitsToTable(true, true, true, true, false).length).toBe(149)
+    expect(
+      sessions.allMyHitsToTable(true, true, true, true, false).length,
+    ).toBe(149)
   })
 
   it("has correct wins", () => {
