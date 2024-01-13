@@ -1,9 +1,20 @@
 <html>
     <body>
-        <div id="page">
+        <input type="file" id="logs-upload" name="logs" multiple />
+
+        <div>
+            service fault percentage: <span id="serviceFaultPercentage"></span>
+        </div>
+        <div>
+            win on service percentage: <span id="serviceAcePercentage"></span>
+        </div>
+        <div>
+            win on service return percentage: <span id="serviceReturnAcePercentage"></span>
+        </div>
+        <div>
+            win point on serve percentage: <span id="winServePercentage"></span>
         </div>
 
-        <input type="file" id="logs-upload" name="logs" multiple />
 
         <div id="table" style="width: 400px; height: 700px;">
             <img src="./table.png" />

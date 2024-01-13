@@ -1,21 +1,6 @@
 import { playerSessions, fileParse } from "./parser.js"
 import h337 from "heatmap.js"
 
-const template = (sessions) =>
-  `
-<div>
-service fault percentage: ${sessions.serviceFaultPercentage}
-</div>
-<div>
-win on service percentage: ${sessions.serviceAcePercentage}
-</div>
-<div>
-win on service return percentage: ${sessions.serviceReturnAcePercentage}
-</div>
-<div>
-win point on serve percentage: ${sessions.winServePercentage}
-</div>
-`
 
 let sessions
 const logsUpload = document.getElementById("logs-upload")
@@ -37,7 +22,11 @@ logsUpload.onchange = function () {
 
   Promise.all(promises).then((values) => {
     sessions = playerSessions(values)
-    document.getElementById("page").innerHTML = template(sessions)
+
+    document.getElementById("serviceFaultPercentage").innerHTML = sessions.serviceFaultPercentage
+    document.getElementById("serviceAcePercentage").innerHTML = sessions.serviceAcePercentage
+    document.getElementById("serviceReturnAcePercentage").innerHTML = sessions.serviceReturnAcePercentage
+    document.getElementById("winServePercentage").innerHTML = sessions.winServePercentage
 
     heatmapInstance = h337.create({
       // only container is required, the rest will be defaults
