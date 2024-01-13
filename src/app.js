@@ -2,6 +2,10 @@ import { playerSessions, fileParse } from "./parser.js"
 import h337 from "heatmap.js"
 
 
+const prettyPercentage = (float) => {
+  return (float * 100).toFixed(2) + '%'
+}
+
 let sessions
 const logsUpload = document.getElementById("logs-upload")
 logsUpload.onchange = function () {
@@ -23,10 +27,10 @@ logsUpload.onchange = function () {
   Promise.all(promises).then((values) => {
     sessions = playerSessions(values)
 
-    document.getElementById("serviceFaultPercentage").innerHTML = sessions.serviceFaultPercentage
-    document.getElementById("serviceAcePercentage").innerHTML = sessions.serviceAcePercentage
-    document.getElementById("serviceReturnAcePercentage").innerHTML = sessions.serviceReturnAcePercentage
-    document.getElementById("winServePercentage").innerHTML = sessions.winServePercentage
+    document.getElementById("serviceFaultPercentage").innerHTML = prettyPercentage(sessions.serviceFaultPercentage)
+    document.getElementById("serviceAcePercentage").innerHTML = prettyPercentage(sessions.serviceAcePercentage)
+    document.getElementById("serviceReturnAcePercentage").innerHTML = prettyPercentage(sessions.serviceReturnAcePercentage)
+    document.getElementById("winServePercentage").innerHTML = prettyPercentage(sessions.winServePercentage)
 
     heatmapInstance = h337.create({
       // only container is required, the rest will be defaults
