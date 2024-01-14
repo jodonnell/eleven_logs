@@ -60,9 +60,6 @@ const createHeatmap = (sessions) => {
   const width = 400
   const height = 350
 
-  console.log(sessions.allMyHitsToTable)
-  //console.log(sessions.allTheirHitsToTable)
-
   const positions = {}
 
   const forehand = document.querySelector("#forehand").checked
@@ -110,9 +107,6 @@ const createHeatmap = (sessions) => {
     })
   })
 
-  console.log(positions)
-  console.log(points)
-  console.log(max)
   const data = {
     max,
     data: points,
