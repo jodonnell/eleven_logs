@@ -200,6 +200,16 @@ const getMyPlayerId = (pointInfo, username) => {
   return parseInt(myPlayerIdString)
 }
 
+const addHitsToCollisions = (collisions, hits) => {
+  let hitIndex = 0
+  collisions.forEach(collision => {
+    if (collision.with === 'MyHit') {
+      collision.hit = hits[hitIndex]
+      hitIndex++
+    }
+  })
+}
+
 const roundParser = (round, username, isFirst) => {
   const points = round.split(/"PongGameState":"PrePoint"/)
   points.shift()
@@ -213,6 +223,7 @@ const roundParser = (round, username, isFirst) => {
 
       const hits = pointParser(point) || []
       const collisions = collisionParser(point, isFirst) || []
+      addHitsToCollisions(collisions, hits)
       if (collisions.length === 0) return null
       const served = didIServe(
         lastPointInfo?.CurrentServer || pointInfo?.CurrentServer,

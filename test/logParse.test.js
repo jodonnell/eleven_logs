@@ -144,6 +144,10 @@ describe("log parse", () => {
       ).toBe("Other")
     })
 
+    it("collisions with my hit has hits", () => {
+      expect(collisions[3].hit.metersPerSecond).toBe(5.036091482129569)
+    })
+
     it("collisions have points", () => {
       expect(collisions[0].point.collisions.length).toBe(5)
     })
