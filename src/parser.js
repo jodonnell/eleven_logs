@@ -87,6 +87,12 @@ const collisionParser = (point, isFirst) => {
       pos[3] = parseFloat(pos[3]) * -1
     }
 
+    if (!isFirst && rrate) {
+      rrate[1] = parseFloat(rrate[1]) * -1
+      rrate[2] = parseFloat(rrate[2]) * -1
+      rrate[3] = parseFloat(rrate[3]) * -1
+    }
+
     const collidedWith = getCollidedWith(collision, isFirst)
 
     const isServe =
@@ -127,7 +133,7 @@ const collisionParser = (point, isFirst) => {
   return collisions
 }
 
-const pointParser = (point) => {
+const pointParser = (point, isFirst) => {
   const matches = point.match(
     /postCollisionState:.*vel:\((-?\d+.\d+),(-?\d+.\d+),(-?\d+.\d+)\).*rRate:\((-?\d+.\d+),(-?\d+.\d+),(-?\d+.\d+)\)/g,
   )
@@ -137,6 +143,12 @@ const pointParser = (point) => {
     const vel = match.match(xyzParser("vel:"))
     const rrate = match.match(xyzParser("rRate:"))
     const pos = match.match(xyzParser("pos:"))
+
+    if (!isFirst && rrate) {
+      rrate[1] = parseFloat(rrate[1]) * -1
+      rrate[2] = parseFloat(rrate[2]) * -1
+      rrate[3] = parseFloat(rrate[3]) * -1
+    }
 
     return new Hit(
       parseFloat(vel[1]),
@@ -202,8 +214,8 @@ const getMyPlayerId = (pointInfo, username) => {
 
 const addHitsToCollisions = (collisions, hits) => {
   let hitIndex = 0
-  collisions.forEach(collision => {
-    if (collision.with === 'MyHit') {
+  collisions.forEach((collision) => {
+    if (collision.with === "MyHit") {
       collision.hit = hits[hitIndex]
       hitIndex++
     }
@@ -221,7 +233,7 @@ const roundParser = (round, username, isFirst) => {
       if (!pointInfo) return null
       const myPlayerId = getMyPlayerId(pointInfo, username)
 
-      const hits = pointParser(point) || []
+      const hits = pointParser(point, isFirst) || []
       const collisions = collisionParser(point, isFirst) || []
       addHitsToCollisions(collisions, hits)
       if (collisions.length === 0) return null

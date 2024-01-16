@@ -130,6 +130,7 @@ describe("log parse", () => {
     it("does flip coords when you are side B", () => {
       expect(collisions[0].posx).toBe(-0.71672260761261)
       expect(collisions[0].posz).toBe(1.82300412654877)
+      expect(collisions[0].rx).toBe(-25.802948676215276)
     })
 
     it("collisions have what they collided with", () => {
@@ -146,6 +147,14 @@ describe("log parse", () => {
 
     it("collisions with my hit has hits", () => {
       expect(collisions[3].hit.metersPerSecond).toBe(5.036091482129569)
+    })
+
+    it("collisions with my hit has hits", () => {
+      expect(collisions[3].hit.metersPerSecond).toBe(5.036091482129569)
+    })
+
+    it("reverses rotation rate on side b", () => {
+      expect(collisions[3].hit.rx).toBe(12.630810546875)
     })
 
     it("collisions have points", () => {
@@ -257,6 +266,7 @@ describe("log parse", () => {
     it("does not flip coords when you are side A", () => {
       expect(collisions[0].posx).toBe(0.288470834493637)
       expect(collisions[0].posz).toBe(1.73829102516174)
+      expect(collisions[0].rx).toBe(-37.32234971788194)
     })
   })
 })
