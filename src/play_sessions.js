@@ -1,8 +1,18 @@
 import sum from "lodash/sum.js"
+import groupBy from "lodash/groupBy.js"
 
 class PlaySessions {
   constructor(sessions) {
     this.sessions = sessions
+  }
+
+  byWeek() {
+    const grouped = groupBy(this.sessions, "weekStartDateString")
+    const dates = Object.keys(grouped)
+    dates.map((date) => {
+      grouped[date] = new PlaySessions(grouped[date])
+    })
+    return grouped
   }
 
   lastWeek() {
@@ -111,6 +121,10 @@ class PlaySessions {
       ),
     )
     return points
+  }
+
+  get allHits() {
+    return this.sessions.map((s) => s.hits).flat()
   }
 }
 

@@ -21,6 +21,16 @@ class Hit {
   get isForehand() {
     return this.posx > 0
   }
+
+  get topspin() {
+    if (this.rz < 0) return null
+    return this.rz
+  }
+
+  get backspin() {
+    if (this.rz > 0) return null
+    return Math.abs(this.rz)
+  }
 }
 
 export default Hit

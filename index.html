@@ -145,6 +145,21 @@
      #uploaded {
          display: none;
      }
+
+     .table-header {
+         display: flex;
+         margin-bottom: 8px;
+     }
+
+     .table-row {
+         display: flex;
+         margin-bottom: 2px;
+     }
+
+     .table-cell {
+         width: 250px;
+     }
+
     </style>
 
     <body>
@@ -248,6 +263,51 @@
                             <div>
                                 <input type="checkbox" id="rally" checked>
                                 <label for="rally">Rally</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="week-by-week">
+                    <h2>
+                        Weekly
+                    </h2>
+
+                    <div id="weekly">
+                        <div class="table-header">
+                            <div class="table-cell">
+                                Week
+                            </div>
+                            <div class="table-cell">
+                                Topspin Revs/s
+                            </div>
+                            <div class="table-cell">
+                                Backspin Revs/s
+                            </div>
+                            <div class="table-cell">
+                                Meters per Second
+                            </div>
+                            <div class="table-cell">
+                                Revs/s
+                            </div>
+                        </div>
+
+                        <div id="table-rows">
+                            <div id="table-row" class="table-row">
+                                <div class="table-row-date table-cell">
+                                </div>
+
+                                <div class="table-cell">
+                                </div>
+
+                                <div class="table-cell">
+                                </div>
+
+                                <div class="table-cell">
+                                </div>
+
+                                <div class="table-cell">
+                                </div>
                             </div>
                         </div>
                     </div>

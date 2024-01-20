@@ -14,6 +14,10 @@ class Round {
   get won() {
     return this.myScore > this.theirScore
   }
+
+  get hits() {
+    return this.points.map((p) => p.hits).flat()
+  }
 }
 
 export default Round

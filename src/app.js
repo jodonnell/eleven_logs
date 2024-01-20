@@ -1,11 +1,47 @@
 import { playerSessions, fileParse } from "./parser.js"
+import mean from "lodash/mean.js"
 import h337 from "heatmap.js"
 
 const prettyPercentage = (float) => {
   return (float * 100).toFixed(2) + "%"
 }
 
+const prettyNumber = (float) => {
+  return float.toFixed(2)
+}
+
+const weekly = (sessions) => {
+  const byWeek = sessions.byWeek()
+  const dates = Object.keys(byWeek)
+  dates.sort(function (a, b) {
+    return new Date(a) - new Date(b)
+  })
+
+  const tableRow = document.getElementById("table-row")
+
+  dates.map((d) => {
+    const topspin = byWeek[d].allHits.map((h) => h.topspin).filter((x) => x)
+    const backspin = byWeek[d].allHits.map((h) => h.backspin).filter((x) => x)
+    const metersPerSecond = byWeek[d].allHits
+      .map((h) => h.metersPerSecond)
+      .filter((x) => x)
+    const revs = byWeek[d].allHits.map((h) => h.revolutions).filter((x) => x)
+
+    const clone = tableRow.cloneNode(true)
+    clone.querySelectorAll("div")[0].innerHTML = d
+    clone.querySelectorAll("div")[1].innerHTML = prettyNumber(mean(topspin))
+    clone.querySelectorAll("div")[2].innerHTML = prettyNumber(mean(backspin))
+    clone.querySelectorAll("div")[3].innerHTML = prettyNumber(
+      mean(metersPerSecond),
+    )
+    clone.querySelectorAll("div")[4].innerHTML = prettyNumber(mean(revs))
+
+    document.getElementById("table-rows").appendChild(clone)
+  })
+}
+
 let sessions
+window.sessions = sessions
 const logsUpload = document.getElementById("logs-upload")
 logsUpload.onchange = function () {
   const files = logsUpload.files
@@ -30,6 +66,9 @@ logsUpload.onchange = function () {
     document.querySelector(".lds-spinner").style.display = "none"
 
     sessions = playerSessions(values)
+    weekly(sessions)
+
+    //sessions.backspinServicePercentage
 
     document.getElementById("serviceFaultPercentage").innerHTML =
       prettyPercentage(sessions.serviceFaultPercentage)

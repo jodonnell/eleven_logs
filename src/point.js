@@ -35,6 +35,10 @@ class Point {
     }
     return false
   }
+
+  hits() {
+    return this.collisions.map((c) => c.hit).filter((x) => x)
+  }
 }
 
 export default Point
