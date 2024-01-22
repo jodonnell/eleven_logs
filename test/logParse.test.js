@@ -3,6 +3,12 @@ import { parseDirectory } from "../src/directory_parser.js"
 const sessions = parseDirectory("/../test_logs/")
 
 describe("log parse", () => {
+  beforeEach(() => {
+    jest
+      .spyOn(sessions, "urlParams")
+      .mockImplementation(() => ({ get: jest.fn() }))
+  })
+
   it("has two play sessions", () => {
     expect(sessions.sessions.length).toBe(2)
   })
@@ -23,6 +29,10 @@ describe("log parse", () => {
     expect(sessions.sessions[1].matchesWon).toBe(5)
     expect(sessions.sessions[1].matches.length).toBe(6)
     expect(sessions.matchesWon).toBe(6)
+  })
+
+  it("can get consistency", () => {
+    expect(sessions.consistency).toBe(0.8101851851851851)
   })
 
   it("can get service fault percentage", () => {
@@ -133,6 +143,16 @@ describe("log parse", () => {
       expect(collisions[0].rx).toBe(-25.802948676215276)
     })
 
+    it("tracks unforced error", () => {
+      expect(collisions[0].unforcedError).toBe(false)
+      expect(collisions[3].unforcedError).toBe(true)
+
+      expect(round1Points[1].collisions[0].unforcedError).toBe(false)
+      expect(round1Points[1].collisions[1].unforcedError).toBe(false)
+      expect(round1Points[1].collisions[2].unforcedError).toBe(false)
+      expect(round1Points[1].collisions[3].unforcedError).toBe(false)
+    })
+
     it("collisions have what they collided with", () => {
       expect(collisions[0].with).toBe("TheirHit")
       expect(collisions[1].with).toBe("TheirTable")
@@ -178,6 +198,15 @@ describe("log parse", () => {
       expect(collisions[0].isBackhand).toBe(true)
 
       expect(round1Points[2].collisions[1].isForehand).toBe(true)
+    })
+
+    it("collision has backspin", () => {
+      expect(collisions[0].topspin).toBe(null)
+      expect(collisions[0].backspin).toBe(2.78053232828775)
+    })
+
+    it("collision has topspin", () => {
+      expect(round1Points[5].collisions[4].topspin).toBe(9.911038547092028)
     })
 
     it("collisions have last hits", () => {

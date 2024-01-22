@@ -62,6 +62,28 @@ const cleanUpCollisions = (collisions) => {
   }
 }
 
+const addUnforcedError = (collisions) => {
+  let lastHit
+  let hitIndex = 0
+  let tableIndex = 0
+  collisions.forEach((c, i) => {
+    if (c.with === "MyHit" || c.with === "TheirHit") {
+      hitIndex = i
+      lastHit = c
+    }
+
+    if (c.with === "MyTable" && lastHit?.with === "TheirHit") {
+      tableIndex = i
+    }
+
+    if (c.with === "TheirTable" && lastHit?.with === "MyHit") {
+      tableIndex = i
+    }
+  })
+
+  if (hitIndex > tableIndex) return (lastHit.unforcedError = true)
+}
+
 const collisionParser = (point, isFirst) => {
   const collisionChunks = point.split(
     /(?:MyCollision:)|(?:Received ball hit from opponent:)/,
@@ -129,6 +151,7 @@ const collisionParser = (point, isFirst) => {
   })
 
   cleanUpCollisions(collisions)
+  addUnforcedError(collisions)
 
   return collisions
 }

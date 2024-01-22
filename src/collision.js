@@ -31,6 +31,7 @@ class Collision {
     this.lastHit = lastHit
     this.isServe = isServe
     this.offNet = offNet
+    this.unforcedError = false
 
     this.metersPerSecond = magnitude(vx, vy, vz)
     this.revolutions = magnitude(rx, ry, rz)
@@ -42,6 +43,16 @@ class Collision {
 
   get isBackhand() {
     return this.posx < 0
+  }
+
+  get topspin() {
+    if (this.rz < 0) return null
+    return this.rz
+  }
+
+  get backspin() {
+    if (this.rz > 0) return null
+    return Math.abs(this.rz)
   }
 }
 

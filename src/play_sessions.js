@@ -114,19 +114,32 @@ class PlaySessions {
   }
 
   get allPoints() {
-    const urlParams = new URLSearchParams(window.location.search)
-    const filterOpponent = urlParams.get('filter_opponent')
+    const urlParams = this.urlParams()
+    const filterOpponent = urlParams.get("filter_opponent")
 
     const points = []
     this.sessions.forEach((s) => {
-      const matches = filterOpponent ? s.matches.filter(m => m.opponent === filterOpponent) : s.matches
+      const matches = filterOpponent
+        ? s.matches.filter((m) => m.opponent === filterOpponent)
+        : s.matches
       matches.forEach((m) => {
-        m.rounds.forEach((r) =>
-          r.points.forEach((p) => points.push(p))
-        )
+        m.rounds.forEach((r) => r.points.forEach((p) => points.push(p)))
       })
     })
     return points
+  }
+
+  get consistency() {
+    let hit = 0
+    let errors = 0
+    this.allPoints.forEach((p) => {
+      p.collisions.forEach((c) => {
+        if (c.with === "MyHit") hit++
+        if (c.with === "MyHit" && c.unforcedError) errors++
+      })
+    })
+
+    return 1 - errors / hit
   }
 
   get allHits() {
@@ -134,25 +147,28 @@ class PlaySessions {
   }
 
   get allLostPoints() {
-    return this.allPoints.filter(p => !p.didIWin)
+    return this.allPoints.filter((p) => !p.didIWin)
   }
 
   get lastTableHitBeforeUnforcedError() {
-    return this.allLostPoints.map(p => {
-      let lastHit
-      let lastTableHit
-      p.collisions.forEach((c) => {
-        if (c.with === 'MyHit' || c.with === 'TheirHit')
-          lastHit = c
-        if (c.with === 'MyTable')
-          lastTableHit = c
+    return this.allLostPoints
+      .map((p) => {
+        let lastHit
+        let lastTableHit
+        p.collisions.forEach((c) => {
+          if (c.with === "MyHit" || c.with === "TheirHit") lastHit = c
+          if (c.with === "MyTable") lastTableHit = c
+        })
+
+        if (lastHit?.with === "MyHit") return lastTableHit
+
+        return null
       })
+      .filter((x) => x)
+  }
 
-      if (lastHit?.with === 'MyHit')
-        return lastTableHit
-
-      return null
-    }).filter(x => x)
+  urlParams() {
+    return new URLSearchParams(window.location.search)
   }
 }
 

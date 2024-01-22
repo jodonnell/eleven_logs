@@ -33,6 +33,8 @@
     "globals": {
         "describe": "readonly",
         "it": "readonly",
-        "expect": "readonly"
+        "expect": "readonly",
+        "beforeEach": "readonly",
+        "jest": "readonly"
     }
 }

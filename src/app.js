@@ -26,6 +26,7 @@ const weekly = (sessions) => {
       .map((h) => h.metersPerSecond)
       .filter((x) => x)
     const revs = byWeek[d].allHits.map((h) => h.revolutions).filter((x) => x)
+    const consistency = byWeek[d].consistency
 
     const clone = tableRow.cloneNode(true)
     clone.querySelectorAll("div")[0].innerHTML = d
@@ -35,6 +36,7 @@ const weekly = (sessions) => {
       mean(metersPerSecond),
     )
     clone.querySelectorAll("div")[4].innerHTML = prettyNumber(mean(revs))
+    clone.querySelectorAll("div")[5].innerHTML = prettyPercentage(consistency)
 
     document.getElementById("table-rows").appendChild(clone)
   })
