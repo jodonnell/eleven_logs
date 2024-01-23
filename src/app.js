@@ -10,6 +10,29 @@ const prettyNumber = (float) => {
   return float.toFixed(2)
 }
 
+const statsRow = (session, date) => {
+  const topspin = session.allHits.map((h) => h.topspin).filter((x) => x)
+  const backspin = session.allHits.map((h) => h.backspin).filter((x) => x)
+  const metersPerSecond = session.allHits
+    .map((h) => h.metersPerSecond)
+    .filter((x) => x)
+  const revs = session.allHits.map((h) => h.revolutions).filter((x) => x)
+  const consistency = session.consistency
+
+  const tableRow = document.getElementById("table-row")
+  const clone = tableRow.cloneNode(true)
+  clone.querySelectorAll("div")[0].innerHTML = date
+  clone.querySelectorAll("div")[1].innerHTML = prettyNumber(mean(topspin))
+  clone.querySelectorAll("div")[2].innerHTML = prettyNumber(mean(backspin))
+  clone.querySelectorAll("div")[3].innerHTML = prettyNumber(
+    mean(metersPerSecond),
+  )
+  clone.querySelectorAll("div")[4].innerHTML = prettyNumber(mean(revs))
+  clone.querySelectorAll("div")[5].innerHTML = prettyPercentage(consistency)
+
+  document.getElementById("table-rows").appendChild(clone)
+}
+
 const weekly = (sessions) => {
   const byWeek = sessions.byWeek()
   const dates = Object.keys(byWeek)
@@ -17,29 +40,10 @@ const weekly = (sessions) => {
     return new Date(a) - new Date(b)
   })
 
-  const tableRow = document.getElementById("table-row")
-
   dates.map((d) => {
-    const topspin = byWeek[d].allHits.map((h) => h.topspin).filter((x) => x)
-    const backspin = byWeek[d].allHits.map((h) => h.backspin).filter((x) => x)
-    const metersPerSecond = byWeek[d].allHits
-      .map((h) => h.metersPerSecond)
-      .filter((x) => x)
-    const revs = byWeek[d].allHits.map((h) => h.revolutions).filter((x) => x)
-    const consistency = byWeek[d].consistency
-
-    const clone = tableRow.cloneNode(true)
-    clone.querySelectorAll("div")[0].innerHTML = d
-    clone.querySelectorAll("div")[1].innerHTML = prettyNumber(mean(topspin))
-    clone.querySelectorAll("div")[2].innerHTML = prettyNumber(mean(backspin))
-    clone.querySelectorAll("div")[3].innerHTML = prettyNumber(
-      mean(metersPerSecond),
-    )
-    clone.querySelectorAll("div")[4].innerHTML = prettyNumber(mean(revs))
-    clone.querySelectorAll("div")[5].innerHTML = prettyPercentage(consistency)
-
-    document.getElementById("table-rows").appendChild(clone)
+    statsRow(byWeek[d], d)
   })
+  statsRow(sessions, "All")
 }
 
 let sessions
