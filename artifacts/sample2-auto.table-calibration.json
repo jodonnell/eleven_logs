@@ -1,0 +1,103 @@
+{
+  "description": "Automatically detected once from the first usable frame; cache is camera-specific.",
+  "image_size": [
+    1024,
+    540
+  ],
+  "table_surface_y": 0.7786086,
+  "control_points": [
+    {
+      "name": "x0_player_edge",
+      "image": [
+        178.63012067115142,
+        270.0
+      ],
+      "log": [
+        0.0,
+        -1.37
+      ]
+    },
+    {
+      "name": "x0_opponent_edge",
+      "image": [
+        716.412978038374,
+        270.0
+      ],
+      "log": [
+        0.0,
+        1.37
+      ]
+    },
+    {
+      "name": "net_base_top",
+      "image": [
+        455.29411764705884,
+        215.0
+      ],
+      "log": [
+        -0.7625,
+        0.0
+      ]
+    },
+    {
+      "name": "net_base_bottom",
+      "image": [
+        410.88235294117646,
+        366.0
+      ],
+      "log": [
+        0.7625,
+        0.0
+      ]
+    }
+  ],
+  "table_polygon": [
+    [
+      250.7766798418973,
+      215.0
+    ],
+    [
+      672.5395256916998,
+      215.0
+    ],
+    [
+      792.99209486166,
+      366.0
+    ],
+    [
+      52.70158102766766,
+      366.0
+    ]
+  ],
+  "tracking_polygon": [
+    [
+      0,
+      0
+    ],
+    [
+      1024,
+      0
+    ],
+    [
+      1024,
+      540
+    ],
+    [
+      0,
+      540
+    ]
+  ],
+  "net_line": [
+    [
+      455.29411764705884,
+      215.0
+    ],
+    [
+      410.88235294117646,
+      366.0
+    ]
+  ],
+  "auto_calibrated": true,
+  "calibration_frame": 0,
+  "diagnostic": "artifacts/sample2-auto.table-calibration.png"
+}
