@@ -473,12 +473,16 @@ class AttemptClassifier:
             end_side = signed_distance_to_line(terminal_pixel, self.net_line)
             crossed_net = start_side * end_side <= 0
             net_distance = abs(end_side)
-            if crossed_net:
+            # Crossing the net establishes a credible return, but does not
+            # make its landing unknowable. A track that continues beyond the
+            # calibrated table boundary is the direct visual evidence for an
+            # off-table return, whether or not it crossed the net first.
+            if not point_in_polygon(terminal_pixel, self.table):
+                outcome, confidence = "off_table", 0.58
+            elif crossed_net:
                 outcome, confidence = "unknown", 0.5
             elif net_distance <= self.calibration.get("net_proximity_fraction", 0.2) * math.dist(self.net_line[0], self.net_line[1]):
                 outcome, confidence = "net", 0.55
-            elif not point_in_polygon(terminal_pixel, self.table):
-                outcome, confidence = "off_table", 0.58
             else:
                 outcome, confidence = "unknown", 0.35
         else:

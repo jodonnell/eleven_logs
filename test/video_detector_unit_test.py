@@ -81,6 +81,21 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertFalse(event.hit_table)
         self.assertNotIn("pixel", event.to_record())
 
+    def test_classifier_reports_crossed_net_return_that_ends_off_table(self):
+        classifier = self.classifier()
+        classifier.net_line = np.float32([(150, 0), (150, 500)])
+        launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        returned = [(30 + frame, 100 + frame * 20, 100, 0.0) for frame in range(9)]
+
+        classifier.process_tracks([launch], draw_frame=18)
+        classifier.process_tracks([returned], draw_frame=39)
+        classifier.finish_attempt(draw_frame=40)
+
+        event = classifier.events[0]
+        self.assertTrue(event.return_crossed_net)
+        self.assertEqual(event.outcome, "off_table")
+        self.assertFalse(event.hit_table)
+
     def test_default_launcher_region_rejects_table_and_frame_edge_tracks(self):
         classifier = AttemptClassifier(
             fps=60,
