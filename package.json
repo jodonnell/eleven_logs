@@ -12,6 +12,7 @@
     "lint": "eslint src/*.js test/*.js",
     "prettier": "prettier src/*.js test/*.js --write",
     "test": "jest ./test/",
+    "test:video": "python3 -m unittest test/auto_calibration_test.py",
     "test:watch": "jest --watch ./test/"
   },
   "author": "Jacob",

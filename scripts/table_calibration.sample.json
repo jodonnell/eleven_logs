@@ -1,0 +1,19 @@
+{
+  "description": "sample.mp4, 4096x2160. Player/contact side is image-left; launcher/opponent side is image-right. The homography is anchored to the white x=0 center line and the bottom edge of the physical net (z=0), not inferred from the camera pose.",
+  "image_size": [4096, 2160],
+  "table_surface_y": 0.7786086,
+  "control_points": [
+    {"name": "net_top_end", "image": [1280, 511], "log": [-0.7625, 0.0]},
+    {"name": "net_bottom_end", "image": [720, 1919], "log": [0.7625, 0.0]},
+    {"name": "white_center_player_edge", "image": [96, 1008], "log": [0.0, -1.37]},
+    {"name": "white_center_opponent_edge", "image": [2809, 1008], "log": [0.0, 1.37]}
+  ],
+  "table_polygon": [[198, 511], [2627, 511], [3142, 1919], [-90, 1919]],
+  "occlusion_polygon": [[2650, 0], [3600, 0], [3600, 1650], [2950, 1650], [2750, 1000], [2680, 500]],
+  "tracking_polygon": [[0, 200], [3500, 200], [3500, 2100], [0, 2100]],
+  "launcher_region": [2450, 350, 3300, 1650],
+  "return_region": [0, 250, 900, 1550],
+  "net_line": [[1280, 511], [720, 1919]],
+  "net_proximity_fraction": 0.3,
+  "warmup_launcher_tracks": 0
+}
