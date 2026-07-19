@@ -13,6 +13,7 @@ from analyze_video import (  # noqa: E402
     Attempt,
     AttemptClassifier,
     DetectorSettings,
+    LiveAttemptNormalizer,
     MultiBallTracker,
     TelemetryReading,
     find_bounce,
@@ -41,6 +42,13 @@ class VideoDetectorUnitTest(unittest.TestCase):
             scale=1,
             settings=DetectorSettings(),
         )
+
+    def cadence_event(self, frame, outcome="far_table", confidence=.8):
+        event = self.classifier().no_bounce_event(Attempt(frame, (0, 0)), frame)
+        event.hit_table = outcome == "far_table"
+        event.outcome = outcome
+        event.confidence = confidence
+        return event
 
     def test_shadow_score_rises_for_dark_table_patch_below_ball(self):
         hsv = np.zeros((100, 100, 3), dtype=np.uint8)
@@ -142,6 +150,21 @@ class VideoDetectorUnitTest(unittest.TestCase):
 
         self.assertEqual(reported, classifier.events)
         self.assertEqual(len(reported), 1)
+
+    def test_classifier_signals_live_settlement_at_the_next_launch(self):
+        settled = []
+        classifier = self.classifier()
+        classifier.on_attempt_finished = lambda: settled.append(list(classifier.events))
+        first_launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        returned = [(30 + frame, 100 + frame * 20, 100, 0.0) for frame in range(9)]
+        next_launch = [(60 + frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+
+        classifier.process_tracks([first_launch], draw_frame=18)
+        classifier.process_tracks([returned], draw_frame=39)
+        classifier.process_tracks([next_launch], draw_frame=78)
+
+        self.assertEqual(len(settled), 1)
+        self.assertEqual(settled[0], classifier.events)
 
     def test_classifier_reports_crossed_net_return_that_ends_off_table(self):
         classifier = self.classifier()
@@ -314,18 +337,74 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertEqual(tracker.update(2, []), [[(0, 10, 20, 0)]])
 
     def test_cadence_fills_an_unseen_launch_with_one_miss(self):
-        classifier = self.classifier()
-        events = []
-        for frame in (70, 190, 250):
-            event = classifier.no_bounce_event(Attempt(frame, (0, 0)), frame)
-            event.hit_table = True
-            event.outcome = "far_table"
-            event.confidence = .8
-            events.append(event)
+        events = [self.cadence_event(frame) for frame in (70, 190, 250)]
 
         normalized = normalize_attempt_events(events, total_frames=300, fps=60)
 
         self.assertEqual([event.outcome for event in normalized], ["hit", "miss", "hit", "hit"])
+
+    def test_live_normalizer_emits_settled_hits_after_cadence_warmup(self):
+        reported = []
+        normalizer = LiveAttemptNormalizer(60, reported.append)
+        for frame in (70, 130, 190):
+            normalizer.observe(self.cadence_event(frame))
+            normalizer.settle_attempt()
+
+        self.assertEqual([event.outcome for event in reported], ["hit", "hit", "hit"])
+
+    def test_live_normalizer_emits_a_settled_out(self):
+        reported = []
+        normalizer = LiveAttemptNormalizer(60, reported.append)
+        for frame in (70, 130, 190):
+            normalizer.observe(self.cadence_event(frame))
+            normalizer.settle_attempt()
+        normalizer.observe(self.cadence_event(250, "off_table", .58))
+        normalizer.settle_attempt()
+
+        self.assertEqual([event.outcome for event in reported], ["hit", "hit", "hit", "out"])
+
+    def test_live_normalizer_infers_only_settled_misses(self):
+        reported = []
+        normalizer = LiveAttemptNormalizer(60, reported.append)
+        for frame in (70, 190):
+            normalizer.observe(self.cadence_event(frame))
+            normalizer.settle_attempt()
+        self.assertEqual(reported, [])
+
+        normalizer.observe(self.cadence_event(250))
+        normalizer.settle_attempt()
+        self.assertEqual(
+            [event.outcome for event in reported],
+            ["hit", "miss", "hit", "hit"],
+        )
+
+    def test_live_normalizer_never_emits_a_slot_twice(self):
+        reported = []
+        normalizer = LiveAttemptNormalizer(60, reported.append)
+        for frame in (70, 130, 190):
+            normalizer.observe(self.cadence_event(frame))
+            normalizer.settle_attempt()
+        reported_frames = [event.frame_number for event in reported]
+        normalizer.observe(self.cadence_event(190, confidence=.9))
+        normalizer.settle_attempt()
+
+        self.assertEqual(reported_frames.count(190), 1)
+        self.assertEqual(
+            [event.frame_number for event in reported].count(190), 1,
+        )
+
+    def test_live_normalizer_final_output_matches_batch_normalization(self):
+        events = [self.cadence_event(frame) for frame in (70, 190, 250)]
+        events.append(self.cadence_event(310, "off_table", .58))
+        reported = []
+        normalizer = LiveAttemptNormalizer(60, reported.append)
+        for event in events:
+            normalizer.observe(event)
+            normalizer.settle_attempt()
+
+        finalized = normalizer.finalize(380)
+        self.assertEqual(finalized, normalize_attempt_events(events, 380, 60))
+        self.assertEqual(reported, finalized[:len(reported)])
 
 
 if __name__ == "__main__":

@@ -792,6 +792,7 @@ class AttemptClassifier:
         scale: float,
         settings: DetectorSettings,
         on_event: Optional[Callable[[BounceEvent], None]] = None,
+        on_attempt_finished: Optional[Callable[[], None]] = None,
     ) -> None:
         self.fps = fps
         self.calibration = calibration
@@ -802,6 +803,7 @@ class AttemptClassifier:
         self.scale = scale
         self.settings = settings
         self.on_event = on_event
+        self.on_attempt_finished = on_attempt_finished
         self.events: List[BounceEvent] = []
         self.emitted: Set[Tuple[int, int]] = set()
         self.active_attempt: Optional[Attempt] = None
@@ -908,7 +910,10 @@ class AttemptClassifier:
         self.launcher_tracks_seen += 1
         if self.launcher_tracks_seen <= self.warmup_launcher_tracks:
             return
+        finished_previous = self.active_attempt is not None
         self.finish_attempt(draw_frame)
+        if finished_previous and self.on_attempt_finished is not None:
+            self.on_attempt_finished()
         self.active_attempt = Attempt(
             path[0][0], (path[0][1], path[0][2]),
             report_no_bounce=self.is_reportable_launcher_track(path),
@@ -1112,19 +1117,14 @@ def infer_attempt_period(hit_frames: Sequence[int], fps: float) -> Optional[floa
     return best[1] if best else None
 
 
-def normalize_attempt_events(
+def attempt_event_slots(
     events: Sequence[BounceEvent], total_frames: int, fps: float,
-) -> List[BounceEvent]:
-    """Return exactly one user-facing result for every inferred launch cycle.
-
-    Confirmed opponent-table contacts establish the machine's cadence. Gaps
-    in that cadence become misses when the next cycle arrives, which is the
-    only reliable way to report a ball that was completely occluded.
-    """
+) -> Tuple[Optional[float], List[Tuple[int, BounceEvent]]]:
+    """Build the canonical cadence slots used by live and final output."""
     hits = [event for event in events if event.hit_table and event.outcome == "far_table"]
     period = infer_attempt_period([event.frame_number for event in hits], fps)
     if period is None:
-        return list(events)
+        return None, []
 
     phase = hits[0].frame_number
     signed = [
@@ -1140,7 +1140,7 @@ def normalize_attempt_events(
         anchors.append(round(anchor))
         anchor += period
     if not anchors:
-        return list(events)
+        return None, []
     slots: List[Optional[BounceEvent]] = [None] * len(anchors)
     hit_slots: Dict[int, int] = {}
     for event in hits:
@@ -1167,13 +1167,13 @@ def normalize_attempt_events(
         slots[slot] = replace(event, outcome="out")
         cursor = slot
 
-    normalized: List[BounceEvent] = []
+    normalized: List[Tuple[int, BounceEvent]] = []
     for anchor, event in zip(anchors, slots):
         if event is not None:
-            normalized.append(event)
+            normalized.append((anchor, event))
             continue
         frame = min(anchor, total_frames - 1)
-        normalized.append(BounceEvent(
+        normalized.append((anchor, BounceEvent(
             video_time_seconds=round(frame / fps, 3),
             video_timestamp=fmt_timestamp(frame / fps),
             hit_table=False,
@@ -1186,8 +1186,83 @@ def normalize_attempt_events(
             frame_number=frame,
             pixel=(0, 0),
             draw_frame=frame,
-        ))
-    return normalized
+        )))
+    return period, normalized
+
+
+def normalize_attempt_events(
+    events: Sequence[BounceEvent], total_frames: int, fps: float,
+) -> List[BounceEvent]:
+    """Return exactly one user-facing result for every inferred launch cycle.
+
+    Confirmed opponent-table contacts establish the machine's cadence. Gaps
+    in that cadence become misses when the next cycle arrives, which is the
+    only reliable way to report a ball that was completely occluded.
+    """
+    period, slots = attempt_event_slots(events, total_frames, fps)
+    if period is None:
+        return list(events)
+    return [event for _, event in slots]
+
+
+class LiveAttemptNormalizer:
+    """Emit settled canonical slots while retaining batch finalization.
+
+    The first three confirmed opponent-table contacts are buffered because
+    fewer observations cannot establish a cadence. Once warm, a slot is held
+    until a result in a later inferred slot is observed, allowing the following
+    launch to finish the preceding attempt before a miss can be emitted.
+    """
+
+    def __init__(self, fps: float, on_event: Callable[[BounceEvent], None]) -> None:
+        self.fps = fps
+        self.on_event = on_event
+        self.events: List[BounceEvent] = []
+        self.period: Optional[float] = None
+        self.emitted_anchors: List[int] = []
+        self.settlement_frame: Optional[float] = None
+
+    def observe(self, event: BounceEvent) -> None:
+        self.events.append(event)
+
+    def settle_attempt(self) -> None:
+        """Advance once after a detected launch closes the prior attempt."""
+        if not self.events:
+            return
+        hits = [
+            event for event in self.events
+            if event.hit_table and event.outcome == "far_table"
+        ]
+        self.period = infer_attempt_period(
+            [event.frame_number for event in hits], self.fps,
+        )
+        if self.period is None:
+            return
+        newest_evidence = max(event.frame_number for event in self.events)
+        if self.settlement_frame is None:
+            self.settlement_frame = newest_evidence + self.period
+        else:
+            self.settlement_frame = max(
+                self.settlement_frame + self.period,
+                newest_evidence + self.period,
+            )
+        self.period, slots = attempt_event_slots(
+            self.events, round(self.settlement_frame) + 1, self.fps,
+        )
+        assert self.period is not None
+        for anchor, event in slots:
+            if anchor + self.period > self.settlement_frame:
+                continue
+            if any(
+                abs(anchor - emitted) <= self.period * .5
+                for emitted in self.emitted_anchors
+            ):
+                continue
+            self.on_event(event)
+            self.emitted_anchors.append(anchor)
+
+    def finalize(self, total_frames: int) -> List[BounceEvent]:
+        return normalize_attempt_events(self.events, total_frames, self.fps)
 
 
 def attach_missing_machine_telemetry(
@@ -1230,6 +1305,7 @@ def process_video(
     writer: Optional[cv2.VideoWriter] = None,
     first_frame: Optional[VideoFrame] = None,
     on_event: Optional[Callable[[BounceEvent], None]] = None,
+    on_attempt_finished: Optional[Callable[[], None]] = None,
 ) -> List[BounceEvent]:
     """Process an already-open source and return its detected bounce events."""
     fps = source.fps
@@ -1244,6 +1320,7 @@ def process_video(
     classifier = AttemptClassifier(
         fps, calibration, table, net_line, occlusion, homography,
         video_width, video_height, scale, settings, on_event,
+        on_attempt_finished,
     )
     previous_gray = None
     next_frame = first_frame
@@ -1352,9 +1429,11 @@ def main() -> None:
                 output.write(json.dumps(event.to_record()) + "\n")
                 output.flush()
 
+            live_normalizer = LiveAttemptNormalizer(fps, write_event)
             events = process_video(
                 source, scale, calibration, homography, table,
-                args.end_seconds, writer, first_frame, write_event,
+                args.end_seconds, writer, first_frame,
+                live_normalizer.observe, live_normalizer.settle_attempt,
             )
 
             # Cadence-based normalization can rename events and infer missed

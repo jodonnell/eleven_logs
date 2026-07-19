@@ -51,6 +51,19 @@ def green_table_extent(frame: np.ndarray) -> Tuple[int, int, np.ndarray]:
     """Locate the table's vertical span without assuming it fills the view."""
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv, np.array([35, 45, 30]), np.array([95, 255, 255]))
+    # Sky, screens, and room decorations can share the table's broad hue
+    # range. They are normally split into small islands, while the tabletop is
+    # one dominant connected surface even when white markings cross it. Keep
+    # that surface before using row coverage to locate its rails.
+    component_count, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
+    if component_count <= 1:
+        raise ValueError("could not find a sufficiently large green table surface")
+    component_areas = stats[1:, cv2.CC_STAT_AREA]
+    largest_area = int(np.max(component_areas))
+    # Markings or the net can divide the surface into a few large regions, so
+    # retain every substantial sibling rather than only the largest label.
+    substantial = 1 + np.flatnonzero(component_areas >= largest_area * .05)
+    mask = np.uint8(np.isin(labels, substantial)) * 255
     row_counts = np.count_nonzero(mask, axis=1)
     rows = np.flatnonzero(row_counts >= frame.shape[1] * .05)
     if len(rows) < 20:
@@ -177,6 +190,14 @@ def calibration_from_frame(
         # which can be much less than 35% of the full video height. Scale the
         # requirement to the detected table instead of the surrounding room.
         if length < (visible_table[2][1] - visible_table[0][1]) * .75 or abs(angle) < 60:
+            continue
+        segment_top, segment_bottom = sorted((line[1], line[3]))
+        table_top, table_bottom = visible_table[0][1], visible_table[2][1]
+        overlap = min(segment_bottom, table_bottom) - max(segment_top, table_top)
+        # A long room line above the table can extrapolate through both rails
+        # and look like a net mathematically. Require the observed segment,
+        # not merely its infinite extension, to span the tabletop itself.
+        if overlap < (table_bottom - table_top) * .5:
             continue
         top_x, bottom_x = line_at_y(line, visible_table[0][1]), line_at_y(line, visible_table[2][1])
         if top_x is None or bottom_x is None or top_x <= bottom_x:

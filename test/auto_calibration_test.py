@@ -41,6 +41,11 @@ def assert_points_close(test, actual, expected, delta=.01):
 class WideViewCalibrationTest(unittest.TestCase):
     def test_room_lines_do_not_replace_table_boundaries(self):
         frame = np.full((540, 1024, 3), 35, dtype=np.uint8)
+        sky_green = cv2.cvtColor(
+            np.uint8([[[90, 90, 235]]]), cv2.COLOR_HSV2BGR,
+        )[0, 0]
+        for x in range(20, 1000, 90):
+            cv2.rectangle(frame, (x, 15), (x + 55, 145), sky_green.tolist(), -1)
         for y in (50, 100, 450, 500):
             cv2.line(frame, (0, y), (1023, y), (220, 220, 220), 3)
         table = np.int32([[250, 210], [675, 210], [805, 370], [50, 370]])
