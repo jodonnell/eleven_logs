@@ -156,7 +156,7 @@ class AutoCalibrationTest(unittest.TestCase):
             output = Path(directory) / "sample.jsonl"
             subprocess.run(
                 [sys.executable, "scripts/analyze_video.py", str(VIDEO),
-                 "--output", str(output), "--no-annotated"],
+                 "--output", str(output)],
                 cwd=ROOT, text=True, capture_output=True, check=True,
             )
             actual = [json.loads(line)["outcome"] for line in output.read_text().splitlines()]

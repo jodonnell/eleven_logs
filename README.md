@@ -48,8 +48,7 @@ is the SRT server/listener, connect the analyzer as the caller:
 
 ```sh
 python3 scripts/analyze_video.py \
-  'srt://OBS_IP:9000?mode=caller&latency=120000' \
-  --no-annotated
+  'srt://OBS_IP:9000?mode=caller&latency=120000'
 ```
 
 The inverse arrangement also works: use `mode=listener` in the analyzer URL
@@ -61,17 +60,20 @@ session cleanly and writes the completed events. `--end-seconds` can bound a
 live session; `--start-seconds` is available only for seekable files. SRT is
 opened explicitly with OpenCV's FFmpeg backend.
 
-The annotated output shows the detected geometry and is the visual check: the
-yellow table polygon, magenta physical net-base line, and projected log-space
-grid must align with the table. An explicitly reviewed calibration can still
-be exported with `scripts/auto_calibrate.py` and supplied with `--calibration`
-for diagnostic work, but automatic analysis does not cache one. The geometry
+Annotated video is disabled by default, which avoids an indefinitely growing
+recording during live analysis. Pass `--annotated` to write
+`video_bounces_annotated.mp4`, or `--annotated PATH.mp4` to choose its path. It
+shows the detected geometry and is the visual check: the yellow table polygon,
+magenta physical net-base line, and projected log-space grid must align with
+the table. An explicitly reviewed calibration can still be exported with
+`scripts/auto_calibrate.py` and supplied with `--calibration` for diagnostic
+work, but automatic analysis does not cache one. The geometry
 maps to the same
 player-relative convention used by `src/parser.js`: `posz > 0` is the
 far/opponent side and `posy` is the 0.7786m table surface. The physical image
 direction of each axis is per-camera calibration data, never a global rule.
 An explicitly supplied JSON is rejected if its `image_size` does not match the
-input video. The generated `video_bounces_annotated.mp4` shows
+input video. When requested, the generated annotated video shows
 the table, net, tracked path, markers, coordinates, and confidence.
 
 When the in-room TV is visible, the analyzer also reads its speed, spin, and

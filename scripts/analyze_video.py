@@ -1285,11 +1285,18 @@ def main() -> None:
     parser.add_argument("--calibration", help="Optional manually reviewed JSON calibration")
     parser.add_argument("--extract-calibration-frame", metavar="PNG", help="write a frame for per-camera corner calibration, then exit")
     parser.add_argument("--output", default="video_bounces.jsonl")
-    parser.add_argument("--annotated", default="video_bounces_annotated.mp4")
-    parser.add_argument("--no-annotated", action="store_true")
+    parser.add_argument(
+        "--annotated",
+        nargs="?",
+        const="video_bounces_annotated.mp4",
+        metavar="MP4",
+        help="write annotated video, optionally to a custom path",
+    )
+    parser.add_argument("--no-annotated", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--start-seconds", type=float, default=0, help="seek point; useful when reviewing a short interval")
     parser.add_argument("--end-seconds", type=float, help="stop after this video timestamp")
     args = parser.parse_args()
+    annotated_path = None if args.no_annotated else args.annotated
     try:
         source = open_video_source(args.video)
         try:
@@ -1332,8 +1339,8 @@ def main() -> None:
             calibration, homography, table = calibration_geometry(
                 detected, video_width, video_height, scale,
             )
-        if not args.no_annotated:
-            writer = create_video_writer(args.annotated, fps, (width, height))
+        if annotated_path is not None:
+            writer = create_video_writer(annotated_path, fps, (width, height))
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)
         events = process_video(
             source, scale, calibration, homography, table,
@@ -1346,7 +1353,11 @@ def main() -> None:
     with open(args.output, "w", encoding="utf-8") as output:
         for event in events:
             output.write(json.dumps(event.to_record()) + "\n")
-    print(json.dumps({"events": len(events), "output": args.output, "annotated": None if args.no_annotated else args.annotated}, indent=2))
+    print(json.dumps({
+        "events": len(events),
+        "output": args.output,
+        "annotated": annotated_path,
+    }, indent=2))
 
 
 if __name__ == "__main__":
