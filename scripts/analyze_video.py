@@ -8,6 +8,7 @@ rather than a fabricated table coordinate.
 import argparse
 import json
 import math
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple, Union, cast
 
@@ -20,10 +21,18 @@ except ImportError as exc:
 from auto_calibrate import create_calibration
 
 
-SCALE = 0.25                # updated per video to process frames at about 1K
 MAX_GAP = 3
 MIN_TRACK_POINTS = 9
 MIN_LAUNCH_TRACK_POINTS = 18
+PROCESSING_WIDTH = 1024
+TRACK_MATCH_DISTANCE = 80
+LAUNCH_MIN_HORIZONTAL_DISTANCE = 120
+RETURN_MIN_HORIZONTAL_DISTANCE = 120
+MIN_SHADOW_CONTACT_SCORE = 25
+NET_SHADOW_EXCLUSION_DISTANCE = 70
+BRIGHT_BALL_LOWER = (0, 0, 210)
+BRIGHT_BALL_UPPER = (180, 145, 255)
+MOTION_THRESHOLD = 18
 
 PathLike = Union[str, Path]
 Point = Tuple[float, float]
@@ -36,6 +45,16 @@ Event = Dict[str, Any]
 TrackRecord = Dict[str, Any]
 
 
+@dataclass
+class Attempt:
+    """Tracks one ball-machine launch and any possible return paths."""
+
+    frame: int
+    pixel: Point
+    returns: List[Track] = field(default_factory=list)
+    bounces: List[Event] = field(default_factory=list)
+
+
 class CalibrationArguments(Protocol):
     calibration: Optional[str]
     calibration_cache: Optional[str]
@@ -44,7 +63,7 @@ class CalibrationArguments(Protocol):
 
 
 def load_calibration(
-    path: PathLike, video_width: int, video_height: int
+    path: PathLike, video_width: int, video_height: int, scale: float
 ) -> Tuple[Calibration, np.ndarray, np.ndarray]:
     data = json.loads(Path(path).read_text())
     required = ("image_size", "table_surface_y", "table_polygon", "tracking_polygon", "net_line")
@@ -60,13 +79,13 @@ def load_calibration(
     if "control_points" in data:
         if len(data["control_points"]) != 4:
             raise SystemExit("Calibration needs exactly four image/log control points")
-        image = np.float32([point["image"] for point in data["control_points"]]) * SCALE
+        image = np.float32([point["image"] for point in data["control_points"]]) * scale
         log = np.float32([point["log"] for point in data["control_points"]])
     else:
         names = ("far_left", "far_right", "near_right", "near_left")
-        image = np.float32([data["image_corners"][name] for name in names]) * SCALE
+        image = np.float32([data["image_corners"][name] for name in names]) * scale
         log = np.float32([data["log_corners"][name] for name in names])
-    table_polygon = np.float32(data["table_polygon"]) * SCALE
+    table_polygon = np.float32(data["table_polygon"]) * scale
     return data, cv2.getPerspectiveTransform(image, log), table_polygon
 
 
@@ -79,8 +98,8 @@ def point_in_polygon(point: Point, polygon: np.ndarray) -> bool:
     return cv2.pointPolygonTest(polygon.astype(np.float32), point, False) >= 0
 
 
-def point_in_rectangle(point: Point, rectangle: Sequence[float]) -> bool:
-    x, y = point[0] / SCALE, point[1] / SCALE
+def point_in_rectangle(point: Point, rectangle: Sequence[float], scale: float) -> bool:
+    x, y = point[0] / scale, point[1] / scale
     left, top, right, bottom = rectangle
     return left <= x <= right and top <= y <= bottom
 
@@ -105,12 +124,12 @@ def find_bounce(
     # This catches the clear 17s sample bounce that has no vertical reversal.
     for index in range(2, len(points) - 2):
         score = points[index][3] if len(points[index]) > 3 else 0
-        if score < 25:
+        if score < MIN_SHADOW_CONTACT_SCORE:
             continue
         pixel = (points[index][1], points[index][2])
         if not point_in_polygon(pixel, table_polygon):
             continue
-        if net_line is not None and abs(signed_distance_to_line(pixel, net_line)) < 70:
+        if net_line is not None and abs(signed_distance_to_line(pixel, net_line)) < NET_SHADOW_EXCLUSION_DISTANCE:
             continue  # net mesh creates a false dark "shadow"
         neighbours = [points[index - 1][3], points[index + 1][3]]
         if score >= max(neighbours):
@@ -169,7 +188,7 @@ class MultiBallTracker:
                 predicted = points[-1][1:3]
             for candidate_index, candidate in enumerate(candidates):
                 distance = math.dist(predicted, candidate[:2])
-                if distance <= 80:
+                if distance <= TRACK_MATCH_DISTANCE:
                     pairs.append((distance, track_index, candidate_index))
         pairs.sort()
         used_tracks: Set[int] = set()
@@ -228,10 +247,10 @@ def candidates_for_frame(
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     # White ball: very bright and low saturation. Difference rejects static
     # white markings/text/net edges without retaining a background frame.
-    bright = cv2.inRange(hsv, (0, 0, 210), (180, 145, 255))
+    bright = cv2.inRange(hsv, BRIGHT_BALL_LOWER, BRIGHT_BALL_UPPER)
     if previous_gray is None:
         return gray, []
-    moving = cv2.threshold(cv2.absdiff(gray, previous_gray), 18, 255, cv2.THRESH_BINARY)[1]
+    moving = cv2.threshold(cv2.absdiff(gray, previous_gray), MOTION_THRESHOLD, 255, cv2.THRESH_BINARY)[1]
     mask = cv2.bitwise_and(bright, moving)
     # Keep 1--2px distant balls; temporal/trajectory filtering handles noise.
     count, _, stats, centers = cv2.connectedComponentsWithStats(mask)
@@ -312,6 +331,7 @@ class AttemptClassifier:
         homography: np.ndarray,
         video_width: int,
         video_height: int,
+        scale: float,
         write_event: Callable[[Event], None],
     ) -> None:
         self.fps = fps
@@ -320,10 +340,11 @@ class AttemptClassifier:
         self.net_line = net_line
         self.occlusion = occlusion
         self.homography = homography
+        self.scale = scale
         self.write_event = write_event
         self.events: List[Event] = []
         self.emitted: Set[Tuple[int, int]] = set()
-        self.active_attempt: Optional[Event] = None
+        self.active_attempt: Optional[Attempt] = None
         self.launcher_tracks_seen = 0
         self.launcher_region = calibration.get(
             "launcher_region", [video_width * .58, 0, video_width, video_height]
@@ -337,11 +358,11 @@ class AttemptClassifier:
         self.write_event(event)
         self.events.append(event)
 
-    def no_bounce_event(self, attempt: Event, draw_frame: int) -> Event:
+    def no_bounce_event(self, attempt: Attempt, draw_frame: int) -> Event:
         """Describe a launcher cycle without a confirmed returned bounce."""
         crossed_net = False
-        if attempt["returns"]:
-            returned = max(attempt["returns"], key=lambda path: math.dist(path[0][1:3], path[-1][1:3]))
+        if attempt.returns:
+            returned = max(attempt.returns, key=lambda path: math.dist(path[0][1:3], path[-1][1:3]))
             terminal = returned[-1]
             terminal_pixel = (terminal[1], terminal[2])
             start_pixel = (returned[0][1], returned[0][2])
@@ -359,16 +380,16 @@ class AttemptClassifier:
                 outcome, confidence = "unknown", 0.35
         else:
             outcome, confidence = "unknown", 0.2
-        event = {"video_time_seconds": round(attempt["frame"] / self.fps, 3), "video_timestamp": fmt_timestamp(attempt["frame"] / self.fps), "hit_table": False, "is_in": False, "outcome": outcome, "posx": None, "posy": None, "posz": None, "confidence": confidence, "frame_number": attempt["frame"], "_pixel": attempt["pixel"], "_draw_frame": draw_frame}
-        if attempt["returns"]:
+        event = {"video_time_seconds": round(attempt.frame / self.fps, 3), "video_timestamp": fmt_timestamp(attempt.frame / self.fps), "hit_table": False, "is_in": False, "outcome": outcome, "posx": None, "posy": None, "posz": None, "confidence": confidence, "frame_number": attempt.frame, "_pixel": attempt.pixel, "_draw_frame": draw_frame}
+        if attempt.returns:
             event["return_crossed_net"] = bool(crossed_net)
         return event
 
     def finish_attempt(self, draw_frame: int) -> None:
         if self.active_attempt is None:
             return
-        if self.active_attempt["bounces"]:
-            self.emit(self.active_attempt["bounces"][0])
+        if self.active_attempt.bounces:
+            self.emit(self.active_attempt.bounces[0])
         else:
             self.emit(self.no_bounce_event(self.active_attempt, draw_frame))
         self.active_attempt = None
@@ -394,7 +415,7 @@ class AttemptClassifier:
         continuity = min(1.0, len(approach + departure) / 6)
         confidence = round((0.82 if far else 0.72) * continuity * (0.45 if in_occlusion else 1.0), 2)
         outcome = "unknown" if in_occlusion else ("far_table" if far else "near_table")
-        self.active_attempt["bounces"].append({"video_time_seconds": round(hit[0] / self.fps, 3), "video_timestamp": fmt_timestamp(hit[0] / self.fps), "hit_table": not in_occlusion, "is_in": bool(far and not in_occlusion), "outcome": outcome, "posx": posx if not in_occlusion else None, "posy": posy if not in_occlusion else None, "posz": posz if not in_occlusion else None, "confidence": confidence, "frame_number": hit[0], "_pixel": pixel, "_draw_frame": draw_frame})
+        self.active_attempt.bounces.append({"video_time_seconds": round(hit[0] / self.fps, 3), "video_timestamp": fmt_timestamp(hit[0] / self.fps), "hit_table": not in_occlusion, "is_in": bool(far and not in_occlusion), "outcome": outcome, "posx": posx if not in_occlusion else None, "posy": posy if not in_occlusion else None, "posz": posz if not in_occlusion else None, "confidence": confidence, "frame_number": hit[0], "_pixel": pixel, "_draw_frame": draw_frame})
 
     def process_tracks(self, tracks: Sequence[Track], draw_frame: int) -> None:
         for path in tracks:
@@ -403,23 +424,23 @@ class AttemptClassifier:
             start_pixel = (path[0][1], path[0][2])
             dx = path[-1][1] - path[0][1]
             is_launcher = (
-                point_in_rectangle(start_pixel, self.launcher_region)
+                point_in_rectangle(start_pixel, self.launcher_region, self.scale)
                 and len(path) >= MIN_LAUNCH_TRACK_POINTS
-                and dx <= -120
+                and dx <= -LAUNCH_MIN_HORIZONTAL_DISTANCE
             )
             if is_launcher:
                 self.launcher_tracks_seen += 1
                 if self.launcher_tracks_seen > self.warmup_launcher_tracks:
                     self.finish_attempt(draw_frame)
-                    self.active_attempt = {"frame": path[0][0], "pixel": start_pixel, "returns": [], "bounces": []}
+                    self.active_attempt = Attempt(path[0][0], start_pixel)
                 continue
             attempt = self.active_attempt
             if attempt is None:
                 continue
-            is_return = point_in_rectangle(start_pixel, self.return_region) and dx >= 120
+            is_return = point_in_rectangle(start_pixel, self.return_region, self.scale) and dx >= RETURN_MIN_HORIZONTAL_DISTANCE
             if not is_return:
                 continue
-            attempt["returns"].append(path)
+            attempt.returns.append(path)
             bounce = find_bounce(path, self.table, self.net_line)
             if bounce:
                 self.add_bounce(path, *bounce, draw_frame)
@@ -456,7 +477,6 @@ def ensure_calibration(args: CalibrationArguments, fps: float) -> str:
 
 
 def main() -> None:
-    global SCALE
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("video")
     parser.add_argument("--calibration", help="Cached per-camera JSON calibration")
@@ -475,8 +495,8 @@ def main() -> None:
     if args.start_seconds:
         cap.set(cv2.CAP_PROP_POS_MSEC, args.start_seconds * 1000)
     video_width, video_height = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    SCALE = min(1.0, 1024 / video_width)
-    width, height = round(video_width * SCALE), round(video_height * SCALE)
+    scale = min(1.0, PROCESSING_WIDTH / video_width)
+    width, height = round(video_width * scale), round(video_height * scale)
     if args.extract_calibration_frame:
         ok, frame = cap.read()
         cap.release()
@@ -487,10 +507,10 @@ def main() -> None:
         print(json.dumps({"calibration_frame": args.extract_calibration_frame, "image_size": [video_width, video_height]}, indent=2))
         return
     calibration_path = ensure_calibration(cast(CalibrationArguments, args), fps)
-    calibration, homography, table = load_calibration(calibration_path, video_width, video_height)
-    net_line = np.float32(calibration["net_line"]) * SCALE
-    occlusion = np.float32(calibration.get("occlusion_polygon", [])) * SCALE
-    tracking_polygon = np.float32(calibration["tracking_polygon"]) * SCALE
+    calibration, homography, table = load_calibration(calibration_path, video_width, video_height, scale)
+    net_line = np.float32(calibration["net_line"]) * scale
+    occlusion = np.float32(calibration.get("occlusion_polygon", [])) * scale
+    tracking_polygon = np.float32(calibration["tracking_polygon"]) * scale
     tracker = MultiBallTracker()
     writer = None
     if not args.no_annotated:
@@ -502,7 +522,7 @@ def main() -> None:
 
         classifier = AttemptClassifier(
             fps, calibration, table, net_line, occlusion, homography,
-            video_width, video_height, write_event,
+            video_width, video_height, scale, write_event,
         )
         previous_gray = None
         # Seeking by timestamp is codec-dependent. Read the position OpenCV
