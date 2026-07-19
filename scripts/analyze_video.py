@@ -388,8 +388,8 @@ def ensure_calibration(args, fps):
             create_calibration(args.video, cache, diagnostic, round(args.start_seconds * fps))
         except ValueError as exc:
             raise SystemExit(
-                "Automatic calibration failed. Inspect its diagnostic or use "
-                "scripts/calibrate_video.py."
+                "Automatic calibration failed. Inspect its diagnostic and "
+                "supply a valid calibration with --calibration."
             ) from exc
     return str(cache)
 

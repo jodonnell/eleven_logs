@@ -41,9 +41,8 @@ def detect_geometry(frame):
     """Return the safely visible table area and visual x=0 line.
 
     The left rail may be covered by the net, so this deliberately returns a
-    triangle rather than inventing an unseen lower-left corner.  A bounce
-    outside that triangle is reported as unknown and can be recovered with a
-    manual calibration.
+    triangle rather than inventing an unseen lower-left corner. A bounce
+    outside that triangle is reported as unknown.
     """
     height, width = frame.shape[:2]
     lines = hough_segments(frame)
@@ -177,7 +176,7 @@ def main():
     try:
         report = create_calibration(args.video, args.output, args.diagnostic, args.frame)
     except ValueError as exc:
-        raise SystemExit(f"Automatic calibration failed: {exc}. Use scripts/calibrate_video.py as a fallback.") from exc
+        raise SystemExit(f"Automatic calibration failed: {exc}.") from exc
     print(json.dumps(report, indent=2))
 
 

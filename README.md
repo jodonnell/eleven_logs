@@ -45,10 +45,9 @@ python3 scripts/analyze_video.py sample.mp4 --calibration-cache my_camera.table-
 
 The cache's adjacent PNG is a required visual check: it shows the yellow table
 polygon, white `x=0` stripe, and magenta physical net-base line. If the camera
-is unusually obstructed or the automatic diagnostic is wrong,
-`scripts/calibrate_video.py` remains the fallback. The four control points map
-visible, known image points to log coordinates through a homography. The
-calibration maps to the same
+is unusually obstructed or the automatic diagnostic is wrong, provide a
+reviewed per-camera calibration with `--calibration`. The calibration maps to
+the same
 player-relative convention used by `src/parser.js`: `posz > 0` is the
 far/opponent side and `posy` is the 0.7786m table surface. The physical image
 direction of each axis is per-camera calibration data, never a global rule.
