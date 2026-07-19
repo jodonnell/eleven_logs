@@ -8,8 +8,6 @@ rather than a fabricated table coordinate.
 import argparse
 import json
 import math
-import subprocess
-import sys
 from pathlib import Path
 
 try:
@@ -17,6 +15,8 @@ try:
     import numpy as np
 except ImportError as exc:
     raise SystemExit("Install dependencies first: python3 -m pip install --user opencv-python-headless numpy") from exc
+
+from auto_calibrate import create_calibration
 
 
 SCALE = 0.25                # process 4K frames at 1K; input remains streaming
@@ -383,13 +383,10 @@ def ensure_calibration(args, fps):
     cache = Path(args.calibration_cache or f"{Path(args.video).stem}.table-calibration.json")
     if not cache.exists():
         diagnostic = cache.with_suffix(".png")
-        command = [sys.executable, str(Path(__file__).with_name("auto_calibrate.py")), args.video,
-                   "--output", str(cache), "--diagnostic", str(diagnostic),
-                   "--frame", str(round(args.start_seconds * fps))]
         print("No calibration supplied; detecting and caching table geometry once.")
         try:
-            subprocess.run(command, check=True, text=True)
-        except subprocess.CalledProcessError as exc:
+            create_calibration(args.video, cache, diagnostic, round(args.start_seconds * fps))
+        except ValueError as exc:
             raise SystemExit(
                 "Automatic calibration failed. Inspect its diagnostic or use "
                 "scripts/calibrate_video.py."

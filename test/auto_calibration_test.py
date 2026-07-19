@@ -5,14 +5,30 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
 VIDEO = ROOT / "sample.mp4"
+sys.path.insert(0, str(ROOT / "scripts"))
+from analyze_video import ensure_calibration  # noqa: E402
 
 
 @unittest.skipUnless(VIDEO.exists(), "sample.mp4 is a local video fixture")
 class AutoCalibrationTest(unittest.TestCase):
+    def test_analyzer_creates_a_cache_without_spawning_the_cli(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "calibration.json"
+            args = SimpleNamespace(
+                calibration=None,
+                calibration_cache=str(cache),
+                video=str(VIDEO),
+                start_seconds=0,
+            )
+
+            self.assertEqual(ensure_calibration(args, 60), str(cache))
+            self.assertTrue(cache.exists())
+
     def test_first_frame_finds_verified_table_origin(self):
         """The origin stays at the white-center-stripe/net-base intersection."""
         with tempfile.TemporaryDirectory() as directory:
