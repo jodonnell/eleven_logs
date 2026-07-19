@@ -1,0 +1,21 @@
+{
+  "fixture": "idle-shimmer-v1",
+  "captured_on": "2026-07-19",
+  "files": {
+    "annotated.mp4": {
+      "sha256": "f0d69bf74ecff83b763bbcffba2bf54b2733ff506b10b2d23e13942cd9bdb6bf",
+      "size_bytes": 32390075,
+      "duration_seconds": 104.1,
+      "codec": "mpeg4",
+      "width": 1024,
+      "height": 576,
+      "frames_per_second": 30,
+      "frame_count": 3123
+    },
+    "detector-output.jsonl": {
+      "sha256": "6a7e20ba393ffe1ceefcb316ddbaf1c8065b3b5146bba583ff01f022bdacffe7",
+      "size_bytes": 2166,
+      "event_count": 6
+    }
+  }
+}

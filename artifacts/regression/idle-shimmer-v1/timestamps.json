@@ -1,0 +1,66 @@
+{
+  "time_base": "seconds from the start of annotated.mp4",
+  "known_real_hits": [
+    {
+      "time_seconds": 83.933,
+      "timestamp": "01:23.933",
+      "frame_number_in_detector_output": 2518,
+      "note": "Visible return contacts the far side of the table."
+    }
+  ],
+  "false_detections": [
+    {
+      "time_seconds": 32.8,
+      "timestamp": "00:32.800",
+      "reported_outcome": "unknown",
+      "note": "Scene motion; no real table-tennis attempt."
+    },
+    {
+      "time_seconds": 49.867,
+      "timestamp": "00:49.867",
+      "reported_outcome": "unknown",
+      "note": "Scene motion; no real table-tennis attempt."
+    },
+    {
+      "time_seconds": 78.633,
+      "timestamp": "01:18.633",
+      "reported_outcome": "unknown",
+      "note": "Pre-attempt launcher or background motion."
+    },
+    {
+      "time_seconds": 85.4,
+      "timestamp": "01:25.400",
+      "reported_outcome": "off_table",
+      "note": "False path on the launcher/wall side after the real hit."
+    },
+    {
+      "time_seconds": 90.8,
+      "timestamp": "01:30.800",
+      "reported_outcome": "off_table",
+      "note": "False path on the launcher/wall side after the real hit."
+    }
+  ],
+  "idle_periods": [
+    {
+      "start_seconds": 0.0,
+      "end_seconds": 30.0,
+      "start_timestamp": "00:00.000",
+      "end_timestamp": "00:30.000",
+      "note": "Setup/idle footage with no valid attempt."
+    },
+    {
+      "start_seconds": 34.0,
+      "end_seconds": 75.0,
+      "start_timestamp": "00:34.000",
+      "end_timestamp": "01:15.000",
+      "note": "Idle scene and unrelated motion; no valid attempt."
+    },
+    {
+      "start_seconds": 92.0,
+      "end_seconds": 104.1,
+      "start_timestamp": "01:32.000",
+      "end_timestamp": "01:44.100",
+      "note": "Trailing idle footage; no result should be inferred."
+    }
+  ]
+}
