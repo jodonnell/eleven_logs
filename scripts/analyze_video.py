@@ -94,6 +94,7 @@ class Attempt:
     report_no_bounce: bool = True
     returns: List[Track] = field(default_factory=list)
     bounces: List[BounceEvent] = field(default_factory=list)
+    bounce_track_keys: Set[Tuple[int, int, int]] = field(default_factory=set)
 
 
 @dataclass
@@ -286,7 +287,6 @@ class MultiBallTracker:
     def visible_points(self) -> List[TrackPoint]:
         return [point for track in self.tracks for point in track.points[-12:]]
 
-
 def shadow_contact_score(hsv: np.ndarray, center: Point) -> float:
     """Local green-table darkening directly below a bright-ball candidate."""
     x, y = map(round, center)
@@ -461,11 +461,44 @@ class AttemptClassifier:
             start, self.reportable_launcher_region, self.scale,
         )
 
+    @staticmethod
+    def track_key(path: Track) -> Tuple[int, int, int]:
+        return path[0][0], round(path[0][1]), round(path[0][2])
+
+    def start_attempt(self, path: Track, draw_frame: int) -> None:
+        self.launcher_tracks_seen += 1
+        if self.launcher_tracks_seen <= self.warmup_launcher_tracks:
+            return
+        self.finish_attempt(draw_frame)
+        self.active_attempt = Attempt(
+            path[0][0], (path[0][1], path[0][2]),
+            report_no_bounce=self.is_reportable_launcher_track(path),
+        )
+
+    def return_evidence(self, path: Track) -> Tuple[bool, bool]:
+        start_pixel = (path[0][1], path[0][2])
+        terminal_pixel = (path[-1][1], path[-1][2])
+        crossed_net = (
+            signed_distance_to_line(start_pixel, self.net_line)
+            * signed_distance_to_line(terminal_pixel, self.net_line)
+            <= 0
+        )
+        return crossed_net, not point_in_polygon(terminal_pixel, self.table)
+
+    def select_return(self, attempt: Attempt) -> Track:
+        return max(
+            attempt.returns,
+            key=lambda path: (
+                all(self.return_evidence(path)),
+                math.dist(path[0][1:3], path[-1][1:3]),
+            ),
+        )
+
     def no_bounce_event(self, attempt: Attempt, draw_frame: int) -> BounceEvent:
         """Describe a launcher cycle without a confirmed returned bounce."""
         crossed_net = False
         if attempt.returns:
-            returned = max(attempt.returns, key=lambda path: math.dist(path[0][1:3], path[-1][1:3]))
+            returned = self.select_return(attempt)
             terminal = returned[-1]
             terminal_pixel = (terminal[1], terminal[2])
             start_pixel = (returned[0][1], returned[0][2])
@@ -507,8 +540,28 @@ class AttemptClassifier:
         if self.active_attempt is None:
             return
         if self.active_attempt.bounces:
-            self.emit(self.active_attempt.bounces[0])
-        elif self.active_attempt.report_no_bounce:
+            for event in sorted(self.active_attempt.bounces, key=lambda item: item.frame_number):
+                self.emit(event)
+            last_bounce_frame = max(event.frame_number for event in self.active_attempt.bounces)
+            later_misses = [
+                path for path in self.active_attempt.returns
+                if self.track_key(path) not in self.active_attempt.bounce_track_keys
+                and path[0][0] > last_bounce_frame
+                and all(self.return_evidence(path))
+            ]
+            if later_misses:
+                returned = max(
+                    later_misses,
+                    key=lambda path: math.dist(path[0][1:3], path[-1][1:3]),
+                )
+                missed_attempt = Attempt(
+                    returned[0][0], (returned[0][1], returned[0][2]),
+                    returns=[returned],
+                )
+                self.emit(self.no_bounce_event(missed_attempt, draw_frame))
+        elif self.active_attempt.report_no_bounce or any(
+            all(self.return_evidence(path)) for path in self.active_attempt.returns
+        ):
             self.emit(self.no_bounce_event(self.active_attempt, draw_frame))
         self.active_attempt = None
 
@@ -547,6 +600,7 @@ class AttemptClassifier:
             pixel=pixel,
             draw_frame=draw_frame,
         ))
+        self.active_attempt.bounce_track_keys.add(self.track_key(path))
 
     def process_tracks(self, tracks: Sequence[Track], draw_frame: int) -> None:
         for path in tracks:
@@ -554,13 +608,7 @@ class AttemptClassifier:
                 continue
             start_pixel = (path[0][1], path[0][2])
             if self.is_launcher_track(path):
-                self.launcher_tracks_seen += 1
-                if self.launcher_tracks_seen > self.warmup_launcher_tracks:
-                    self.finish_attempt(draw_frame)
-                    self.active_attempt = Attempt(
-                        path[0][0], start_pixel,
-                        report_no_bounce=self.is_reportable_launcher_track(path),
-                    )
+                self.start_attempt(path, draw_frame)
                 continue
             attempt = self.active_attempt
             if attempt is None:

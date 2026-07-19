@@ -96,6 +96,30 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertEqual(event.outcome, "off_table")
         self.assertFalse(event.hit_table)
 
+    def test_attempt_emits_a_later_miss_after_an_earlier_bounce(self):
+        classifier = self.classifier()
+        classifier.net_line = np.float32([(150, 0), (150, 500)])
+        launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        bounced = [
+            (30, 100, 100, 0.0),
+            (31, 120, 110, 0.0),
+            (32, 140, 120, 0.0),
+            (33, 160, 130, 0.0),
+            (34, 180, 120, 0.0),
+            (35, 200, 110, 0.0),
+            (36, 220, 100, 0.0),
+            (37, 240, 90, 0.0),
+            (38, 260, 80, 0.0),
+        ]
+        missed = [(50 + frame, 100 + frame * 20, 100, 0.0) for frame in range(9)]
+
+        classifier.process_tracks([launch], draw_frame=18)
+        classifier.process_tracks([bounced], draw_frame=39)
+        classifier.process_tracks([missed], draw_frame=59)
+        classifier.finish_attempt(draw_frame=60)
+
+        self.assertEqual([event.outcome for event in classifier.events], ["far_table", "off_table"])
+
     def test_default_launcher_region_rejects_table_and_frame_edge_tracks(self):
         classifier = AttemptClassifier(
             fps=60,
@@ -120,6 +144,30 @@ class VideoDetectorUnitTest(unittest.TestCase):
         classifier.process_tracks([lower_table_edge], draw_frame=18)
         classifier.finish_attempt(draw_frame=19)
         self.assertEqual(classifier.events, [])
+
+    def test_decisive_return_reports_for_unreportable_launcher(self):
+        classifier = AttemptClassifier(
+            fps=60,
+            calibration={"table_surface_y": 0.7786086},
+            table=np.float32([(250, 200), (675, 200), (805, 370), (50, 370)]),
+            net_line=np.float32([(500, 0), (500, 500)]),
+            occlusion=np.float32([]),
+            homography=np.eye(3, dtype=np.float32),
+            video_width=1000,
+            video_height=500,
+            scale=1,
+            settings=DetectorSettings(),
+        )
+        outer_frame_launch = [(frame, 980 - frame * 10, 100, 0.0) for frame in range(18)]
+        returned = [(30 + frame, 100 + frame * 100, 250, 0.0) for frame in range(9)]
+
+        classifier.process_tracks([outer_frame_launch], draw_frame=18)
+        classifier.process_tracks([returned], draw_frame=39)
+        classifier.finish_attempt(draw_frame=40)
+
+        self.assertFalse(classifier.is_reportable_launcher_track(outer_frame_launch))
+        self.assertEqual(len(classifier.events), 1)
+        self.assertEqual(classifier.events[0].outcome, "off_table")
 
     def test_identity_homography_maps_pixel_to_table_coordinate(self):
         self.assertEqual(
