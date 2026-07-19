@@ -8,9 +8,9 @@ rather than a fabricated table coordinate.
 import argparse
 import json
 import math
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple, Union, cast
+from typing import Any, Dict, List, Optional, Protocol, Sequence, Set, Tuple, Union, cast
 
 try:
     import cv2
@@ -21,18 +21,7 @@ except ImportError as exc:
 from auto_calibrate import create_calibration
 
 
-MAX_GAP = 3
-MIN_TRACK_POINTS = 9
-MIN_LAUNCH_TRACK_POINTS = 18
 PROCESSING_WIDTH = 1024
-TRACK_MATCH_DISTANCE = 80
-LAUNCH_MIN_HORIZONTAL_DISTANCE = 120
-RETURN_MIN_HORIZONTAL_DISTANCE = 120
-MIN_SHADOW_CONTACT_SCORE = 25
-NET_SHADOW_EXCLUSION_DISTANCE = 70
-BRIGHT_BALL_LOWER = (0, 0, 210)
-BRIGHT_BALL_UPPER = (180, 145, 255)
-MOTION_THRESHOLD = 18
 
 PathLike = Union[str, Path]
 Point = Tuple[float, float]
@@ -41,8 +30,55 @@ Candidate = Tuple[float, float, float]
 Track = List[TrackPoint]
 Bounce = Tuple[TrackPoint, Track, Track]
 Calibration = Dict[str, Any]
-Event = Dict[str, Any]
 TrackRecord = Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class DetectorSettings:
+    """Tunable classical-CV thresholds, optionally overridden per camera."""
+
+    max_gap: int = 3
+    min_track_points: int = 9
+    min_launch_track_points: int = 18
+    track_match_distance: float = 80
+    launch_min_horizontal_distance: float = 120
+    return_min_horizontal_distance: float = 120
+    min_shadow_contact_score: float = 25
+    net_shadow_exclusion_distance: float = 70
+    motion_threshold: int = 18
+    bright_ball_lower: Tuple[int, int, int] = (0, 0, 210)
+    bright_ball_upper: Tuple[int, int, int] = (180, 145, 255)
+
+    @classmethod
+    def from_calibration(cls, calibration: Calibration) -> "DetectorSettings":
+        configured = calibration.get("detector_settings", {})
+        valid = {item.name for item in fields(cls)}
+        return cls(**{name: value for name, value in configured.items() if name in valid})
+
+
+@dataclass
+class BounceEvent:
+    video_time_seconds: float
+    video_timestamp: str
+    hit_table: bool
+    is_in: bool
+    outcome: str
+    posx: Optional[float]
+    posy: Optional[float]
+    posz: Optional[float]
+    confidence: float
+    frame_number: int
+    pixel: Point = field(repr=False)
+    draw_frame: int = field(repr=False)
+    return_crossed_net: Optional[bool] = None
+
+    def to_record(self) -> Dict[str, Any]:
+        record = asdict(self)
+        record.pop("pixel")
+        record.pop("draw_frame")
+        if record["return_crossed_net"] is None:
+            record.pop("return_crossed_net")
+        return record
 
 
 @dataclass
@@ -52,7 +88,7 @@ class Attempt:
     frame: int
     pixel: Point
     returns: List[Track] = field(default_factory=list)
-    bounces: List[Event] = field(default_factory=list)
+    bounces: List[BounceEvent] = field(default_factory=list)
 
 
 class CalibrationArguments(Protocol):
@@ -113,10 +149,13 @@ def signed_distance_to_line(point: Point, line: np.ndarray) -> float:
 
 
 def find_bounce(
-    points: Track, table_polygon: np.ndarray, net_line: Optional[np.ndarray] = None
+    points: Track,
+    table_polygon: np.ndarray,
+    net_line: Optional[np.ndarray] = None,
+    settings: DetectorSettings = DetectorSettings(),
 ) -> Optional[Bounce]:
     """Find a visible table-plane turn in one completed candidate track."""
-    if len(points) < MIN_TRACK_POINTS:
+    if len(points) < settings.min_track_points:
         return None
     # A rendered ball casts a compact, moving shadow on the green table. At
     # contact the ball/shadow separation collapses, even when perspective
@@ -124,12 +163,12 @@ def find_bounce(
     # This catches the clear 17s sample bounce that has no vertical reversal.
     for index in range(2, len(points) - 2):
         score = points[index][3] if len(points[index]) > 3 else 0
-        if score < MIN_SHADOW_CONTACT_SCORE:
+        if score < settings.min_shadow_contact_score:
             continue
         pixel = (points[index][1], points[index][2])
         if not point_in_polygon(pixel, table_polygon):
             continue
-        if net_line is not None and abs(signed_distance_to_line(pixel, net_line)) < NET_SHADOW_EXCLUSION_DISTANCE:
+        if net_line is not None and abs(signed_distance_to_line(pixel, net_line)) < settings.net_shadow_exclusion_distance:
             continue  # net mesh creates a false dark "shadow"
         neighbours = [points[index - 1][3], points[index + 1][3]]
         if score >= max(neighbours):
@@ -174,7 +213,8 @@ class MultiBallTracker:
     replacing the ball during a player return. Completed tracks are emitted
     immediately, so memory is bounded by active tracks and short histories.
     """
-    def __init__(self) -> None:
+    def __init__(self, settings: DetectorSettings = DetectorSettings()) -> None:
+        self.settings = settings
         self.tracks: List[TrackRecord] = []
 
     def update(self, frame_number: int, candidates: Sequence[Candidate]) -> List[Track]:
@@ -188,7 +228,7 @@ class MultiBallTracker:
                 predicted = points[-1][1:3]
             for candidate_index, candidate in enumerate(candidates):
                 distance = math.dist(predicted, candidate[:2])
-                if distance <= TRACK_MATCH_DISTANCE:
+                if distance <= self.settings.track_match_distance:
                     pairs.append((distance, track_index, candidate_index))
         pairs.sort()
         used_tracks: Set[int] = set()
@@ -208,7 +248,7 @@ class MultiBallTracker:
         completed: List[Track] = []
         active: List[TrackRecord] = []
         for track in self.tracks:
-            if track["gap"] > MAX_GAP:
+            if track["gap"] > self.settings.max_gap:
                 completed.append(track["points"])
             else:
                 active.append(track)
@@ -241,16 +281,19 @@ def shadow_contact_score(hsv: np.ndarray, center: Point) -> float:
 
 
 def candidates_for_frame(
-    frame: np.ndarray, previous_gray: Optional[np.ndarray], tracking_polygon: np.ndarray
+    frame: np.ndarray,
+    previous_gray: Optional[np.ndarray],
+    tracking_polygon: np.ndarray,
+    settings: DetectorSettings = DetectorSettings(),
 ) -> Tuple[np.ndarray, List[Candidate]]:
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     # White ball: very bright and low saturation. Difference rejects static
     # white markings/text/net edges without retaining a background frame.
-    bright = cv2.inRange(hsv, BRIGHT_BALL_LOWER, BRIGHT_BALL_UPPER)
+    bright = cv2.inRange(hsv, settings.bright_ball_lower, settings.bright_ball_upper)
     if previous_gray is None:
         return gray, []
-    moving = cv2.threshold(cv2.absdiff(gray, previous_gray), MOTION_THRESHOLD, 255, cv2.THRESH_BINARY)[1]
+    moving = cv2.threshold(cv2.absdiff(gray, previous_gray), settings.motion_threshold, 255, cv2.THRESH_BINARY)[1]
     mask = cv2.bitwise_and(bright, moving)
     # Keep 1--2px distant balls; temporal/trajectory filtering handles noise.
     count, _, stats, centers = cv2.connectedComponentsWithStats(mask)
@@ -280,7 +323,7 @@ def draw_overlay(
     table: np.ndarray,
     net_line: np.ndarray,
     track: Sequence[TrackPoint],
-    events: Sequence[Event],
+    events: Sequence[BounceEvent],
     homography: np.ndarray,
     surface_y: float,
 ) -> np.ndarray:
@@ -307,13 +350,13 @@ def draw_overlay(
         x, y = point[1], point[2]
         cv2.circle(view, (round(x), round(y)), 3, (0, 255, 255), -1)
     for event in events:
-        if event["frame_number"] != event.get("_draw_frame"):
+        if event.frame_number != event.draw_frame:
             continue
-        p = event["_pixel"]
+        p = event.pixel
         cv2.drawMarker(view, (round(p[0]), round(p[1])), (0, 0, 255), cv2.MARKER_CROSS, 20, 3)
-        label = f"{event['outcome']} {event['confidence']:.2f}"
-        if event["posx"] is not None:
-            label += f" x={event['posx']:.2f} z={event['posz']:.2f}"
+        label = f"{event.outcome} {event.confidence:.2f}"
+        if event.posx is not None:
+            label += f" x={event.posx:.2f} z={event.posz:.2f}"
         cv2.putText(view, label, (round(p[0]) + 12, round(p[1]) - 12), cv2.FONT_HERSHEY_SIMPLEX, .55, (0, 0, 255), 2)
     return view
 
@@ -332,7 +375,7 @@ class AttemptClassifier:
         video_width: int,
         video_height: int,
         scale: float,
-        write_event: Callable[[Event], None],
+        settings: DetectorSettings,
     ) -> None:
         self.fps = fps
         self.calibration = calibration
@@ -341,8 +384,8 @@ class AttemptClassifier:
         self.occlusion = occlusion
         self.homography = homography
         self.scale = scale
-        self.write_event = write_event
-        self.events: List[Event] = []
+        self.settings = settings
+        self.events: List[BounceEvent] = []
         self.emitted: Set[Tuple[int, int]] = set()
         self.active_attempt: Optional[Attempt] = None
         self.launcher_tracks_seen = 0
@@ -354,11 +397,10 @@ class AttemptClassifier:
         )
         self.warmup_launcher_tracks = calibration.get("warmup_launcher_tracks", 0)
 
-    def emit(self, event: Event) -> None:
-        self.write_event(event)
+    def emit(self, event: BounceEvent) -> None:
         self.events.append(event)
 
-    def no_bounce_event(self, attempt: Attempt, draw_frame: int) -> Event:
+    def no_bounce_event(self, attempt: Attempt, draw_frame: int) -> BounceEvent:
         """Describe a launcher cycle without a confirmed returned bounce."""
         crossed_net = False
         if attempt.returns:
@@ -380,10 +422,21 @@ class AttemptClassifier:
                 outcome, confidence = "unknown", 0.35
         else:
             outcome, confidence = "unknown", 0.2
-        event = {"video_time_seconds": round(attempt.frame / self.fps, 3), "video_timestamp": fmt_timestamp(attempt.frame / self.fps), "hit_table": False, "is_in": False, "outcome": outcome, "posx": None, "posy": None, "posz": None, "confidence": confidence, "frame_number": attempt.frame, "_pixel": attempt.pixel, "_draw_frame": draw_frame}
-        if attempt.returns:
-            event["return_crossed_net"] = bool(crossed_net)
-        return event
+        return BounceEvent(
+            video_time_seconds=round(attempt.frame / self.fps, 3),
+            video_timestamp=fmt_timestamp(attempt.frame / self.fps),
+            hit_table=False,
+            is_in=False,
+            outcome=outcome,
+            posx=None,
+            posy=None,
+            posz=None,
+            confidence=confidence,
+            frame_number=attempt.frame,
+            pixel=attempt.pixel,
+            draw_frame=draw_frame,
+            return_crossed_net=bool(crossed_net) if attempt.returns else None,
+        )
 
     def finish_attempt(self, draw_frame: int) -> None:
         if self.active_attempt is None:
@@ -415,18 +468,31 @@ class AttemptClassifier:
         continuity = min(1.0, len(approach + departure) / 6)
         confidence = round((0.82 if far else 0.72) * continuity * (0.45 if in_occlusion else 1.0), 2)
         outcome = "unknown" if in_occlusion else ("far_table" if far else "near_table")
-        self.active_attempt.bounces.append({"video_time_seconds": round(hit[0] / self.fps, 3), "video_timestamp": fmt_timestamp(hit[0] / self.fps), "hit_table": not in_occlusion, "is_in": bool(far and not in_occlusion), "outcome": outcome, "posx": posx if not in_occlusion else None, "posy": posy if not in_occlusion else None, "posz": posz if not in_occlusion else None, "confidence": confidence, "frame_number": hit[0], "_pixel": pixel, "_draw_frame": draw_frame})
+        self.active_attempt.bounces.append(BounceEvent(
+            video_time_seconds=round(hit[0] / self.fps, 3),
+            video_timestamp=fmt_timestamp(hit[0] / self.fps),
+            hit_table=not in_occlusion,
+            is_in=bool(far and not in_occlusion),
+            outcome=outcome,
+            posx=posx if not in_occlusion else None,
+            posy=posy if not in_occlusion else None,
+            posz=posz if not in_occlusion else None,
+            confidence=confidence,
+            frame_number=hit[0],
+            pixel=pixel,
+            draw_frame=draw_frame,
+        ))
 
     def process_tracks(self, tracks: Sequence[Track], draw_frame: int) -> None:
         for path in tracks:
-            if len(path) < MIN_TRACK_POINTS:
+            if len(path) < self.settings.min_track_points:
                 continue
             start_pixel = (path[0][1], path[0][2])
             dx = path[-1][1] - path[0][1]
             is_launcher = (
                 point_in_rectangle(start_pixel, self.launcher_region, self.scale)
-                and len(path) >= MIN_LAUNCH_TRACK_POINTS
-                and dx <= -LAUNCH_MIN_HORIZONTAL_DISTANCE
+                and len(path) >= self.settings.min_launch_track_points
+                and dx <= -self.settings.launch_min_horizontal_distance
             )
             if is_launcher:
                 self.launcher_tracks_seen += 1
@@ -437,11 +503,11 @@ class AttemptClassifier:
             attempt = self.active_attempt
             if attempt is None:
                 continue
-            is_return = point_in_rectangle(start_pixel, self.return_region, self.scale) and dx >= RETURN_MIN_HORIZONTAL_DISTANCE
+            is_return = point_in_rectangle(start_pixel, self.return_region, self.scale) and dx >= self.settings.return_min_horizontal_distance
             if not is_return:
                 continue
             attempt.returns.append(path)
-            bounce = find_bounce(path, self.table, self.net_line)
+            bounce = find_bounce(path, self.table, self.net_line, self.settings)
             if bounce:
                 self.add_bounce(path, *bounce, draw_frame)
 
@@ -476,6 +542,51 @@ def ensure_calibration(args: CalibrationArguments, fps: float) -> str:
     return str(cache)
 
 
+def process_video(
+    cap: cv2.VideoCapture,
+    fps: float,
+    video_width: int,
+    video_height: int,
+    scale: float,
+    calibration: Calibration,
+    homography: np.ndarray,
+    table: np.ndarray,
+    end_seconds: Optional[float] = None,
+    writer: Optional[cv2.VideoWriter] = None,
+) -> List[BounceEvent]:
+    """Process an already-open capture and return its detected bounce events."""
+    width, height = round(video_width * scale), round(video_height * scale)
+    settings = DetectorSettings.from_calibration(calibration)
+    net_line = np.float32(calibration["net_line"]) * scale
+    occlusion = np.float32(calibration.get("occlusion_polygon", [])) * scale
+    tracking_polygon = np.float32(calibration["tracking_polygon"]) * scale
+    tracker = MultiBallTracker(settings)
+    classifier = AttemptClassifier(
+        fps, calibration, table, net_line, occlusion, homography,
+        video_width, video_height, scale, settings,
+    )
+    previous_gray = None
+    # Seeking by timestamp is codec-dependent. Read the position OpenCV
+    # actually selected so reported frame numbers remain truthful.
+    frame_number = round(cap.get(cv2.CAP_PROP_POS_FRAMES))
+    while True:
+        ok, original = cap.read()
+        if not ok or (end_seconds is not None and frame_number / fps >= end_seconds):
+            break
+        frame = cv2.resize(original, (width, height), interpolation=cv2.INTER_AREA)
+        gray, candidates = candidates_for_frame(frame, previous_gray, tracking_polygon, settings)
+        previous_gray = gray
+        classifier.process_tracks(tracker.update(frame_number, candidates), frame_number)
+        if writer is not None:
+            writer.write(draw_overlay(
+                frame, table, net_line, tracker.visible_points, classifier.events,
+                homography, calibration["table_surface_y"],
+            ))
+        frame_number += 1
+    classifier.finish_attempt(frame_number)
+    return classifier.events
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("video")
@@ -508,45 +619,21 @@ def main() -> None:
         return
     calibration_path = ensure_calibration(cast(CalibrationArguments, args), fps)
     calibration, homography, table = load_calibration(calibration_path, video_width, video_height, scale)
-    net_line = np.float32(calibration["net_line"]) * scale
-    occlusion = np.float32(calibration.get("occlusion_polygon", [])) * scale
-    tracking_polygon = np.float32(calibration["tracking_polygon"]) * scale
-    tracker = MultiBallTracker()
     writer = None
     if not args.no_annotated:
         writer = create_video_writer(args.annotated, fps, (width, height))
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    with open(args.output, "w", encoding="utf-8") as output:
-        def write_event(event: Event) -> None:
-            output.write(json.dumps({k: v for k, v in event.items() if not k.startswith("_")}) + "\n")
-
-        classifier = AttemptClassifier(
-            fps, calibration, table, net_line, occlusion, homography,
-            video_width, video_height, scale, write_event,
-        )
-        previous_gray = None
-        # Seeking by timestamp is codec-dependent. Read the position OpenCV
-        # actually selected so reported frame numbers remain truthful.
-        frame_number = round(cap.get(cv2.CAP_PROP_POS_FRAMES))
-        while True:
-            ok, original = cap.read()
-            if not ok:
-                break
-            if args.end_seconds is not None and frame_number / fps >= args.end_seconds:
-                break
-            frame = cv2.resize(original, (width, height), interpolation=cv2.INTER_AREA)
-            gray, candidates = candidates_for_frame(frame, previous_gray, tracking_polygon)
-            previous_gray = gray
-            completed_tracks = tracker.update(frame_number, candidates)
-            classifier.process_tracks(completed_tracks, frame_number)
-            if writer is not None:
-                writer.write(draw_overlay(frame, table, net_line, tracker.visible_points, classifier.events, homography, calibration["table_surface_y"]))
-            frame_number += 1
-        classifier.finish_attempt(frame_number)
+    events = process_video(
+        cap, fps, video_width, video_height, scale, calibration, homography, table,
+        args.end_seconds, writer,
+    )
     cap.release()
     if writer is not None:
         writer.release()
-    print(json.dumps({"events": len(classifier.events), "output": args.output, "annotated": None if args.no_annotated else args.annotated}, indent=2))
+    with open(args.output, "w", encoding="utf-8") as output:
+        for event in events:
+            output.write(json.dumps(event.to_record()) + "\n")
+    print(json.dumps({"events": len(events), "output": args.output, "annotated": None if args.no_annotated else args.annotated}, indent=2))
 
 
 if __name__ == "__main__":

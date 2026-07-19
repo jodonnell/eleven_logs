@@ -54,3 +54,8 @@ direction of each axis is per-camera calibration data, never a global rule.
 The JSON is rejected if its `image_size` does not match the input video. The
 generated `video_bounces_annotated.mp4` shows
 the table, net, tracked path, markers, coordinates, and confidence.
+
+For a camera that needs different detection sensitivity, the calibration JSON
+may include a `detector_settings` object. It can override named thresholds such
+as `motion_threshold`, `track_match_distance`, or
+`min_shadow_contact_score`; omitted settings retain the tested defaults.

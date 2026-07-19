@@ -8,10 +8,31 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from analyze_video import find_bounce, shadow_contact_score  # noqa: E402
+from analyze_video import (  # noqa: E402
+    AttemptClassifier,
+    DetectorSettings,
+    map_log_coordinate,
+    shadow_contact_score,
+    find_bounce,
+)
 
 
 class VideoDetectorUnitTest(unittest.TestCase):
+    def classifier(self) -> AttemptClassifier:
+        calibration = {"table_surface_y": 0.7786086}
+        return AttemptClassifier(
+            fps=60,
+            calibration=calibration,
+            table=np.float32([(0, 0), (200, 0), (200, 200), (0, 200)]),
+            net_line=np.float32([(500, 0), (500, 500)]),
+            occlusion=np.float32([]),
+            homography=np.eye(3, dtype=np.float32),
+            video_width=1000,
+            video_height=500,
+            scale=1,
+            settings=DetectorSettings(),
+        )
+
     def test_shadow_score_rises_for_dark_table_patch_below_ball(self):
         hsv = np.zeros((100, 100, 3), dtype=np.uint8)
         hsv[:, :, :] = (65, 165, 160)  # green table
@@ -40,6 +61,33 @@ class VideoDetectorUnitTest(unittest.TestCase):
         table = np.float32([(0, 0), (500, 0), (500, 500), (0, 500)])
 
         self.assertIsNone(find_bounce(points, table, net_line=np.float32([(50, 0), (50, 500)])))
+
+    def test_classifier_reports_an_off_table_return(self):
+        classifier = self.classifier()
+        launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        returned = [(30 + frame, 100 + frame * 20, 100, 0.0) for frame in range(9)]
+
+        classifier.process_tracks([launch], draw_frame=18)
+        classifier.process_tracks([returned], draw_frame=39)
+        classifier.finish_attempt(draw_frame=40)
+
+        self.assertEqual(len(classifier.events), 1)
+        event = classifier.events[0]
+        self.assertEqual(event.outcome, "off_table")
+        self.assertFalse(event.hit_table)
+        self.assertNotIn("pixel", event.to_record())
+
+    def test_identity_homography_maps_pixel_to_table_coordinate(self):
+        self.assertEqual(
+            map_log_coordinate(np.eye(3, dtype=np.float32), (2.5, 4.0), 0.7786086),
+            (2.5, 0.7786, 4.0),
+        )
+
+    def test_calibration_can_override_detector_settings(self):
+        settings = DetectorSettings.from_calibration({"detector_settings": {"motion_threshold": 9}})
+
+        self.assertEqual(settings.motion_threshold, 9)
+        self.assertEqual(settings.max_gap, 3)
 
 
 if __name__ == "__main__":
