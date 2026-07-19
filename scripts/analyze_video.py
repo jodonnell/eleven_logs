@@ -32,6 +32,45 @@ Bounce = Tuple[TrackPoint, Track, Track]
 Calibration = Dict[str, Any]
 
 
+DIGIT_TEMPLATES = {
+    digit: np.uint8([[pixel == "1" for pixel in row] for row in bitmap.split("/")])
+    for digit, bitmap in {
+        "0": "0000000000000000/0000000000000000/0000000000000000/0000000000000000/0000111111100000/0011111111111000/0111110001111100/0111100000111100/0111100000111110/0111100000111110/0111100000111110/0111100000111110/0111110000111100/0011111001111100/0001111111111000/0000001111000000/0000000000000000/0000000000000000/0000000000000000/0000000000000000",
+        "1": "0000000000000000/0000000011111100/0000011111111100/0000011111111100/0111111111111100/0111111011111100/0111110011111100/0000000011111100/0000000011111110/0000000011111110/0000000011111110/0000000011111110/0000000011111110/0000000011111110/0000000011111110/0000000011111110/0000000011111110/0000000011111110/0000000011111110/0000000000000000",
+        "2": "0000000000000000/0000000000000000/0000000000000000/0000000000000000/0011111111110000/0111111111111000/0011000001111100/0000000000111100/0000000001111100/0000000011111000/0000001111110000/0000111110000000/0001111100000000/0111111111111110/0111111111111110/0011000000000000/0000000000000000/0000000000000000/0000000000000000/0000000000000000",
+        "3": "0000000000000000/0000000000000000/0000000000000000/0000000000000000/0001111111100000/0111111111111000/0011000001111100/0000000000111100/0000000001111100/0000111111111000/0000111111111100/0000000000111110/0000000000111110/0110000001111100/0111111111111000/0011111111100000/0000000000000000/0000000000000000/0000000000000000/0000000000000000",
+        "4": "0000000000000000/0000000000000000/0000000000000000/0000000000000000/0000000011111000/0000001111111000/0000011111111000/0000111111111000/0001111011111000/0001110011111000/0111100011111000/0111111111111110/0111111111111110/0000000011111000/0000000001110000/0000000000000000/0000000000000000/0000000000000000/0000000000000000/0000000000000000",
+        "5": "0000000000000000/0000000000000000/0000000000000000/0000000000000000/0011111111111000/0011111111111000/0011110000000000/0011110000000000/0011111110000000/0011111111111100/0011001111111100/0000000000111110/0000000000111110/0111100011111100/0111111111111000/0000111111000000/0000000000000000/0000000000000000/0000000000000000/0000000000000000",
+        "6": "0000000000000000/0000000000000000/0000000000000000/0000000000000000/0000011111111000/0001111111111000/0011111000000000/0011110011000000/0011111111111000/0111111001111100/0111100000011110/0011100000011110/0011111000111110/0001111111111100/0000011111110000/0000000000000000/0000000000000000/0000000000000000/0000000000000000/0000000000000000",
+        "7": "0000000000000000/0000000000000000/0000000000000000/0000000000000000/0111111111111110/0111111111111110/0111111111111110/0000000001111100/0000000001111000/0000000011110000/0000000111110000/0000001111100000/0000001111000000/0000011111000000/0000111110000000/0000111100000000/0000000000000000/0000000000000000/0000000000000000/0000000000000000",
+        "8": "0000000000000000/0000000000000000/0000000000000000/0000000000000000/0000001111000000/0001111111111000/0011111001111100/0011110000111110/0011110000111100/0001111111111000/0001111111111100/0011110000111110/0111100000011110/0111110000011110/0011111111111110/0000111111111000/0000000000000000/0000000000000000/0000000000000000/0000000000000000",
+        "9": "0000000000000000/0000000000000000/0000000000000000/0000000000000000/0000111111110000/0011111111111100/0011110000111100/0111100000011110/0011100000011110/0011111111111110/0000111111111110/0000000000111100/0000000011111100/0001111111110000/0001111110000000/0000000000000000/0000000000000000/0000000000000000/0000000000000000/0000000000000000",
+    }.items()
+}
+
+# At the 1024px sample's TV scale a digit is only 3--4 pixels high. These
+# native-resolution cores retain distinctions that disappear when the larger
+# templates are downsampled (notably 0/9 and 5/6/8).
+LOW_RES_DIGIT_TEMPLATES = {
+    digit: [
+        np.uint8([[pixel == "1" for pixel in row] for row in variant.split("/")])
+        for variant in bitmap.split("|")
+    ]
+    for digit, bitmap in {
+        "0": "0100/1011/1001/1011|1001/1001/1111|1011/1001/1111",
+        "1": "111/001/001|111/011/011",
+        "2": "0011/0010/1100|0100/0011/0110/1100|0100/0011/0110/1110",
+        "3": "011/110/011|100/011/110/011",
+        "4": "0010/0110/1010/0011|0010/0110/1010/1011|0110/1010/1111",
+        "5": "1000/1111/0011|1100/0111/0001|1110/1000/1111/0011|1110/1000/1111/1011",
+        "6": "1000/1111/1011|1011/1110/1001|1100/1111/1001",
+        "7": "011/010/100|011/010/110|111/001/011/010",
+        "8": "1011/1110/1001|1011/1110/1011|1101/0111/1101",
+        "9": "0100/1011/1111/0010|1101/1111/0001",
+    }.items()
+}
+
+
 @dataclass(frozen=True)
 class DetectorSettings:
     """Tunable classical-CV thresholds, optionally overridden per camera."""
@@ -77,6 +116,8 @@ class BounceEvent:
     pixel: Point = field(repr=False)
     draw_frame: int = field(repr=False)
     return_crossed_net: Optional[bool] = None
+    hit: Optional[Dict[str, Any]] = None
+    machine: Optional[Dict[str, Any]] = None
 
     def to_record(self) -> Dict[str, Any]:
         record = asdict(self)
@@ -84,7 +125,27 @@ class BounceEvent:
         record.pop("draw_frame")
         if record["return_crossed_net"] is None:
             record.pop("return_crossed_net")
+        if record["hit"] is None:
+            record.pop("hit")
+        if record["machine"] is None:
+            record.pop("machine")
         return record
+
+
+@dataclass(frozen=True)
+class TelemetryReading:
+    frame_number: int
+    speed_mps: float
+    spin_revolutions_per_second: int
+    spin_direction: Dict[str, Any]
+
+    def to_record(self, fps: float) -> Dict[str, Any]:
+        return {
+            "speed_mps": self.speed_mps,
+            "spin_revolutions_per_second": self.spin_revolutions_per_second,
+            "spin_direction": self.spin_direction,
+            "video_time_seconds": round(self.frame_number / fps, 3),
+        }
 
 
 @dataclass
@@ -97,6 +158,8 @@ class Attempt:
     returns: List[Track] = field(default_factory=list)
     bounces: List[BounceEvent] = field(default_factory=list)
     bounce_track_keys: Set[Tuple[int, int, int]] = field(default_factory=set)
+    machine_telemetry: Optional[TelemetryReading] = None
+    telemetry_after_launch: List[TelemetryReading] = field(default_factory=list)
 
 
 @dataclass
@@ -314,6 +377,306 @@ class MultiBallTracker:
     def visible_points(self) -> List[TrackPoint]:
         return [point for track in self.tracks for point in track.points[-12:]]
 
+
+def telemetry_title_bounds(frame: np.ndarray) -> Optional[Tuple[int, int, int, int]]:
+    """Locate the wide blue Multiplayer title, our HUD scale/position anchor."""
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    blue = cv2.inRange(hsv, (100, 90, 100), (145, 255, 255))
+    row_counts = np.count_nonzero(blue, axis=1)
+    maximum = int(row_counts.max())
+    if maximum < max(8, frame.shape[1] * .008):
+        return None
+    rows = np.flatnonzero(row_counts >= maximum * .3)
+    groups = np.split(rows, np.flatnonzero(np.diff(rows) > 1) + 1)
+    groups = [group for group in groups if len(group) >= 2]
+    if not groups:
+        return None
+    title_rows = max(groups, key=lambda group: int(row_counts[group].sum()))
+    y0, y1 = int(title_rows[0]), int(title_rows[-1] + 1)
+    selected = blue[y0:y1] > 0
+    _, xs = np.nonzero(selected)
+    if not len(xs):
+        return None
+    x0, x1 = int(xs.min()), int(xs.max() + 1)
+    if x1 - x0 < frame.shape[1] * .05:
+        return None
+    return x0, y0, x1, y1
+
+
+def normalize_digit(mask: np.ndarray) -> np.ndarray:
+    """Place one tightly cropped HUD digit in the template coordinate space."""
+    height, width = mask.shape
+    scale = min(14 / width, 18 / height)
+    resized = cv2.resize(
+        mask, (max(1, round(width * scale)), max(1, round(height * scale))),
+        interpolation=cv2.INTER_AREA,
+    )
+    resized = resized >= 80
+    canvas = np.zeros((20, 16), dtype=np.uint8)
+    y = (canvas.shape[0] - resized.shape[0]) // 2
+    x = (canvas.shape[1] - resized.shape[1]) // 2
+    canvas[y:y + resized.shape[0], x:x + resized.shape[1]] = resized
+    return canvas
+
+
+def classify_digit(mask: np.ndarray) -> Tuple[str, float]:
+    normalized = normalize_digit(mask)
+    if mask.shape[0] <= 5:
+        scores = {}
+        for digit, raw_templates in LOW_RES_DIGIT_TEMPLATES.items():
+            candidate_scores = []
+            for raw_template in raw_templates:
+                template = normalize_digit(raw_template * 255)
+                intersection = np.count_nonzero(normalized & template)
+                total = np.count_nonzero(normalized) + np.count_nonzero(template)
+                candidate_scores.append(2 * intersection / total if total else 0.0)
+            scores[digit] = max(candidate_scores)
+        ranked = sorted(scores, key=scores.get, reverse=True)
+        if len(ranked) > 1 and scores[ranked[0]] - scores[ranked[1]] < .015:
+            return "?", 0.0
+        digit = ranked[0]
+        return digit, round(scores[digit], 3)
+    contours, hierarchy = cv2.findContours(
+        (mask > 0).astype(np.uint8), cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE,
+    )
+    holes = [] if hierarchy is None else [
+        index for index, item in enumerate(hierarchy[0])
+        if item[3] >= 0 and cv2.contourArea(contours[index]) >= mask.size * .015
+    ]
+    scores = {}
+    for digit, template in DIGIT_TEMPLATES.items():
+        template_holes = 2 if digit == "8" else (1 if digit in "0469" else 0)
+        if template_holes != len(holes):
+            continue
+        intersection = np.count_nonzero(normalized & template)
+        total = np.count_nonzero(normalized) + np.count_nonzero(template)
+        scores[digit] = 2 * intersection / total if total else 0.0
+    if len(holes) == 1:
+        moments = cv2.moments(contours[holes[0]])
+        if moments["m00"]:
+            hole_y = moments["m01"] / moments["m00"] / mask.shape[0]
+            if hole_y > .58:
+                scores = {"6": scores.get("6", 0.0)}
+            elif hole_y < .42:
+                scores = {"9": scores.get("9", 0.0)}
+    if not scores:
+        return "?", 0.0
+    digit = max(scores, key=scores.get)
+    return digit, round(scores[digit], 3)
+
+
+def split_wide_component(mask: np.ndarray, box: Tuple[int, int, int, int, int]) -> List[np.ndarray]:
+    """Split digits joined by a one-pixel compression bridge."""
+    x, y, width, height, _ = box
+    glyph = mask[y:y + height, x:x + width]
+    pieces = max(1, round(width / max(height * 1.05, 1)))
+    if pieces == 1:
+        return [glyph]
+    projection = np.count_nonzero(glyph, axis=0)
+    cuts = []
+    for piece in range(1, pieces):
+        expected = round(width * piece / pieces)
+        radius = max(1, round(width / pieces * .25))
+        start, end = max(1, expected - radius), min(width - 1, expected + radius + 1)
+        cuts.append(start + int(np.argmin(projection[start:end])))
+    return [part for part in np.split(glyph, cuts, axis=1) if part.shape[1] > 0]
+
+
+def read_hud_number(
+    frame: np.ndarray, bounds: Tuple[int, int, int, int], kind: str,
+) -> Optional[Union[float, int]]:
+    x0, y0, x1, y1 = bounds
+    width, height = x1 - x0, y1 - y0
+    if kind == "speed":
+        top, bottom, right, needs_decimal = 3.0, 4.2, .62, True
+    else:
+        top, bottom, right, needs_decimal = 4.5, 5.7, .59, False
+    left = .44
+    roi = frame[
+        round(y0 + top * height):round(y0 + bottom * height),
+        round(x0 + left * width):round(x0 + right * width),
+    ]
+    if roi.size == 0:
+        return None
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    # The 1024px capture renders these glyphs only five pixels tall, so retain
+    # gray antialiasing/compression pixels as well as the white core.
+    white = cv2.inRange(hsv, (0, 0, 100), (180, 180, 255))
+    core = cv2.inRange(hsv, (0, 0, 145), (180, 120, 255))
+    if height < 15 and kind == "spin":
+        ys, xs = np.nonzero(white)
+        if not len(xs):
+            return None
+        start, end = int(xs.min()), int(xs.max() + 1)
+        pitch = max(1.0, width / 28)
+        digit_count = max(1, min(3, round((end - start) / pitch)))
+        digits = []
+        confidence = 1.0
+        for index in range(digit_count):
+            left = round(start + (end - start) * index / digit_count)
+            right_edge = round(start + (end - start) * (index + 1) / digit_count)
+            cell = core[:, left:right_edge]
+            cell_ys, cell_xs = np.nonzero(cell)
+            if not len(cell_xs):
+                return None
+            glyph = cell[
+                cell_ys.min():cell_ys.max() + 1,
+                cell_xs.min():cell_xs.max() + 1,
+            ]
+            digit, score = classify_digit(glyph)
+            digits.append(digit)
+            confidence = min(confidence, score)
+        return int("".join(digits)) if confidence >= .38 else None
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(core)
+    minimum_area = max(1, round(height * height * .015))
+    boxes = sorted(
+        [tuple(map(int, box)) for box in stats[1:] if box[4] >= minimum_area],
+        key=lambda box: box[0],
+    )
+    if not boxes:
+        return None
+    full_height = max(box[3] for box in boxes)
+    decimal_centers: List[float] = []
+    glyphs: List[Tuple[int, np.ndarray]] = []
+    for box in boxes:
+        x, y, box_width, box_height, _ = box
+        if box_height < full_height * .45:
+            if needs_decimal:
+                decimal_centers.append(x + box_width / 2)
+            continue
+        glyph_mask = core if height < 15 else white
+        parts = split_wide_component(glyph_mask, box)
+        for index, part in enumerate(parts):
+            glyphs.append((round(x + box_width * (index + .5) / len(parts)), part))
+    if not glyphs:
+        return None
+    glyph_centers = [center for center, _ in glyphs]
+    decimal_x = next((
+        center for center in decimal_centers
+        if any(left < center < right for left, right in zip(glyph_centers, glyph_centers[1:]))
+    ), None)
+    recognized = []
+    confidence = 1.0
+    for center_x, glyph in glyphs:
+        digit, score = classify_digit(glyph)
+        recognized.append((center_x, digit))
+        confidence = min(confidence, score)
+    if confidence < .38:
+        return None
+    text = ""
+    for center_x, digit in recognized:
+        if needs_decimal and decimal_x is not None and decimal_x < center_x and "." not in text:
+            text += "."
+        text += digit
+    if needs_decimal and "." not in text:
+        return None
+    try:
+        return float(text) if needs_decimal else int(text)
+    except ValueError:
+        return None
+
+
+def read_spin_direction(
+    frame: np.ndarray, bounds: Tuple[int, int, int, int],
+) -> Optional[Dict[str, Any]]:
+    x0, y0, x1, y1 = bounds
+    width, height = x1 - x0, y1 - y0
+    roi = frame[
+        round(y0 + 2.3 * height):round(y0 + 7.0 * height),
+        round(x0 + .74 * width):round(x0 + 1.08 * width),
+    ]
+    if roi.size == 0:
+        return None
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    blue = cv2.inRange(hsv, (100, 90, 100), (145, 255, 255))
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(blue)
+    if count <= 1:
+        return None
+    component = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    ys, xs = np.nonzero(labels == component)
+    if len(xs) < 8:
+        return None
+    points = np.column_stack((xs, ys)).astype(np.float32)
+    centered = points - points.mean(axis=0)
+    _, _, axes = np.linalg.svd(centered, full_matrices=False)
+    axis = axes[0]
+    projections = centered @ axis
+    span = float(projections.max() - projections.min())
+    if span < 3:
+        return None
+    lower = points[projections <= projections.min() + span * .3]
+    upper = points[projections >= projections.max() - span * .3]
+    # The triangular arrowhead contains more blue pixels than the shaft end.
+    if len(lower) > len(upper):
+        axis = -axis
+    dx, image_dy = map(float, axis)
+    angle = (math.degrees(math.atan2(-image_dy, dx)) + 360) % 360
+    labels_by_octant = ("right", "up-right", "up", "up-left", "left", "down-left", "down", "down-right")
+    label = labels_by_octant[round(angle / 45) % 8]
+    return {
+        "x": round(dx, 3),
+        "y": round(-image_dy, 3),
+        "angle_degrees": round(angle, 1),
+        "label": label,
+    }
+
+
+def read_telemetry(
+    frame: np.ndarray,
+    frame_number: int,
+    bounds: Optional[Tuple[int, int, int, int]] = None,
+) -> Optional[TelemetryReading]:
+    bounds = bounds or telemetry_title_bounds(frame)
+    if bounds is None:
+        return None
+    speed = read_hud_number(frame, bounds, "speed")
+    spin = read_hud_number(frame, bounds, "spin")
+    direction = read_spin_direction(frame, bounds)
+    if speed is None or spin is None or direction is None:
+        return None
+    if not 0 < speed < 100 or not 0 <= spin < 1000:
+        return None
+    return TelemetryReading(frame_number, float(speed), int(spin), direction)
+
+
+class TelemetryReader:
+    """Debounce repeated HUD OCR into timestamped screen state changes."""
+
+    def __init__(self, stable_samples: int = 2) -> None:
+        self.stable_samples = stable_samples
+        self.candidate: Optional[TelemetryReading] = None
+        self.candidate_count = 0
+        self.latest: Optional[TelemetryReading] = None
+        self.bounds: Optional[Tuple[int, int, int, int]] = None
+
+    @staticmethod
+    def same_values(left: TelemetryReading, right: TelemetryReading) -> bool:
+        return (
+            left.speed_mps == right.speed_mps
+            and left.spin_revolutions_per_second == right.spin_revolutions_per_second
+            and left.spin_direction["label"] == right.spin_direction["label"]
+        )
+
+    def update(self, frame: np.ndarray, frame_number: int) -> Optional[TelemetryReading]:
+        if self.bounds is None:
+            self.bounds = telemetry_title_bounds(frame)
+        if self.bounds is None:
+            return None
+        reading = read_telemetry(frame, frame_number, self.bounds)
+        if reading is None:
+            return None
+        if self.candidate is not None and self.same_values(reading, self.candidate):
+            self.candidate_count += 1
+        else:
+            self.candidate = reading
+            self.candidate_count = 1
+        if self.candidate_count < self.stable_samples:
+            return None
+        if self.latest is not None and self.same_values(reading, self.latest):
+            return None
+        self.latest = reading
+        return reading
+
 def shadow_contact_score(hsv: np.ndarray, center: Point) -> float:
     """Local green-table darkening directly below a bright-ball candidate."""
     x, y = map(round, center)
@@ -439,6 +802,8 @@ class AttemptClassifier:
         self.events: List[BounceEvent] = []
         self.emitted: Set[Tuple[int, int]] = set()
         self.active_attempt: Optional[Attempt] = None
+        self.latest_telemetry: Optional[TelemetryReading] = None
+        self.telemetry_history: List[TelemetryReading] = []
         self.launcher_tracks_seen = 0
         configured_launcher_region = calibration.get("launcher_region")
         self.launcher_region = configured_launcher_region or [
@@ -464,6 +829,35 @@ class AttemptClassifier:
 
     def emit(self, event: BounceEvent) -> None:
         self.events.append(event)
+
+    def observe_telemetry(self, reading: TelemetryReading) -> None:
+        self.latest_telemetry = reading
+        self.telemetry_history.append(reading)
+        if self.active_attempt is None:
+            return
+        machine = self.active_attempt.machine_telemetry
+        if machine is None or not TelemetryReader.same_values(reading, machine):
+            self.active_attempt.telemetry_after_launch.append(reading)
+
+    def telemetry_near(self, frame: int) -> Optional[TelemetryReading]:
+        if not self.telemetry_history:
+            return None
+        reading = min(
+            self.telemetry_history,
+            key=lambda item: abs(item.frame_number - frame),
+        )
+        return reading if abs(reading.frame_number - frame) <= self.fps * .4 else None
+
+    def telemetry_pair_before(
+        self, frame: int,
+    ) -> Tuple[Optional[TelemetryReading], Optional[TelemetryReading]]:
+        """Return (player hit, preceding machine delivery) at a landing."""
+        readings = [item for item in self.telemetry_history if item.frame_number <= frame]
+        if not readings:
+            return None, None
+        hit = readings[-1]
+        machine = readings[-2] if len(readings) >= 2 else None
+        return hit, machine
 
     def is_launcher_track(self, path: Track) -> bool:
         start = (path[0][1], path[0][2])
@@ -513,6 +907,7 @@ class AttemptClassifier:
         self.active_attempt = Attempt(
             path[0][0], (path[0][1], path[0][2]),
             report_no_bounce=self.is_reportable_launcher_track(path),
+            machine_telemetry=self.telemetry_near(path[0][0]),
         )
 
     def return_evidence(self, path: Track) -> Tuple[bool, bool]:
@@ -574,6 +969,10 @@ class AttemptClassifier:
             pixel=attempt.pixel,
             draw_frame=draw_frame,
             return_crossed_net=bool(crossed_net) if attempt.returns else None,
+            machine=(
+                attempt.machine_telemetry.to_record(self.fps)
+                if attempt.machine_telemetry else None
+            ),
         )
 
     def finish_attempt(self, draw_frame: int) -> None:
@@ -626,6 +1025,7 @@ class AttemptClassifier:
         continuity = min(1.0, len(approach + departure) / 6)
         confidence = round((0.82 if far else 0.72) * continuity * (0.45 if in_occlusion else 1.0), 2)
         outcome = "unknown" if in_occlusion else ("far_table" if far else "near_table")
+        hit_telemetry, machine_telemetry = self.telemetry_pair_before(hit[0])
         self.active_attempt.bounces.append(BounceEvent(
             video_time_seconds=round(hit[0] / self.fps, 3),
             video_timestamp=fmt_timestamp(hit[0] / self.fps),
@@ -639,6 +1039,12 @@ class AttemptClassifier:
             frame_number=hit[0],
             pixel=pixel,
             draw_frame=draw_frame,
+            hit=(
+                hit_telemetry.to_record(self.fps) if hit_telemetry else None
+            ),
+            machine=(
+                machine_telemetry.to_record(self.fps) if machine_telemetry else None
+            ),
         ))
         self.active_attempt.bounce_track_keys.add(self.track_key(path))
 
@@ -779,6 +1185,24 @@ def normalize_attempt_events(
     return normalized
 
 
+def attach_missing_machine_telemetry(
+    events: Sequence[BounceEvent],
+    readings: Sequence[TelemetryReading],
+    fps: float,
+) -> List[BounceEvent]:
+    """Give inferred misses the nearby delivery reading when one is visible."""
+    attached = []
+    for event in events:
+        if event.machine is not None or event.hit is not None or not readings:
+            attached.append(event)
+            continue
+        nearest = min(readings, key=lambda item: abs(item.frame_number - event.frame_number))
+        if abs(nearest.frame_number - event.frame_number) <= fps * .6:
+            event = replace(event, machine=nearest.to_record(fps))
+        attached.append(event)
+    return attached
+
+
 def create_video_writer(
     path: PathLike, fps: float, size: Tuple[int, int]
 ) -> cv2.VideoWriter:
@@ -810,6 +1234,7 @@ def process_video(
     occlusion = np.float32(calibration.get("occlusion_polygon", [])) * scale
     tracking_polygon = np.float32(calibration["tracking_polygon"]) * scale
     tracker = MultiBallTracker(settings)
+    telemetry = TelemetryReader()
     classifier = AttemptClassifier(
         fps, calibration, table, net_line, occlusion, homography,
         video_width, video_height, scale, settings,
@@ -822,6 +1247,10 @@ def process_video(
         ok, original = cap.read()
         if not ok or (end_seconds is not None and frame_number / fps >= end_seconds):
             break
+        if frame_number % 3 == 0:
+            reading = telemetry.update(original, frame_number)
+            if reading is not None:
+                classifier.observe_telemetry(reading)
         frame = cv2.resize(original, (width, height), interpolation=cv2.INTER_AREA)
         gray, candidates = candidates_for_frame(frame, previous_gray, tracking_polygon, settings)
         previous_gray = gray
@@ -833,7 +1262,10 @@ def process_video(
             ))
         frame_number += 1
     classifier.finish_attempt(frame_number)
-    return normalize_attempt_events(classifier.events, frame_number, fps)
+    normalized = normalize_attempt_events(classifier.events, frame_number, fps)
+    return attach_missing_machine_telemetry(
+        normalized, classifier.telemetry_history, fps,
+    )
 
 
 def main() -> None:

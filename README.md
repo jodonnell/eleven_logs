@@ -55,6 +55,37 @@ An explicitly supplied JSON is rejected if its `image_size` does not match the
 input video. The generated `video_bounces_annotated.mp4` shows
 the table, net, tracked path, markers, coordinates, and confidence.
 
+When the in-room TV is visible, the analyzer also reads its speed, spin, and
+blue spin arrow. The two alternating TV updates are kept separate: `machine`
+is the ball-machine delivery captured for the launch, while `hit` is the later
+reading produced by the player's return. Both are nested on that attempt's
+landing record, for example:
+
+```json
+{
+  "outcome": "hit",
+  "posx": 0.03,
+  "posy": 0.7786,
+  "posz": 1.08,
+  "hit": {
+    "speed_mps": 15.0,
+    "spin_revolutions_per_second": 80,
+    "spin_direction": {"x": -0.7, "y": 0.7, "angle_degrees": 135, "label": "up-left"},
+    "video_time_seconds": 12.1
+  },
+  "machine": {
+    "speed_mps": 10.5,
+    "spin_revolutions_per_second": 51,
+    "spin_direction": {"x": 0.0, "y": 1.0, "angle_degrees": 90, "label": "up"},
+    "video_time_seconds": 11.6
+  }
+}
+```
+
+Spin-arrow vectors use TV screen coordinates with positive `x` to the right
+and positive `y` upward. Telemetry is omitted rather than guessed when the TV
+or its tiny digits cannot be read conservatively.
+
 For a camera that needs different detection sensitivity, the calibration JSON
 may include a `detector_settings` object. It can override named thresholds such
 as `motion_threshold`, `track_match_distance`, or

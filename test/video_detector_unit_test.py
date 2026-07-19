@@ -3,6 +3,7 @@ import sys
 import unittest
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 
@@ -13,9 +14,11 @@ from analyze_video import (  # noqa: E402
     AttemptClassifier,
     DetectorSettings,
     MultiBallTracker,
+    TelemetryReading,
     find_bounce,
     map_log_coordinate,
     normalize_attempt_events,
+    read_telemetry,
     shadow_contact_score,
 )
 
@@ -243,6 +246,50 @@ class VideoDetectorUnitTest(unittest.TestCase):
 
         self.assertEqual(settings.motion_threshold, 9)
         self.assertEqual(settings.max_gap, 5)
+
+    def test_high_resolution_tv_telemetry_is_read(self):
+        cap = cv2.VideoCapture(str(ROOT / "sample3-trimmed-44s.mp4"))
+        cap.set(cv2.CAP_PROP_POS_MSEC, 100)
+        ok, frame = cap.read()
+        cap.release()
+
+        self.assertTrue(ok)
+        reading = read_telemetry(frame, 6)
+        self.assertIsNotNone(reading)
+        self.assertEqual(reading.speed_mps, 11.4)
+        self.assertEqual(reading.spin_revolutions_per_second, 64)
+        self.assertEqual(reading.spin_direction["label"], "up")
+
+    def test_low_resolution_tv_telemetry_is_read(self):
+        cap = cv2.VideoCapture(str(ROOT / "sample2-trimmed-58s.mp4"))
+        cap.set(cv2.CAP_PROP_POS_MSEC, 5_000)
+        ok, frame = cap.read()
+        cap.release()
+
+        self.assertTrue(ok)
+        reading = read_telemetry(frame, 300)
+        self.assertIsNotNone(reading)
+        self.assertEqual(reading.speed_mps, 9.6)
+        self.assertEqual(reading.spin_revolutions_per_second, 77)
+        self.assertEqual(reading.spin_direction["label"], "up-right")
+
+    def test_hit_and_machine_telemetry_attach_to_the_landing(self):
+        classifier = self.classifier()
+        machine = TelemetryReading(2, 10.5, 51, {"x": 0, "y": 1, "angle_degrees": 90, "label": "up"})
+        returned = TelemetryReading(25, 15.0, 80, {"x": -.7, "y": .7, "angle_degrees": 135, "label": "up-left"})
+        launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        path = [(30 + frame, 100 + frame * 20, 100, 0.0) for frame in range(9)]
+
+        classifier.observe_telemetry(machine)
+        classifier.start_attempt(launch, 18)
+        classifier.observe_telemetry(returned)
+        classifier.add_bounce(path, path[4], path[1:4], path[5:8], 39)
+        classifier.finish_attempt(40)
+
+        record = classifier.events[0].to_record()
+        self.assertEqual(record["machine"]["speed_mps"], 10.5)
+        self.assertEqual(record["hit"]["speed_mps"], 15.0)
+        self.assertIsNotNone(record["posx"])
 
     def test_tracker_completes_a_path_after_the_allowed_gap(self):
         tracker = MultiBallTracker(DetectorSettings(max_gap=1))
