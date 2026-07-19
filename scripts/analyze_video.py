@@ -8,7 +8,7 @@ rather than a fabricated table coordinate.
 import argparse
 import json
 import math
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol, Sequence, Set, Tuple, Union, cast
 
@@ -36,13 +36,13 @@ Calibration = Dict[str, Any]
 class DetectorSettings:
     """Tunable classical-CV thresholds, optionally overridden per camera."""
 
-    max_gap: int = 3
+    max_gap: int = 5
     min_track_points: int = 9
     min_launch_track_points: int = 18
-    track_match_distance: float = 80
+    track_match_distance: float = 100
     launch_min_horizontal_distance: float = 120
     return_min_horizontal_distance: float = 120
-    min_shadow_contact_score: float = 25
+    min_shadow_contact_score: float = 28
     net_shadow_exclusion_distance: float = 70
     motion_threshold: int = 18
     bright_ball_lower: Tuple[int, int, int] = (0, 0, 210)
@@ -52,6 +52,8 @@ class DetectorSettings:
     min_pre_bounce_speed: float = 12
     max_post_bounce_speed_ratio: float = 0.35
     flattening_strength_weight: float = 0.6
+    table_contact_margin: float = 10
+    terminal_shadow_frames: int = 2
 
     @classmethod
     def from_calibration(cls, calibration: Calibration) -> "DetectorSettings":
@@ -148,6 +150,16 @@ def point_in_polygon(point: Point, polygon: np.ndarray) -> bool:
     return cv2.pointPolygonTest(polygon.astype(np.float32), point, False) >= 0
 
 
+def point_near_polygon(point: Point, polygon: np.ndarray, margin: float) -> bool:
+    """Include contacts whose ball center is just outside a calibrated rail.
+
+    Calibration follows the visible table edge, while the rendered ball has a
+    non-zero radius and can be centred a few processing pixels beyond that
+    edge on a legitimate edge bounce.
+    """
+    return cv2.pointPolygonTest(polygon.astype(np.float32), point, True) >= -margin
+
+
 def point_in_rectangle(point: Point, rectangle: Sequence[float], scale: float) -> bool:
     x, y = point[0] / scale, point[1] / scale
     left, top, right, bottom = rectangle
@@ -175,17 +187,24 @@ def find_bounce(
     # contact the ball/shadow separation collapses, even when perspective
     # makes the bright ball's screen-space path continue in one direction.
     # This catches the clear 17s sample bounce that has no vertical reversal.
-    for index in range(2, len(points) - 2):
+    for index in range(2, len(points)):
         score = points[index][3] if len(points[index]) > 3 else 0
         if score < settings.min_shadow_contact_score:
             continue
         pixel = (points[index][1], points[index][2])
-        if not point_in_polygon(pixel, table_polygon):
+        if not point_near_polygon(pixel, table_polygon, settings.table_contact_margin):
             continue
         if net_line is not None and abs(signed_distance_to_line(pixel, net_line)) < settings.net_shadow_exclusion_distance:
             continue  # net mesh creates a false dark "shadow"
-        neighbours = [points[index - 1][3], points[index + 1][3]]
-        if score >= max(neighbours):
+        previous_score = points[index - 1][3]
+        next_score = points[index + 1][3] if index + 1 < len(points) else None
+        terminal = index >= len(points) - settings.terminal_shadow_frames
+        # A real contact is an isolated convergence peak. A several-frame
+        # dark plateau is usually the tracker attaching to a static table
+        # marking after an off-table ball has disappeared.
+        local_peak = score >= previous_score and (next_score is None or score > next_score)
+        rightward_contact = points[index][1] >= points[index - 1][1]
+        if local_peak and rightward_contact and (not terminal or points[index][1] > points[index - 2][1]):
             return points[index], points[index - 2:index], points[index + 1:index + 3]
     # Two post-contact frames are enough for a terminal turn when the ball
     # disappears behind the launcher immediately afterwards.
@@ -203,7 +222,15 @@ def find_bounce(
             before_mean - y >= settings.min_vertical_turn
             and after_mean - y >= settings.min_vertical_turn
         )
-        if not point_in_polygon((points[index][1], points[index][2]), table_polygon):
+        if not point_near_polygon(
+            (points[index][1], points[index][2]), table_polygon,
+            settings.table_contact_margin,
+        ):
+            continue
+        # Player returns travel toward increasing screen x in the supported
+        # spectator views. A sudden backward x jump at the apparent turn is
+        # a tracker hand-off to a marking/shadow, not a physical bounce.
+        if points[index][1] < points[index - 1][1]:
             continue
         if maximum or minimum:
             strength = min(abs(y - before_mean), abs(y - after_mean))
@@ -619,6 +646,119 @@ class AttemptClassifier:
             bounce = find_bounce(path, self.table, self.net_line, self.settings)
             if bounce:
                 self.add_bounce(path, *bounce, draw_frame)
+                continue
+            crossed_net, _ = self.return_evidence(path)
+            terminal = path[-1]
+            terminal_pixel = (terminal[1], terminal[2])
+            if crossed_net and point_in_polygon(terminal_pixel, self.table):
+                _, _, posz = map_log_coordinate(
+                    self.homography, terminal_pixel,
+                    self.calibration["table_surface_y"],
+                )
+                # A long return that vanishes over the opponent's table is a
+                # bounded-contact observation: the ball is occluded at the
+                # surface before a departure segment can be tracked. This is
+                # deliberately weaker evidence than a visible turn/shadow.
+                if posz > 0.03 and math.dist(path[0][1:3], path[-1][1:3]) >= 300:
+                    self.add_bounce(
+                        path, terminal, path[-3:-1], [], draw_frame,
+                    )
+
+
+def infer_attempt_period(hit_frames: Sequence[int], fps: float) -> Optional[float]:
+    """Infer the repeating ball-machine cycle from confirmed table contacts."""
+    if len(hit_frames) < 3:
+        return None
+    phase = hit_frames[0]
+    best: Optional[Tuple[float, float]] = None
+    lower, upper, step = fps, fps * 2.2, 0.1
+    period = lower
+    while period <= upper:
+        residuals = sorted(
+            abs((frame - phase + period / 2) % period - period / 2)
+            for frame in hit_frames
+        )
+        kept = residuals[:max(3, round(len(residuals) * .9))]
+        score = sum(kept) / len(kept)
+        if best is None or score < best[0]:
+            best = (score, period)
+        period += step
+    return best[1] if best else None
+
+
+def normalize_attempt_events(
+    events: Sequence[BounceEvent], total_frames: int, fps: float,
+) -> List[BounceEvent]:
+    """Return exactly one user-facing result for every inferred launch cycle.
+
+    Confirmed opponent-table contacts establish the machine's cadence. Gaps
+    in that cadence become misses when the next cycle arrives, which is the
+    only reliable way to report a ball that was completely occluded.
+    """
+    hits = [event for event in events if event.hit_table and event.outcome == "far_table"]
+    period = infer_attempt_period([event.frame_number for event in hits], fps)
+    if period is None:
+        return list(events)
+
+    phase = hits[0].frame_number
+    signed = [
+        (event.frame_number - phase + period / 2) % period - period / 2
+        for event in hits
+    ]
+    phase += sorted(signed)[len(signed) // 2]
+    while phase - period >= period * .5:
+        phase -= period
+    anchors: List[int] = []
+    anchor = phase
+    while anchor < total_frames:
+        anchors.append(round(anchor))
+        anchor += period
+    slots: List[Optional[BounceEvent]] = [None] * len(anchors)
+    hit_slots: Dict[int, int] = {}
+    for event in hits:
+        slot = min(range(len(anchors)), key=lambda index: abs(anchors[index] - event.frame_number))
+        if abs(anchors[slot] - event.frame_number) > period * .3:
+            continue
+        current = slots[slot]
+        if current is None or event.confidence > current.confidence:
+            slots[slot] = replace(event, outcome="hit")
+        hit_slots[id(event)] = slot
+
+    cursor = -1
+    for event in events:
+        if id(event) in hit_slots:
+            cursor = max(cursor, hit_slots[id(event)])
+            continue
+        if event.outcome != "off_table":
+            continue
+        candidates = [index for index in range(cursor + 1, len(slots)) if slots[index] is None]
+        if not candidates:
+            continue
+        slot = candidates[0]
+        slots[slot] = replace(event, outcome="out")
+        cursor = slot
+
+    normalized: List[BounceEvent] = []
+    for anchor, event in zip(anchors, slots):
+        if event is not None:
+            normalized.append(event)
+            continue
+        frame = min(anchor, total_frames - 1)
+        normalized.append(BounceEvent(
+            video_time_seconds=round(frame / fps, 3),
+            video_timestamp=fmt_timestamp(frame / fps),
+            hit_table=False,
+            is_in=False,
+            outcome="miss",
+            posx=None,
+            posy=None,
+            posz=None,
+            confidence=0.3,
+            frame_number=frame,
+            pixel=(0, 0),
+            draw_frame=frame,
+        ))
+    return normalized
 
 
 def create_video_writer(
@@ -693,7 +833,7 @@ def process_video(
             ))
         frame_number += 1
     classifier.finish_attempt(frame_number)
-    return classifier.events
+    return normalize_attempt_events(classifier.events, frame_number, fps)
 
 
 def main() -> None:

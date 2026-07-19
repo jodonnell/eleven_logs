@@ -13,6 +13,8 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 VIDEO = ROOT / "sample.mp4"
+SAMPLE2_VIDEO = ROOT / "sample2-trimmed-58s.mp4"
+SAMPLE2_CALIBRATION = ROOT / "artifacts" / "sample2-auto.table-calibration.json"
 sys.path.insert(0, str(ROOT / "scripts"))
 from analyze_video import ensure_calibration  # noqa: E402
 from auto_calibrate import detect_geometry  # noqa: E402
@@ -105,10 +107,59 @@ class AutoCalibrationTest(unittest.TestCase):
             self.assertTrue(event["hit_table"], f"frame {frame} should be a table contact")
 
         event = next(item for item in events if item["frame_number"] == 1027)
-        self.assertEqual(event["outcome"], "far_table")
+        self.assertEqual(event["outcome"], "hit")
         self.assertTrue(event["is_in"])
         self.assertAlmostEqual(event["posx"], 0.0043, delta=.03)
         self.assertAlmostEqual(event["posz"], 0.7473, delta=.05)
+
+    def test_complete_sample_ordered_hit_sequence(self):
+        expected = "out out hit hit miss hit miss miss out out hit miss".split()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "sample.jsonl"
+            subprocess.run(
+                [sys.executable, "scripts/analyze_video.py", str(VIDEO),
+                 "--calibration", str(ROOT / "artifacts" / "sample_auto_calibration.json"),
+                 "--output", str(output), "--no-annotated"],
+                cwd=ROOT, text=True, capture_output=True, check=True,
+            )
+            actual = [json.loads(line)["outcome"] for line in output.read_text().splitlines()]
+
+        self.assertEqual(len(actual), len(expected))
+        self.assertEqual(
+            [item == "hit" for item in actual],
+            [item == "hit" for item in expected],
+        )
+
+
+@unittest.skipUnless(
+    SAMPLE2_VIDEO.exists() and SAMPLE2_CALIBRATION.exists(),
+    "sample2 video and calibration are local fixtures",
+)
+class Sample2OrderedRegressionTest(unittest.TestCase):
+    def test_every_machine_launch_has_the_labeled_ordered_result(self):
+        expected = (
+            "hit hit out out hit out hit out hit out hit hit hit hit out "
+            "hit hit hit hit out hit hit hit hit hit hit hit hit hit hit "
+            "hit hit hit hit out hit hit hit hit hit hit hit hit hit hit "
+            "hit hit miss"
+        ).split()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "sample2.jsonl"
+            subprocess.run(
+                [sys.executable, "scripts/analyze_video.py", str(SAMPLE2_VIDEO),
+                 "--calibration", str(SAMPLE2_CALIBRATION),
+                 "--output", str(output), "--no-annotated"],
+                cwd=ROOT, text=True, capture_output=True, check=True,
+            )
+            actual = [json.loads(line)["outcome"] for line in output.read_text().splitlines()]
+
+        self.assertEqual(len(actual), 48, "one result is required for every launch")
+        # The user explicitly treats a visible out and a fully occluded miss
+        # as equivalent non-hits; table contacts must still match every ball.
+        self.assertEqual(
+            [item == "hit" for item in actual],
+            [item == "hit" for item in expected],
+        )
 
 
 if __name__ == "__main__":

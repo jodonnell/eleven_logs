@@ -9,11 +9,13 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from analyze_video import (  # noqa: E402
+    Attempt,
     AttemptClassifier,
     DetectorSettings,
     MultiBallTracker,
     find_bounce,
     map_log_coordinate,
+    normalize_attempt_events,
     shadow_contact_score,
 )
 
@@ -65,6 +67,49 @@ class VideoDetectorUnitTest(unittest.TestCase):
         table = np.float32([(0, 0), (500, 0), (500, 500), (0, 500)])
 
         self.assertIsNone(find_bounce(points, table, net_line=np.float32([(50, 0), (50, 500)])))
+
+    def test_terminal_shadow_contact_can_finish_a_return_track(self):
+        points = [(frame, 100 + frame * 20, 220, 0.0) for frame in range(9)]
+        points[-1] = (8, 260, 220, 32.0)
+        table = np.float32([(0, 0), (500, 0), (500, 500), (0, 500)])
+
+        hit, _, departure = find_bounce(
+            points, table, net_line=np.float32([(0, 0), (0, 500)])
+        )
+
+        self.assertEqual(hit[0], 8)
+        self.assertEqual(departure, [])
+
+    def test_ball_radius_allows_a_contact_just_beyond_the_table_edge(self):
+        points = [(frame, 180 + frame * 20, 100 + abs(4 - frame) * -10, 0.0) for frame in range(9)]
+        table = np.float32([(0, 0), (255, 0), (255, 500), (0, 500)])
+
+        hit, _, _ = find_bounce(
+            points, table, net_line=np.float32([(0, 0), (0, 500)])
+        )
+
+        self.assertEqual(hit[0], 4)
+
+    def test_shadow_plateau_after_ball_disappears_is_not_a_contact(self):
+        points = [(frame, 100 + frame * 20, 100 + frame * 5, 0.0) for frame in range(9)]
+        points[5] = (5, 200, 125, 33.0)
+        points[6] = (6, 198, 125, 33.0)
+        points[7] = (7, 196, 125, 34.0)
+        table = np.float32([(0, 0), (500, 0), (500, 500), (0, 500)])
+
+        self.assertIsNone(
+            find_bounce(points, table, net_line=np.float32([(0, 0), (0, 500)]))
+        )
+
+    def test_backward_tracker_handoff_is_not_a_trajectory_bounce(self):
+        points = [(frame, 100 + frame * 20, 100 + frame * 10, 0.0) for frame in range(9)]
+        points[4] = (4, 140, 150, 0.0)
+        points[5] = (5, 138, 145, 0.0)
+        table = np.float32([(0, 0), (500, 0), (500, 500), (0, 500)])
+
+        self.assertIsNone(
+            find_bounce(points, table, net_line=np.float32([(0, 0), (0, 500)]))
+        )
 
     def test_classifier_reports_an_off_table_return(self):
         classifier = self.classifier()
@@ -179,7 +224,7 @@ class VideoDetectorUnitTest(unittest.TestCase):
         settings = DetectorSettings.from_calibration({"detector_settings": {"motion_threshold": 9}})
 
         self.assertEqual(settings.motion_threshold, 9)
-        self.assertEqual(settings.max_gap, 3)
+        self.assertEqual(settings.max_gap, 5)
 
     def test_tracker_completes_a_path_after_the_allowed_gap(self):
         tracker = MultiBallTracker(DetectorSettings(max_gap=1))
@@ -188,6 +233,20 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertEqual(tracker.update(1, []), [])
 
         self.assertEqual(tracker.update(2, []), [[(0, 10, 20, 0)]])
+
+    def test_cadence_fills_an_unseen_launch_with_one_miss(self):
+        classifier = self.classifier()
+        events = []
+        for frame in (70, 190, 250):
+            event = classifier.no_bounce_event(Attempt(frame, (0, 0)), frame)
+            event.hit_table = True
+            event.outcome = "far_table"
+            event.confidence = .8
+            events.append(event)
+
+        normalized = normalize_attempt_events(events, total_frames=300, fps=60)
+
+        self.assertEqual([event.outcome for event in normalized], ["hit", "miss", "hit", "hit"])
 
 
 if __name__ == "__main__":
