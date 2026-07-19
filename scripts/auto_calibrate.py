@@ -8,6 +8,7 @@ the streaming analyser can reuse without making any pixel-position assumptions.
 import argparse
 import json
 from pathlib import Path
+from typing import Any, List, Optional, Tuple, Union
 
 import cv2
 import numpy as np
@@ -16,15 +17,21 @@ import numpy as np
 TABLE_HALF_WIDTH = 0.7625
 TABLE_HALF_LENGTH = 1.37
 
+PathLike = Union[str, Path]
+Line = Tuple[float, float, float, float]
+Segment = Tuple[float, float, Line]
+Geometry = Tuple[List[List[float]], Line, Tuple[Line, Line]]
+CalibrationReport = dict[str, Any]
 
-def line_at_y(line, y):
+
+def line_at_y(line: Line, y: float) -> Optional[float]:
     x1, y1, x2, y2 = line
     if abs(y2 - y1) < 1e-6:
         return None
     return x1 + (y - y1) * (x2 - x1) / (y2 - y1)
 
 
-def hough_segments(frame):
+def hough_segments(frame: np.ndarray) -> List[Segment]:
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(gray, 50, 150)
     lines = cv2.HoughLinesP(edges, 1, np.pi / 360, 50, minLineLength=80, maxLineGap=20)
@@ -37,7 +44,7 @@ def hough_segments(frame):
     return result
 
 
-def detect_geometry(frame):
+def detect_geometry(frame: np.ndarray) -> Geometry:
     """Return the safely visible table area and visual x=0 line.
 
     The left rail may be covered by the net, so this deliberately returns a
@@ -83,7 +90,12 @@ def detect_geometry(frame):
     return visible_table, center[2], (top[2], bottom[2])
 
 
-def create_calibration(video, output, diagnostic=None, frame=0):
+def create_calibration(
+    video: PathLike,
+    output: PathLike,
+    diagnostic: Optional[PathLike] = None,
+    frame: int = 0,
+) -> CalibrationReport:
     """Detect and write one reusable camera calibration.
 
     Returns the small report printed by the CLI wrapper.  Expected detection
@@ -106,6 +118,8 @@ def create_calibration(video, output, diagnostic=None, frame=0):
     y = (center_line[1] + center_line[3]) / 2
     left_x = min(center_line[0], center_line[2])
     right_x = line_at_y((visible_table[1][0], visible_table[0][1], visible_table[2][0], visible_table[2][1]), y)
+    if right_x is None:
+        raise ValueError("could not locate the right table rail at the centre stripe")
 
     # The net's *bottom* edge is a long dark diagonal inside the table.  The
     # bright elevated rail is deliberately rejected by selecting the inward,
@@ -124,6 +138,8 @@ def create_calibration(video, output, diagnostic=None, frame=0):
         if bottom_x >= visible_table[2][0]:
             continue
         center_x = line_at_y(line, y)
+        if center_x is None:
+            continue
         candidates.append((center_x, top_x, bottom_x, line))
     if not candidates:
         raise ValueError("could not find the physical bottom edge of the net")
@@ -163,10 +179,12 @@ def create_calibration(video, output, diagnostic=None, frame=0):
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(data, indent=2) + "\n")
     center_x = line_at_y(net_line, y)
+    if center_x is None:
+        raise ValueError("could not locate the net at the centre stripe")
     return {"calibration": str(output), "diagnostic": str(diagnostic), "table_center": [round(center_x * 4), round(y * 4)]}
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("video")
     parser.add_argument("--output", required=True, help="cached calibration JSON")

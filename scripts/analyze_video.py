@@ -9,6 +9,7 @@ import argparse
 import json
 import math
 from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple, Union
 
 try:
     import cv2
@@ -24,8 +25,27 @@ MAX_GAP = 3
 MIN_TRACK_POINTS = 9
 MIN_LAUNCH_TRACK_POINTS = 18
 
+PathLike = Union[str, Path]
+Point = Tuple[float, float]
+TrackPoint = Tuple[int, float, float, float]
+Candidate = Tuple[float, float, float]
+Track = List[TrackPoint]
+Bounce = Tuple[TrackPoint, Track, Track]
+Calibration = Dict[str, Any]
+Event = Dict[str, Any]
+TrackRecord = Dict[str, Any]
 
-def load_calibration(path, video_width, video_height):
+
+class CalibrationArguments(Protocol):
+    calibration: Optional[str]
+    calibration_cache: Optional[str]
+    video: str
+    start_seconds: float
+
+
+def load_calibration(
+    path: PathLike, video_width: int, video_height: int
+) -> Tuple[Calibration, np.ndarray, np.ndarray]:
     data = json.loads(Path(path).read_text())
     required = ("image_size", "table_surface_y", "table_polygon", "tracking_polygon", "net_line")
     missing = [key for key in required if key not in data]
@@ -50,22 +70,22 @@ def load_calibration(path, video_width, video_height):
     return data, cv2.getPerspectiveTransform(image, log), table_polygon
 
 
-def fmt_timestamp(seconds):
+def fmt_timestamp(seconds: float) -> str:
     minutes, seconds = divmod(seconds, 60)
     return f"{int(minutes):02d}:{seconds:06.3f}"
 
 
-def point_in_polygon(point, polygon):
+def point_in_polygon(point: Point, polygon: np.ndarray) -> bool:
     return cv2.pointPolygonTest(polygon.astype(np.float32), point, False) >= 0
 
 
-def point_in_rectangle(point, rectangle):
+def point_in_rectangle(point: Point, rectangle: Sequence[float]) -> bool:
     x, y = point[0] / SCALE, point[1] / SCALE
     left, top, right, bottom = rectangle
     return left <= x <= right and top <= y <= bottom
 
 
-def signed_distance_to_line(point, line):
+def signed_distance_to_line(point: Point, line: np.ndarray) -> float:
     """Signed perpendicular pixel distance from point to a calibrated line."""
     start, end = line
     dx, dy = end[0] - start[0], end[1] - start[1]
@@ -73,7 +93,9 @@ def signed_distance_to_line(point, line):
     return ((dx * (point[1] - start[1])) - (dy * (point[0] - start[0]))) / length
 
 
-def find_bounce(points, table_polygon, net_line=None):
+def find_bounce(
+    points: Track, table_polygon: np.ndarray, net_line: Optional[np.ndarray] = None
+) -> Optional[Bounce]:
     """Find a visible table-plane turn in one completed candidate track."""
     if len(points) < MIN_TRACK_POINTS:
         return None
@@ -133,11 +155,11 @@ class MultiBallTracker:
     replacing the ball during a player return. Completed tracks are emitted
     immediately, so memory is bounded by active tracks and short histories.
     """
-    def __init__(self):
-        self.tracks = []
+    def __init__(self) -> None:
+        self.tracks: List[TrackRecord] = []
 
-    def update(self, frame_number, candidates):
-        pairs = []
+    def update(self, frame_number: int, candidates: Sequence[Candidate]) -> List[Track]:
+        pairs: List[Tuple[float, int, int]] = []
         for track_index, track in enumerate(self.tracks):
             points = track["points"]
             if len(points) >= 2:
@@ -150,7 +172,8 @@ class MultiBallTracker:
                 if distance <= 80:
                     pairs.append((distance, track_index, candidate_index))
         pairs.sort()
-        used_tracks, used_candidates = set(), set()
+        used_tracks: Set[int] = set()
+        used_candidates: Set[int] = set()
         for _, track_index, candidate_index in pairs:
             if track_index in used_tracks or candidate_index in used_candidates:
                 continue
@@ -163,7 +186,8 @@ class MultiBallTracker:
         for track_index, track in enumerate(self.tracks):
             if track_index not in used_tracks:
                 track["gap"] += 1
-        completed, active = [], []
+        completed: List[Track] = []
+        active: List[TrackRecord] = []
         for track in self.tracks:
             if track["gap"] > MAX_GAP:
                 completed.append(track["points"])
@@ -176,17 +200,17 @@ class MultiBallTracker:
         return completed
 
     @property
-    def visible_points(self):
+    def visible_points(self) -> List[TrackPoint]:
         return [point for track in self.tracks for point in track["points"][-12:]]
 
 
-def shadow_contact_score(hsv, center):
+def shadow_contact_score(hsv: np.ndarray, center: Point) -> float:
     """Local green-table darkening directly below a bright-ball candidate."""
     x, y = map(round, center)
     height, width = hsv.shape[:2]
     local = hsv[max(0, y + 5):min(height, y + 28), max(0, x - 18):min(width, x + 19)]
     surrounding = hsv[max(0, y - 35):min(height, y + 36), max(0, x - 35):min(width, x + 36)]
-    def green_values(region):
+    def green_values(region: np.ndarray) -> np.ndarray:
         if region.size == 0:
             return np.array([])
         mask = (region[:, :, 0] >= 42) & (region[:, :, 0] <= 88) & (region[:, :, 1] >= 80)
@@ -197,7 +221,9 @@ def shadow_contact_score(hsv, center):
     return max(0.0, float(np.median(baseline) - np.percentile(dark, 5)))
 
 
-def candidates_for_frame(frame, previous_gray, tracking_polygon):
+def candidates_for_frame(
+    frame: np.ndarray, previous_gray: Optional[np.ndarray], tracking_polygon: np.ndarray
+) -> Tuple[np.ndarray, List[Candidate]]:
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     # White ball: very bright and low saturation. Difference rejects static
@@ -223,12 +249,22 @@ def candidates_for_frame(frame, previous_gray, tracking_polygon):
     return gray, [(center[0], center[1], score) for _, center, score in choices]
 
 
-def map_log_coordinate(homography, image_point, surface_y):
+def map_log_coordinate(
+    homography: np.ndarray, image_point: Point, surface_y: float
+) -> Tuple[float, float, float]:
     mapped = cv2.perspectiveTransform(np.float32([[image_point]]), homography)[0][0]
     return round(float(mapped[0]), 4), round(float(surface_y), 4), round(float(mapped[1]), 4)
 
 
-def draw_overlay(frame, table, net_line, track, events, homography, surface_y):
+def draw_overlay(
+    frame: np.ndarray,
+    table: np.ndarray,
+    net_line: np.ndarray,
+    track: Sequence[TrackPoint],
+    events: Sequence[Event],
+    homography: np.ndarray,
+    surface_y: float,
+) -> np.ndarray:
     view = frame.copy()
     poly = np.int32(table).reshape((-1, 1, 2))
     cv2.polylines(view, [poly], True, (0, 255, 255), 3)
@@ -266,8 +302,18 @@ def draw_overlay(frame, table, net_line, track, events, homography, surface_y):
 class AttemptClassifier:
     """Turn completed ball tracks into one result for each launcher cycle."""
 
-    def __init__(self, fps, calibration, table, net_line, occlusion, homography,
-                 video_width, video_height, write_event):
+    def __init__(
+        self,
+        fps: float,
+        calibration: Calibration,
+        table: np.ndarray,
+        net_line: np.ndarray,
+        occlusion: np.ndarray,
+        homography: np.ndarray,
+        video_width: int,
+        video_height: int,
+        write_event: Callable[[Event], None],
+    ) -> None:
         self.fps = fps
         self.calibration = calibration
         self.table = table
@@ -275,9 +321,9 @@ class AttemptClassifier:
         self.occlusion = occlusion
         self.homography = homography
         self.write_event = write_event
-        self.events = []
-        self.emitted = set()
-        self.active_attempt = None
+        self.events: List[Event] = []
+        self.emitted: Set[Tuple[int, int]] = set()
+        self.active_attempt: Optional[Event] = None
         self.launcher_tracks_seen = 0
         self.launcher_region = calibration.get(
             "launcher_region", [video_width * .58, 0, video_width, video_height]
@@ -287,11 +333,11 @@ class AttemptClassifier:
         )
         self.warmup_launcher_tracks = calibration.get("warmup_launcher_tracks", 0)
 
-    def emit(self, event):
+    def emit(self, event: Event) -> None:
         self.write_event(event)
         self.events.append(event)
 
-    def no_bounce_event(self, attempt, draw_frame):
+    def no_bounce_event(self, attempt: Event, draw_frame: int) -> Event:
         """Describe a launcher cycle without a confirmed returned bounce."""
         if attempt["returns"]:
             returned = max(attempt["returns"], key=lambda path: math.dist(path[0][1:3], path[-1][1:3]))
@@ -317,7 +363,7 @@ class AttemptClassifier:
             event["return_crossed_net"] = bool(crossed_net)
         return event
 
-    def finish_attempt(self, draw_frame):
+    def finish_attempt(self, draw_frame: int) -> None:
         if self.active_attempt is None:
             return
         if self.active_attempt["bounces"]:
@@ -326,7 +372,16 @@ class AttemptClassifier:
             self.emit(self.no_bounce_event(self.active_attempt, draw_frame))
         self.active_attempt = None
 
-    def add_bounce(self, path, hit, approach, departure, draw_frame):
+    def add_bounce(
+        self,
+        path: Track,
+        hit: TrackPoint,
+        approach: Track,
+        departure: Track,
+        draw_frame: int,
+    ) -> None:
+        if self.active_attempt is None:
+            return
         key = (path[0][0], hit[0])
         if key in self.emitted:
             return
@@ -340,7 +395,7 @@ class AttemptClassifier:
         outcome = "unknown" if in_occlusion else ("far_table" if far else "near_table")
         self.active_attempt["bounces"].append({"video_time_seconds": round(hit[0] / self.fps, 3), "video_timestamp": fmt_timestamp(hit[0] / self.fps), "hit_table": not in_occlusion, "is_in": bool(far and not in_occlusion), "outcome": outcome, "posx": posx if not in_occlusion else None, "posy": posy if not in_occlusion else None, "posz": posz if not in_occlusion else None, "confidence": confidence, "frame_number": hit[0], "_pixel": pixel, "_draw_frame": draw_frame})
 
-    def process_tracks(self, tracks, draw_frame):
+    def process_tracks(self, tracks: Sequence[Track], draw_frame: int) -> None:
         for path in tracks:
             if len(path) < MIN_TRACK_POINTS:
                 continue
@@ -357,7 +412,11 @@ class AttemptClassifier:
                     self.finish_attempt(draw_frame)
                     self.active_attempt = {"frame": path[0][0], "pixel": start_pixel, "returns": [], "bounces": []}
                 continue
-            is_return = self.active_attempt and point_in_rectangle(start_pixel, self.return_region) and dx >= 120
+            is_return = (
+                self.active_attempt is not None
+                and point_in_rectangle(start_pixel, self.return_region)
+                and dx >= 120
+            )
             if not is_return:
                 continue
             self.active_attempt["returns"].append(path)
@@ -366,7 +425,9 @@ class AttemptClassifier:
                 self.add_bounce(path, *bounce, draw_frame)
 
 
-def create_video_writer(path, fps, size):
+def create_video_writer(
+    path: PathLike, fps: float, size: Tuple[int, int]
+) -> cv2.VideoWriter:
     """Create an annotated-video writer or fail before processing begins."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"mp4v"), fps, size)
@@ -376,7 +437,7 @@ def create_video_writer(path, fps, size):
     return writer
 
 
-def ensure_calibration(args, fps):
+def ensure_calibration(args: CalibrationArguments, fps: float) -> str:
     """Return an existing calibration path or create the requested cache."""
     if args.calibration:
         return args.calibration
@@ -394,7 +455,7 @@ def ensure_calibration(args, fps):
     return str(cache)
 
 
-def main():
+def main() -> None:
     global SCALE
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("video")
@@ -436,7 +497,7 @@ def main():
         writer = create_video_writer(args.annotated, fps, (width, height))
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     with open(args.output, "w", encoding="utf-8") as output:
-        def write_event(event):
+        def write_event(event: Event) -> None:
             output.write(json.dumps({k: v for k, v in event.items() if not k.startswith("_")}) + "\n")
 
         classifier = AttemptClassifier(
