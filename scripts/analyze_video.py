@@ -263,6 +263,109 @@ def draw_overlay(frame, table, net_line, track, events, homography, surface_y):
     return view
 
 
+class AttemptClassifier:
+    """Turn completed ball tracks into one result for each launcher cycle."""
+
+    def __init__(self, fps, calibration, table, net_line, occlusion, homography,
+                 video_width, video_height, write_event):
+        self.fps = fps
+        self.calibration = calibration
+        self.table = table
+        self.net_line = net_line
+        self.occlusion = occlusion
+        self.homography = homography
+        self.write_event = write_event
+        self.events = []
+        self.emitted = set()
+        self.active_attempt = None
+        self.launcher_tracks_seen = 0
+        self.launcher_region = calibration.get(
+            "launcher_region", [video_width * .58, 0, video_width, video_height]
+        )
+        self.return_region = calibration.get(
+            "return_region", [0, 0, video_width * .28, video_height]
+        )
+        self.warmup_launcher_tracks = calibration.get("warmup_launcher_tracks", 0)
+
+    def emit(self, event):
+        self.write_event(event)
+        self.events.append(event)
+
+    def no_bounce_event(self, attempt, draw_frame):
+        """Describe a launcher cycle without a confirmed returned bounce."""
+        if attempt["returns"]:
+            returned = max(attempt["returns"], key=lambda path: math.dist(path[0][1:3], path[-1][1:3]))
+            terminal = returned[-1]
+            terminal_pixel = (terminal[1], terminal[2])
+            start_pixel = (returned[0][1], returned[0][2])
+            start_side = signed_distance_to_line(start_pixel, self.net_line)
+            end_side = signed_distance_to_line(terminal_pixel, self.net_line)
+            crossed_net = start_side * end_side <= 0
+            net_distance = abs(end_side)
+            if crossed_net:
+                outcome, confidence = "unknown", 0.5
+            elif net_distance <= self.calibration.get("net_proximity_fraction", 0.2) * math.dist(self.net_line[0], self.net_line[1]):
+                outcome, confidence = "net", 0.55
+            elif not point_in_polygon(terminal_pixel, self.table):
+                outcome, confidence = "off_table", 0.58
+            else:
+                outcome, confidence = "unknown", 0.35
+        else:
+            outcome, confidence = "unknown", 0.2
+        event = {"video_time_seconds": round(attempt["frame"] / self.fps, 3), "video_timestamp": fmt_timestamp(attempt["frame"] / self.fps), "hit_table": False, "is_in": False, "outcome": outcome, "posx": None, "posy": None, "posz": None, "confidence": confidence, "frame_number": attempt["frame"], "_pixel": attempt["pixel"], "_draw_frame": draw_frame}
+        if attempt["returns"]:
+            event["return_crossed_net"] = bool(crossed_net)
+        return event
+
+    def finish_attempt(self, draw_frame):
+        if self.active_attempt is None:
+            return
+        if self.active_attempt["bounces"]:
+            self.emit(self.active_attempt["bounces"][0])
+        else:
+            self.emit(self.no_bounce_event(self.active_attempt, draw_frame))
+        self.active_attempt = None
+
+    def add_bounce(self, path, hit, approach, departure, draw_frame):
+        key = (path[0][0], hit[0])
+        if key in self.emitted:
+            return
+        self.emitted.add(key)
+        pixel = (hit[1], hit[2])
+        in_occlusion = len(self.occlusion) > 2 and point_in_polygon(pixel, self.occlusion)
+        posx, posy, posz = map_log_coordinate(self.homography, pixel, self.calibration["table_surface_y"])
+        far = posz > 0.03
+        continuity = min(1.0, len(approach + departure) / 6)
+        confidence = round((0.82 if far else 0.72) * continuity * (0.45 if in_occlusion else 1.0), 2)
+        outcome = "unknown" if in_occlusion else ("far_table" if far else "near_table")
+        self.active_attempt["bounces"].append({"video_time_seconds": round(hit[0] / self.fps, 3), "video_timestamp": fmt_timestamp(hit[0] / self.fps), "hit_table": not in_occlusion, "is_in": bool(far and not in_occlusion), "outcome": outcome, "posx": posx if not in_occlusion else None, "posy": posy if not in_occlusion else None, "posz": posz if not in_occlusion else None, "confidence": confidence, "frame_number": hit[0], "_pixel": pixel, "_draw_frame": draw_frame})
+
+    def process_tracks(self, tracks, draw_frame):
+        for path in tracks:
+            if len(path) < MIN_TRACK_POINTS:
+                continue
+            start_pixel = (path[0][1], path[0][2])
+            dx = path[-1][1] - path[0][1]
+            is_launcher = (
+                point_in_rectangle(start_pixel, self.launcher_region)
+                and len(path) >= MIN_LAUNCH_TRACK_POINTS
+                and dx <= -120
+            )
+            if is_launcher:
+                self.launcher_tracks_seen += 1
+                if self.launcher_tracks_seen > self.warmup_launcher_tracks:
+                    self.finish_attempt(draw_frame)
+                    self.active_attempt = {"frame": path[0][0], "pixel": start_pixel, "returns": [], "bounces": []}
+                continue
+            is_return = self.active_attempt and point_in_rectangle(start_pixel, self.return_region) and dx >= 120
+            if not is_return:
+                continue
+            self.active_attempt["returns"].append(path)
+            bounce = find_bounce(path, self.table, self.net_line)
+            if bounce:
+                self.add_bounce(path, *bounce, draw_frame)
+
+
 def create_video_writer(path, fps, size):
     """Create an annotated-video writer or fail before processing begins."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -329,65 +432,19 @@ def main():
     occlusion = np.float32(calibration.get("occlusion_polygon", [])) * SCALE
     tracking_polygon = np.float32(calibration["tracking_polygon"]) * SCALE
     tracker = MultiBallTracker()
-    # Automatic calibration has no hard-coded launcher pixels. These broad
-    # image-relative zones preserve the known player-left/machine-right setup;
-    # an advanced per-camera JSON can narrow them for more difficult footage.
-    launcher_region = calibration.get("launcher_region", [video_width * .58, 0, video_width, video_height])
-    return_region = calibration.get("return_region", [0, 0, video_width * .28, video_height])
-    warmup_launcher_tracks = calibration.get("warmup_launcher_tracks", 0)
     writer = None
     if not args.no_annotated:
         writer = create_video_writer(args.annotated, fps, (width, height))
-    previous_gray, emitted = None, set()
-    events = []
-    active_attempt = None
-    launcher_tracks_seen = 0
-
-    def write_event(event):
-        output.write(json.dumps({k: v for k, v in event.items() if not k.startswith("_")}) + "\n")
-        events.append(event)
-
-    def no_bounce_event(attempt):
-        """A launcher cycle without a confirmed returned table bounce."""
-        if attempt["returns"]:
-            # Use the longest player-to-opponent return, not a short noise
-            # track. Crossing the net is useful evidence, but without a
-            # visible table-plane turn it remains deliberately unknown.
-            returned = max(attempt["returns"], key=lambda path: math.dist(path[0][1:3], path[-1][1:3]))
-            terminal = returned[-1]
-            terminal_pixel = (terminal[1], terminal[2])
-            start_pixel = (returned[0][1], returned[0][2])
-            start_side = signed_distance_to_line(start_pixel, net_line)
-            end_side = signed_distance_to_line(terminal_pixel, net_line)
-            crossed_net = start_side * end_side <= 0
-            net_distance = abs(end_side)
-            if crossed_net:
-                outcome, confidence = "unknown", 0.5
-            elif net_distance <= calibration.get("net_proximity_fraction", 0.2) * math.dist(net_line[0], net_line[1]):
-                outcome, confidence = "net", 0.55
-            elif not point_in_polygon(terminal_pixel, table):
-                outcome, confidence = "off_table", 0.58
-            else:
-                outcome, confidence = "unknown", 0.35
-        else:
-            # We saw no distinct return at all: it may be a net ball or a
-            # clean miss, but the fixed view cannot safely tell which.
-            outcome, confidence = "unknown", 0.2
-        event = {"video_time_seconds": round(attempt["frame"] / fps, 3), "video_timestamp": fmt_timestamp(attempt["frame"] / fps), "hit_table": False, "is_in": False, "outcome": outcome, "posx": None, "posy": None, "posz": None, "confidence": confidence, "frame_number": attempt["frame"], "_pixel": attempt["pixel"], "_draw_frame": frame_number}
-        if attempt["returns"]:
-            event["return_crossed_net"] = bool(crossed_net)
-        return event
-
-    def finish_attempt(attempt):
-        if attempt is None:
-            return
-        if attempt["bounces"]:
-            write_event(attempt["bounces"][0])
-        else:
-            write_event(no_bounce_event(attempt))
-
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     with open(args.output, "w", encoding="utf-8") as output:
+        def write_event(event):
+            output.write(json.dumps({k: v for k, v in event.items() if not k.startswith("_")}) + "\n")
+
+        classifier = AttemptClassifier(
+            fps, calibration, table, net_line, occlusion, homography,
+            video_width, video_height, write_event,
+        )
+        previous_gray = None
         # Seeking by timestamp is codec-dependent. Read the position OpenCV
         # actually selected so reported frame numbers remain truthful.
         frame_number = round(cap.get(cv2.CAP_PROP_POS_FRAMES))
@@ -401,49 +458,15 @@ def main():
             gray, candidates = candidates_for_frame(frame, previous_gray, tracking_polygon)
             previous_gray = gray
             completed_tracks = tracker.update(frame_number, candidates)
-            for path in completed_tracks:
-                if len(path) < MIN_TRACK_POINTS:
-                    continue
-                start_pixel = (path[0][1], path[0][2])
-                dx = path[-1][1] - path[0][1]
-                started_at_launcher = point_in_rectangle(start_pixel, launcher_region)
-                # A real machine launch starts right and moves to the player
-                # left. This rejects short launcher reflections.
-                is_launcher = started_at_launcher and len(path) >= MIN_LAUNCH_TRACK_POINTS and dx <= -120
-                if is_launcher:
-                    launcher_tracks_seen += 1
-                    if launcher_tracks_seen > warmup_launcher_tracks:
-                        finish_attempt(active_attempt)
-                        active_attempt = {"frame": path[0][0], "pixel": start_pixel, "returns": [], "bounces": []}
-                    continue
-                # Player returns begin in the calibrated left contact zone and
-                # move right toward the opponent/launcher.
-                is_return = active_attempt and point_in_rectangle(start_pixel, return_region) and dx >= 120
-                if not is_return:
-                    continue
-                active_attempt["returns"].append(path)
-                bounce = find_bounce(path, table, net_line)
-                if bounce:
-                    hit, approach, departure = bounce
-                    key = (path[0][0], hit[0])
-                    if key not in emitted:
-                        emitted.add(key)
-                        pixel = (hit[1], hit[2])
-                        in_occlusion = len(occlusion) > 2 and point_in_polygon(pixel, occlusion)
-                        posx, posy, posz = map_log_coordinate(homography, pixel, calibration["table_surface_y"])
-                        far = posz > 0.03
-                        continuity = min(1.0, len(approach + departure) / 6)
-                        confidence = round((0.82 if far else 0.72) * continuity * (0.45 if in_occlusion else 1.0), 2)
-                        outcome = "unknown" if in_occlusion else ("far_table" if far else "near_table")
-                        active_attempt["bounces"].append({"video_time_seconds": round(hit[0] / fps, 3), "video_timestamp": fmt_timestamp(hit[0] / fps), "hit_table": not in_occlusion, "is_in": bool(far and not in_occlusion), "outcome": outcome, "posx": posx if not in_occlusion else None, "posy": posy if not in_occlusion else None, "posz": posz if not in_occlusion else None, "confidence": confidence, "frame_number": hit[0], "_pixel": pixel, "_draw_frame": frame_number})
+            classifier.process_tracks(completed_tracks, frame_number)
             if writer is not None:
-                writer.write(draw_overlay(frame, table, net_line, tracker.visible_points, events, homography, calibration["table_surface_y"]))
+                writer.write(draw_overlay(frame, table, net_line, tracker.visible_points, classifier.events, homography, calibration["table_surface_y"]))
             frame_number += 1
-        finish_attempt(active_attempt)
+        classifier.finish_attempt(frame_number)
     cap.release()
     if writer is not None:
         writer.release()
-    print(json.dumps({"events": len(events), "output": args.output, "annotated": None if args.no_annotated else args.annotated}, indent=2))
+    print(json.dumps({"events": len(classifier.events), "output": args.output, "annotated": None if args.no_annotated else args.annotated}, indent=2))
 
 
 if __name__ == "__main__":
