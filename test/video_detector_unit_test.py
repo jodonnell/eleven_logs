@@ -166,6 +166,27 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertEqual(len(settled), 1)
         self.assertEqual(settled[0], classifier.events)
 
+    def test_confirmed_hit_is_reported_before_the_attempt_finishes(self):
+        reported = []
+        normalizer = LiveAttemptNormalizer(60, reported.append)
+        classifier = self.classifier()
+        classifier.on_event = normalizer.observe
+        classifier.on_confirmed_hit = normalizer.observe_confirmed_hit
+        launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        returned = [(30 + frame, 100 + frame * 20, 100, 0.0) for frame in range(9)]
+
+        classifier.start_attempt(launch, 18)
+        classifier.add_bounce(
+            returned, returned[4], returned[1:4], returned[5:8], 39,
+        )
+
+        self.assertEqual([event.outcome for event in reported], ["hit"])
+        self.assertEqual(classifier.events, [])
+
+        classifier.finish_attempt(40)
+        normalizer.settle_attempt()
+        self.assertEqual([event.outcome for event in reported], ["hit"])
+
     def test_classifier_reports_crossed_net_return_that_ends_off_table(self):
         classifier = self.classifier()
         classifier.net_line = np.float32([(150, 0), (150, 500)])
@@ -391,6 +412,23 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertEqual(reported_frames.count(190), 1)
         self.assertEqual(
             [event.frame_number for event in reported].count(190), 1,
+        )
+
+    def test_immediate_hits_are_not_repeated_after_cadence_warms(self):
+        reported = []
+        normalizer = LiveAttemptNormalizer(60, reported.append)
+        for frame in (70, 190, 250):
+            event = self.cadence_event(frame)
+            normalizer.observe_confirmed_hit(event)
+            normalizer.observe(event)
+            normalizer.settle_attempt()
+
+        self.assertEqual(
+            [event.frame_number for event in reported if event.outcome == "hit"],
+            [70, 190, 250],
+        )
+        self.assertEqual(
+            [event.outcome for event in reported].count("miss"), 1,
         )
 
     def test_live_normalizer_final_output_matches_batch_normalization(self):

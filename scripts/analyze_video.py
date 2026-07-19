@@ -793,6 +793,7 @@ class AttemptClassifier:
         settings: DetectorSettings,
         on_event: Optional[Callable[[BounceEvent], None]] = None,
         on_attempt_finished: Optional[Callable[[], None]] = None,
+        on_confirmed_hit: Optional[Callable[[BounceEvent], None]] = None,
     ) -> None:
         self.fps = fps
         self.calibration = calibration
@@ -804,6 +805,7 @@ class AttemptClassifier:
         self.settings = settings
         self.on_event = on_event
         self.on_attempt_finished = on_attempt_finished
+        self.on_confirmed_hit = on_confirmed_hit
         self.events: List[BounceEvent] = []
         self.emitted: Set[Tuple[int, int]] = set()
         self.active_attempt: Optional[Attempt] = None
@@ -1036,7 +1038,7 @@ class AttemptClassifier:
         confidence = round((0.82 if far else 0.72) * continuity * (0.45 if in_occlusion else 1.0), 2)
         outcome = "unknown" if in_occlusion else ("far_table" if far else "near_table")
         hit_telemetry, machine_telemetry = self.telemetry_pair_before(hit[0])
-        self.active_attempt.bounces.append(BounceEvent(
+        event = BounceEvent(
             video_time_seconds=round(hit[0] / self.fps, 3),
             video_timestamp=fmt_timestamp(hit[0] / self.fps),
             hit_table=not in_occlusion,
@@ -1055,8 +1057,11 @@ class AttemptClassifier:
             machine=(
                 machine_telemetry.to_record(self.fps) if machine_telemetry else None
             ),
-        ))
+        )
+        self.active_attempt.bounces.append(event)
         self.active_attempt.bounce_track_keys.add(self.track_key(path))
+        if event.hit_table and event.outcome == "far_table" and self.on_confirmed_hit:
+            self.on_confirmed_hit(event)
 
     def process_tracks(self, tracks: Sequence[Track], draw_frame: int) -> None:
         for path in tracks:
@@ -1220,10 +1225,26 @@ class LiveAttemptNormalizer:
         self.events: List[BounceEvent] = []
         self.period: Optional[float] = None
         self.emitted_anchors: List[int] = []
+        self.immediate_hit_frames: List[int] = []
         self.settlement_frame: Optional[float] = None
 
     def observe(self, event: BounceEvent) -> None:
         self.events.append(event)
+
+    def observe_confirmed_hit(self, event: BounceEvent) -> None:
+        """Publish direct visual evidence without waiting for cadence."""
+        if any(
+            abs(event.frame_number - frame) <= self.fps * .5
+            for frame in self.immediate_hit_frames
+        ):
+            return
+        if self.period is not None and any(
+            abs(event.frame_number - anchor) <= self.period * .3
+            for anchor in self.emitted_anchors
+        ):
+            return
+        self.on_event(replace(event, outcome="hit"))
+        self.immediate_hit_frames.append(event.frame_number)
 
     def settle_attempt(self) -> None:
         """Advance once after a detected launch closes the prior attempt."""
@@ -1250,6 +1271,15 @@ class LiveAttemptNormalizer:
             self.events, round(self.settlement_frame) + 1, self.fps,
         )
         assert self.period is not None
+        for anchor, _ in slots:
+            if any(
+                abs(anchor - frame) <= self.period * .3
+                for frame in self.immediate_hit_frames
+            ) and not any(
+                abs(anchor - emitted) <= self.period * .5
+                for emitted in self.emitted_anchors
+            ):
+                self.emitted_anchors.append(anchor)
         for anchor, event in slots:
             if anchor + self.period > self.settlement_frame:
                 continue
@@ -1306,6 +1336,7 @@ def process_video(
     first_frame: Optional[VideoFrame] = None,
     on_event: Optional[Callable[[BounceEvent], None]] = None,
     on_attempt_finished: Optional[Callable[[], None]] = None,
+    on_confirmed_hit: Optional[Callable[[BounceEvent], None]] = None,
 ) -> List[BounceEvent]:
     """Process an already-open source and return its detected bounce events."""
     fps = source.fps
@@ -1320,7 +1351,7 @@ def process_video(
     classifier = AttemptClassifier(
         fps, calibration, table, net_line, occlusion, homography,
         video_width, video_height, scale, settings, on_event,
-        on_attempt_finished,
+        on_attempt_finished, on_confirmed_hit,
     )
     previous_gray = None
     next_frame = first_frame
@@ -1434,6 +1465,7 @@ def main() -> None:
                 source, scale, calibration, homography, table,
                 args.end_seconds, writer, first_frame,
                 live_normalizer.observe, live_normalizer.settle_attempt,
+                live_normalizer.observe_confirmed_hit,
             )
 
             # Cadence-based normalization can rename events and infer missed

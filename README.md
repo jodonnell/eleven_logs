@@ -28,18 +28,16 @@ npm run lint
 
 `scripts/analyze_video.py` reads either a fixed spectator-view video file or a
 live OBS SRT stream and writes one finalized `hit`, `out`, or `miss` JSONL
-record for each inferred ball-machine launch. Live output has a three-contact
-warm-up: the analyzer buffers early events until three confirmed opponent-side
-table contacts establish the machine cadence. It then releases settled slots
-in order. Each slot is held until a result from a later launch slot is observed,
-so the usual latency is one launch interval plus the time needed to finish the
-later track; this prevents a temporarily occluded return from being reported
-as a miss before it can become a hit. Merely receiving more video does not
-infer trailing misses after the machine stops. Every live record is flushed
-immediately, so `tail -f video_bounces.jsonl` can follow the session. If the stream ends before
-cadence is established, no provisional live records are written; shutdown
-still rewrites the file using the analyzer's existing canonical batch
-normalization. It never loads the full video into memory. Every camera
+record for each inferred ball-machine launch. A visually confirmed opponent-
+side contact is emitted as `hit` as soon as its completed track establishes the
+bounce; it does not wait for cadence or the next launch. Cadence-based `out`
+and `miss` slots have a three-contact warm-up and remain held until a later
+launch settles them, preventing a temporarily occluded return from becoming a
+premature miss. Merely receiving more video does not infer trailing misses
+after the machine stops. Every live record is flushed immediately, so
+`tail -f video_bounces.jsonl` can follow the session. At shutdown the file is
+rewritten using the analyzer's existing canonical batch normalization. It
+never loads the full video into memory. Every camera
 placement requires its own calibration: table corners, coordinate orientation,
 net, and the launcher region are deliberately not inferred from `sample.mp4` or
 reused across setups.
