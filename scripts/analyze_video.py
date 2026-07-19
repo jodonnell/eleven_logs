@@ -9,7 +9,7 @@ import argparse
 import json
 import math
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple, Union, cast
 
 try:
     import cv2
@@ -339,6 +339,7 @@ class AttemptClassifier:
 
     def no_bounce_event(self, attempt: Event, draw_frame: int) -> Event:
         """Describe a launcher cycle without a confirmed returned bounce."""
+        crossed_net = False
         if attempt["returns"]:
             returned = max(attempt["returns"], key=lambda path: math.dist(path[0][1:3], path[-1][1:3]))
             terminal = returned[-1]
@@ -412,14 +413,13 @@ class AttemptClassifier:
                     self.finish_attempt(draw_frame)
                     self.active_attempt = {"frame": path[0][0], "pixel": start_pixel, "returns": [], "bounces": []}
                 continue
-            is_return = (
-                self.active_attempt is not None
-                and point_in_rectangle(start_pixel, self.return_region)
-                and dx >= 120
-            )
+            attempt = self.active_attempt
+            if attempt is None:
+                continue
+            is_return = point_in_rectangle(start_pixel, self.return_region) and dx >= 120
             if not is_return:
                 continue
-            self.active_attempt["returns"].append(path)
+            attempt["returns"].append(path)
             bounce = find_bounce(path, self.table, self.net_line)
             if bounce:
                 self.add_bounce(path, *bounce, draw_frame)
@@ -486,7 +486,7 @@ def main() -> None:
             raise SystemExit(f"Could not write calibration frame to {args.extract_calibration_frame}")
         print(json.dumps({"calibration_frame": args.extract_calibration_frame, "image_size": [video_width, video_height]}, indent=2))
         return
-    calibration_path = ensure_calibration(args, fps)
+    calibration_path = ensure_calibration(cast(CalibrationArguments, args), fps)
     calibration, homography, table = load_calibration(calibration_path, video_width, video_height)
     net_line = np.float32(calibration["net_line"]) * SCALE
     occlusion = np.float32(calibration.get("occlusion_polygon", [])) * SCALE

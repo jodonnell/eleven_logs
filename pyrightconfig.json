@@ -1,0 +1,8 @@
+{
+  "include": ["scripts"],
+  "typeCheckingMode": "basic",
+  "reportArgumentType": false,
+  "reportAttributeAccessIssue": false,
+  "reportCallIssue": false,
+  "reportReturnType": false
+}
