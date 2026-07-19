@@ -246,6 +246,10 @@ def calibration_geometry(
         image = np.float32([data["image_corners"][name] for name in names]) * scale
         log = np.float32([data["log_corners"][name] for name in names])
     table_polygon = np.float32(data["table_polygon"]) * scale
+    # Contacts may use a deliberately smaller reviewed surface than the
+    # rendered table outline. Keep it camera calibration data rather than a
+    # detector-wide pixel constant.
+    data.setdefault("table_contact_polygon", data["table_polygon"])
     return data, cv2.getPerspectiveTransform(image, log), table_polygon
 
 
@@ -1481,6 +1485,9 @@ def process_video(
     net_line = np.float32(calibration["net_line"]) * scale
     occlusion = np.float32(calibration.get("occlusion_polygon", [])) * scale
     tracking_polygon = np.float32(calibration["tracking_polygon"]) * scale
+    contact_polygon = np.float32(
+        calibration.get("table_contact_polygon", calibration["table_polygon"])
+    ) * scale
     tracker = MultiBallTracker(settings)
     diagnostics = (
         DetectorDiagnostics(track_lifetime_frames=max(1, round(fps * .5)))
@@ -1488,7 +1495,7 @@ def process_video(
     )
     telemetry = TelemetryReader()
     classifier = AttemptClassifier(
-        fps, calibration, table, net_line, occlusion, homography,
+        fps, calibration, contact_polygon, net_line, occlusion, homography,
         video_width, video_height, scale, settings, on_event,
         on_attempt_finished, on_confirmed_hit,
         diagnostics.completed_track if diagnostics is not None else None,

@@ -27,6 +27,62 @@ CalibrationReport = dict[str, Any]
 Calibration = dict[str, Any]
 
 
+def calibrated_tracking_regions(
+    image_size: List[int],
+    table_polygon: List[List[float]],
+    player_edge: Tuple[float, float],
+    opponent_edge: Tuple[float, float],
+) -> dict[str, Any]:
+    """Build conservative ball-flight regions from camera-specific geometry.
+
+    The centre stripe endpoints establish which image side belongs to the
+    player and launcher.  Region sizes are proportional to the visible table,
+    so a wide room view does not admit windows, screens, walls, or floor merely
+    because they happen to contain small moving white blobs.
+    """
+    width, height = image_size
+    table = np.asarray(table_polygon, dtype=np.float32)
+    _, table_top = np.min(table, axis=0)
+    _, table_bottom = np.max(table, axis=0)
+    table_height = max(1.0, float(table_bottom - table_top))
+    direction = 1.0 if opponent_edge[0] >= player_edge[0] else -1.0
+
+    # Start classification already requires a long directed path. Keep the
+    # side zones vertically permissive so high-spin arcs and low edge paths
+    # are not lost; the flight corridor performs the room-background trim.
+    start_top = 0.0
+    start_bottom = float(height - 1)
+
+    # Preserve generous start coverage at both ends of the flight. Which end
+    # receives each role comes from calibration, rather than assuming that
+    # every spectator camera puts the launcher on image-right.
+    if direction > 0:
+        launcher = [width * .58, start_top, float(width - 1), start_bottom]
+        returned = [0.0, start_top, width * .28, start_bottom]
+    else:
+        launcher = [0.0, start_top, width * .42, start_bottom]
+        returned = [width * .72, start_top, float(width - 1), start_bottom]
+
+    # The flight can extend beyond either rail in x, especially on wide-angle
+    # returns. Vertically, however, calibrated table scale gives a reliable
+    # way to reject ceiling/window shimmer and floor motion without clipping
+    # high arcs or paths that continue briefly below an edge contact.
+    corridor_top = max(0.0, float(table_top - table_height * 1.5))
+    corridor_bottom = min(float(height - 1), float(table_bottom + table_height * .5))
+    corridor = [
+        [0.0, corridor_top], [float(width - 1), corridor_top],
+        [float(width - 1), corridor_bottom], [0.0, corridor_bottom],
+    ]
+    return {
+        "launcher_region": [float(value) for value in launcher],
+        "return_region": [float(value) for value in returned],
+        "tracking_polygon": corridor,
+        "table_contact_polygon": [
+            [float(x), float(y)] for x, y in table_polygon
+        ],
+    }
+
+
 def line_at_y(line: Line, y: float) -> Optional[float]:
     x1, y1, x2, y2 = line
     if abs(y2 - y1) < 1e-6:
@@ -223,16 +279,25 @@ def calibration_from_frame(
         {"name": "net_base_top", "image": [net_top_x * inverse_scale, visible_table[0][1] * inverse_scale], "log": [-TABLE_HALF_WIDTH, 0.0]},
         {"name": "net_base_bottom", "image": [net_bottom_x * inverse_scale, visible_table[2][1] * inverse_scale], "log": [TABLE_HALF_WIDTH, 0.0]},
     ]
+    table_polygon = [[x * inverse_scale, y * inverse_scale] for x, y in visible_table]
+    player_edge = (left_x * inverse_scale, y * inverse_scale)
+    opponent_edge = (right_x * inverse_scale, y * inverse_scale)
+    regions = calibrated_tracking_regions(
+        [int(original.shape[1]), int(original.shape[0])],
+        table_polygon,
+        player_edge,
+        opponent_edge,
+    )
     data = {
         "description": "Automatically detected in memory from the first usable frame.",
         "image_size": [int(original.shape[1]), int(original.shape[0])],
         "table_surface_y": 0.7786086,
         "control_points": control,
-        "table_polygon": [[x * inverse_scale, y * inverse_scale] for x, y in visible_table],
-        "tracking_polygon": [[0, 0], [int(original.shape[1]), 0], [int(original.shape[1]), int(original.shape[0])], [0, int(original.shape[0])],],
+        "table_polygon": table_polygon,
         "net_line": [[net_top_x * inverse_scale, visible_table[0][1] * inverse_scale], [net_bottom_x * inverse_scale, visible_table[2][1] * inverse_scale]],
         "auto_calibrated": True,
         "calibration_frame": frame,
+        **regions,
     }
     if diagnostic is not None:
         diagnostic_path = Path(diagnostic)

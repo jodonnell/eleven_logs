@@ -17,7 +17,7 @@ verification are complete.
 - Include the rejection reason where practical.
 - Keep diagnostic rendering separate from classification behavior.
 
-## 3. Tighten the tracking region — TODO
+## 3. Tighten the tracking region — DONE
 
 - Define calibrated regions for launcher-side track starts, player-side return
   starts, the valid flight corridor, and table-contact locations.

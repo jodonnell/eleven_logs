@@ -15,7 +15,11 @@ VIDEO = ROOT / "sample.mp4"
 SAMPLE2_VIDEO = ROOT / "sample2-trimmed-58s.mp4"
 SAMPLE3_VIDEO = ROOT / "sample3-trimmed-44s.mp4"
 sys.path.insert(0, str(ROOT / "scripts"))
-from auto_calibrate import calibration_from_frame, detect_geometry  # noqa: E402
+from auto_calibrate import (  # noqa: E402
+    calibrated_tracking_regions,
+    calibration_from_frame,
+    detect_geometry,
+)
 
 
 def first_frame_calibration(video: Path):
@@ -39,6 +43,31 @@ def assert_points_close(test, actual, expected, delta=.01):
 
 
 class WideViewCalibrationTest(unittest.TestCase):
+    def test_tracking_regions_follow_camera_orientation_and_exclude_room_edges(self):
+        regions = calibrated_tracking_regions(
+            [1000, 500],
+            [[250, 250], [675, 250], [805, 330], [50, 330]],
+            (150, 270),
+            (724, 270),
+        )
+
+        self.assertLess(regions["return_region"][0], regions["launcher_region"][0])
+        corridor = np.float32(regions["tracking_polygon"])
+        self.assertGreaterEqual(cv2.pointPolygonTest(corridor, (50, 330), False), 0)
+        self.assertLess(cv2.pointPolygonTest(corridor, (990, 20), False), 0)
+        self.assertLess(cv2.pointPolygonTest(corridor, (500, 490), False), 0)
+
+        reversed_regions = calibrated_tracking_regions(
+            [1000, 500],
+            [[195, 250], [950, 330], [325, 250], [50, 330]],
+            (850, 270),
+            (276, 270),
+        )
+        self.assertGreater(
+            reversed_regions["return_region"][0],
+            reversed_regions["launcher_region"][0],
+        )
+
     def test_room_lines_do_not_replace_table_boundaries(self):
         frame = np.full((540, 1024, 3), 35, dtype=np.uint8)
         sky_green = cv2.cvtColor(
@@ -113,8 +142,15 @@ class AutoCalibrationTest(unittest.TestCase):
         self.assertTrue(calibration["auto_calibrated"])
         self.assertNotIn("diagnostic", calibration)
         self.assertNotIn("detector_settings", calibration)
-        self.assertNotIn("launcher_region", calibration)
-        self.assertNotIn("return_region", calibration)
+        self.assertIn("launcher_region", calibration)
+        self.assertIn("return_region", calibration)
+        self.assertIn("tracking_polygon", calibration)
+        assert_points_close(
+            self,
+            normalized(calibration["table_contact_polygon"], *calibration["image_size"]),
+            normalized(calibration["table_polygon"], *calibration["image_size"]),
+            delta=1e-6,
+        )
 
     def test_first_frame_finds_verified_table_origin(self):
         """The origin stays at the white-center-stripe/net-base intersection."""

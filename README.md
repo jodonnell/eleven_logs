@@ -42,6 +42,13 @@ placement requires its own calibration: table corners, coordinate orientation,
 net, and the launcher region are deliberately not inferred from `sample.mp4` or
 reused across setups.
 
+Automatic calibration also derives four camera-relative detector regions: a
+launcher-side start zone, a player-side return zone, a vertically bounded
+flight corridor, and the visible table-contact polygon. The start-zone roles
+follow the calibrated player/opponent orientation even when a camera view is
+mirrored. The corridor stays horizontally wide for edge-of-table and
+wide-angle paths while excluding room motion well above or below the table.
+
 Install the local Python dependencies once. Each run detects the green table,
 white `x=0` centre stripe, and the table-side (bottom) edge of the net from the
 first usable frame. That geometry stays in memory for the duration of the
