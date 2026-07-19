@@ -19,7 +19,7 @@ except ImportError as exc:
 from auto_calibrate import create_calibration
 
 
-SCALE = 0.25                # process 4K frames at 1K; input remains streaming
+SCALE = 0.25                # updated per video to process frames at about 1K
 MAX_GAP = 3
 MIN_TRACK_POINTS = 9
 MIN_LAUNCH_TRACK_POINTS = 18
@@ -395,6 +395,7 @@ def ensure_calibration(args, fps):
 
 
 def main():
+    global SCALE
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("video")
     parser.add_argument("--calibration", help="Cached per-camera JSON calibration")
@@ -412,8 +413,9 @@ def main():
     fps = cap.get(cv2.CAP_PROP_FPS) or 60.0
     if args.start_seconds:
         cap.set(cv2.CAP_PROP_POS_MSEC, args.start_seconds * 1000)
-    width, height = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) * SCALE), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) * SCALE)
     video_width, video_height = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    SCALE = min(1.0, 1024 / video_width)
+    width, height = round(video_width * SCALE), round(video_height * SCALE)
     if args.extract_calibration_frame:
         ok, frame = cap.read()
         cap.release()

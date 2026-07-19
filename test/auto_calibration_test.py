@@ -44,8 +44,9 @@ class AutoCalibrationTest(unittest.TestCase):
             calibration = json.loads(cache.read_text())
         # This point was visually approved in artifacts/auto_grid_check.png.
         # Tolerance allows small OpenCV/Hough implementation differences.
-        self.assertAlmostEqual(reported["table_center"][0], 1232, delta=20)
-        self.assertAlmostEqual(reported["table_center"][1], 1004, delta=12)
+        width, height = calibration["image_size"]
+        self.assertAlmostEqual(reported["table_center"][0] / width, 1232 / 4096, delta=.01)
+        self.assertAlmostEqual(reported["table_center"][1] / height, 1004 / 2160, delta=.01)
         # The far-left lower rail is occluded in this view. The automatic
         # path must leave it unknown instead of extending the table to x=0.
         self.assertEqual(len(calibration["table_polygon"]), 3)
