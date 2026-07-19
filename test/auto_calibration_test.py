@@ -25,10 +25,14 @@ class AutoCalibrationTest(unittest.TestCase):
                 check=True,
             )
             reported = json.loads(result.stdout)
+            calibration = json.loads(cache.read_text())
         # This point was visually approved in artifacts/auto_grid_check.png.
         # Tolerance allows small OpenCV/Hough implementation differences.
         self.assertAlmostEqual(reported["table_center"][0], 1232, delta=20)
         self.assertAlmostEqual(reported["table_center"][1], 1004, delta=12)
+        # The far-left lower rail is occluded in this view. The automatic
+        # path must leave it unknown instead of extending the table to x=0.
+        self.assertEqual(len(calibration["table_polygon"]), 3)
 
     def test_known_table_contacts_are_not_regressed_to_unknown(self):
         """Keep the three manually confirmed sample contacts detectable."""

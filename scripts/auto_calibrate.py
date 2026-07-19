@@ -38,7 +38,13 @@ def hough_segments(frame):
 
 
 def detect_geometry(frame):
-    """Return visible table rails and visual x=0 line in downscaled pixels."""
+    """Return the safely visible table area and visual x=0 line.
+
+    The left rail may be covered by the net, so this deliberately returns a
+    triangle rather than inventing an unseen lower-left corner.  A bounce
+    outside that triangle is reported as unknown and can be recovered with a
+    manual calibration.
+    """
     height, width = frame.shape[:2]
     lines = hough_segments(frame)
     horizontals = []
@@ -58,8 +64,7 @@ def detect_geometry(frame):
         raise ValueError("could not separate the white centre stripe from table rails")
     center = max(between, key=lambda item: item[1])
 
-    # The outer left rail can be hidden by the net. The centre stripe itself
-    # is the reliable x=0 endpoint feature. Find only the visible right rail
+    # The outer left rail can be hidden by the net. Find the visible right rail
     # by requiring it to meet the right ends of both horizontal rails.
     top_x = sorted((top[2][0], top[2][2]))
     bottom_x = sorted((bottom[2][0], bottom[2][2]))
@@ -75,11 +80,8 @@ def detect_geometry(frame):
     if not right_candidates:
         raise ValueError("could not find the visible right table rail")
     _, right_top, right_bottom = min(right_candidates)
-    corners = [
-        [top_x[0], top[0]], [right_top, top[0]],
-        [right_bottom, bottom[0]], [0.0, bottom[0]],
-    ]
-    return corners, center[2], (top[2], bottom[2])
+    visible_table = [[top_x[0], top[0]], [right_top, top[0]], [right_bottom, bottom[0]]]
+    return visible_table, center[2], (top[2], bottom[2])
 
 
 def main():
@@ -100,31 +102,30 @@ def main():
     small = cv2.resize(original, None, fx=.25, fy=.25, interpolation=cv2.INTER_AREA)
     height, width = small.shape[:2]
     try:
-        corners, center_line, _ = detect_geometry(small)
+        visible_table, center_line, _ = detect_geometry(small)
     except ValueError as exc:
         raise SystemExit(f"Automatic calibration failed: {exc}. Use scripts/calibrate_video.py as a fallback.")
 
     # The white table stripe is x=0. Its visible endpoints establish z=-/+.
     y = (center_line[1] + center_line[3]) / 2
     left_x = min(center_line[0], center_line[2])
-    right_x = line_at_y((corners[1][0], corners[0][1], corners[2][0], corners[2][1]), y)
+    right_x = line_at_y((visible_table[1][0], visible_table[0][1], visible_table[2][0], visible_table[2][1]), y)
 
     # The net's *bottom* edge is a long dark diagonal inside the table.  The
     # bright elevated rail is deliberately rejected by selecting the inward,
     # lower candidate rather than the strongest/brightest diagonal.  It is
     # found relative to the detected rails, so no coordinates are baked in.
-    left_angle = 45.0
     candidates = []
     for length, angle, line in hough_segments(small):
-        if length < height * .35 or abs(angle) < max(60, left_angle + 6):
+        if length < height * .35 or abs(angle) < 60:
             continue
-        top_x, bottom_x = line_at_y(line, corners[0][1]), line_at_y(line, corners[2][1])
+        top_x, bottom_x = line_at_y(line, visible_table[0][1]), line_at_y(line, visible_table[2][1])
         if top_x is None or bottom_x is None or top_x <= bottom_x:
             continue
         # It must cross the visible table interior at both boundary levels.
-        if not (corners[0][0] < top_x < corners[1][0]):
+        if not (visible_table[0][0] < top_x < visible_table[1][0]):
             continue
-        if not (corners[3][0] - width * .10 < bottom_x < corners[2][0]):
+        if bottom_x >= visible_table[2][0]:
             continue
         center_x = line_at_y(line, y)
         candidates.append((center_x, top_x, bottom_x, line))
@@ -137,27 +138,28 @@ def main():
     control = [
         {"name": "x0_player_edge", "image": [left_x * 4, y * 4], "log": [0.0, -TABLE_HALF_LENGTH]},
         {"name": "x0_opponent_edge", "image": [right_x * 4, y * 4], "log": [0.0, TABLE_HALF_LENGTH]},
-        {"name": "net_base_top", "image": [net_top_x * 4, corners[0][1] * 4], "log": [-TABLE_HALF_WIDTH, 0.0]},
-        {"name": "net_base_bottom", "image": [net_bottom_x * 4, corners[2][1] * 4], "log": [TABLE_HALF_WIDTH, 0.0]},
+        {"name": "net_base_top", "image": [net_top_x * 4, visible_table[0][1] * 4], "log": [-TABLE_HALF_WIDTH, 0.0]},
+        {"name": "net_base_bottom", "image": [net_bottom_x * 4, visible_table[2][1] * 4], "log": [TABLE_HALF_WIDTH, 0.0]},
     ]
     # The visual diagnostic makes automatic calibration reviewable.  The
     # analyser draws the resulting log grid before it emits coordinates.
     view = small.copy()
-    cv2.polylines(view, [np.int32(corners).reshape((-1, 1, 2))], True, (0, 255, 255), 2)
+    cv2.polylines(view, [np.int32(visible_table).reshape((-1, 1, 2))], True, (0, 255, 255), 2)
     cv2.line(view, tuple(map(int, center_line[:2])), tuple(map(int, center_line[2:])), (255, 255, 255), 2)
-    cv2.line(view, (round(net_top_x), round(corners[0][1])), (round(net_bottom_x), round(corners[2][1])), (255, 0, 255), 2)
+    cv2.line(view, (round(net_top_x), round(visible_table[0][1])), (round(net_bottom_x), round(visible_table[2][1])), (255, 0, 255), 2)
     cv2.putText(view, "auto table + x=0 line", (16, 28), cv2.FONT_HERSHEY_SIMPLEX, .55, (0, 0, 255), 2)
     diagnostic = args.diagnostic or str(Path(args.output).with_suffix(".png"))
     Path(diagnostic).parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(diagnostic, view)
+    if not cv2.imwrite(diagnostic, view):
+        raise SystemExit(f"Could not write diagnostic image to {diagnostic}")
     data = {
         "description": "Automatically detected once from the first usable frame; cache is camera-specific.",
         "image_size": [int(original.shape[1]), int(original.shape[0])],
         "table_surface_y": 0.7786086,
         "control_points": control,
-        "table_polygon": [[x * 4, y * 4] for x, y in corners],
+        "table_polygon": [[x * 4, y * 4] for x, y in visible_table],
         "tracking_polygon": [[0, 0], [int(original.shape[1]), 0], [int(original.shape[1]), int(original.shape[0])], [0, int(original.shape[0])],],
-        "net_line": [[net_top_x * 4, corners[0][1] * 4], [net_bottom_x * 4, corners[2][1] * 4]],
+        "net_line": [[net_top_x * 4, visible_table[0][1] * 4], [net_bottom_x * 4, visible_table[2][1] * 4]],
         "auto_calibrated": True,
         "calibration_frame": args.frame,
         "diagnostic": diagnostic,

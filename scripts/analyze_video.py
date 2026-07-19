@@ -10,7 +10,6 @@ import json
 import math
 import subprocess
 import sys
-from collections import deque
 from pathlib import Path
 
 try:
@@ -21,7 +20,6 @@ except ImportError as exc:
 
 
 SCALE = 0.25                # process 4K frames at 1K; input remains streaming
-MAX_HISTORY = 42            # 0.7 seconds at 60fps
 MAX_GAP = 3
 MIN_TRACK_POINTS = 9
 MIN_LAUNCH_TRACK_POINTS = 18
@@ -73,63 +71,6 @@ def signed_distance_to_line(point, line):
     dx, dy = end[0] - start[0], end[1] - start[1]
     length = math.hypot(dx, dy)
     return ((dx * (point[1] - start[1])) - (dy * (point[0] - start[0]))) / length
-
-
-class BallTracker:
-    """Nearest-neighbour tracker with velocity prediction and bounded state."""
-    def __init__(self, table_polygon, occlusion_polygon):
-        self.table_polygon = table_polygon
-        self.occlusion_polygon = occlusion_polygon
-        self.points = deque(maxlen=MAX_HISTORY)
-        self.gap = 0
-
-    def update(self, frame_number, candidates):
-        selected = None
-        if candidates:
-            if len(self.points) >= 2:
-                a, b = self.points[-2], self.points[-1]
-                predicted = (b[1] + (b[1] - a[1]), b[2] + (b[2] - a[2]))
-                selected = min(candidates, key=lambda p: math.dist(p[:2], predicted))
-                # A ball can move quickly, but not teleport across this view.
-                if math.dist(selected[:2], predicted) > 75:
-                    selected = None
-            else:
-                selected = candidates[0]
-        if selected is None:
-            self.gap += 1
-            if self.gap > MAX_GAP:
-                expired = list(self.points)
-                self.points.clear()
-                return None, expired
-            return None, None
-        self.gap = 0
-        self.points.append((frame_number, float(selected[0]), float(selected[1]), float(selected[2])))
-        return selected, None
-
-    def potential_bounce(self):
-        """Return an unreported vertical turn after its departure.
-
-        A projected ball can make either a local maximum or minimum at contact:
-        its horizontal motion across this oblique camera can dominate gravity.
-        """
-        if len(self.points) < MIN_TRACK_POINTS:
-            return None
-        pts = list(self.points)
-        # Ignore the first/last 3 points, preserving approach and departure.
-        for index in range(3, len(pts) - 3):
-            before = [p[2] for p in pts[index - 3:index]]
-            after = [p[2] for p in pts[index + 1:index + 4]]
-            y = pts[index][2]
-            before_mean, after_mean = sum(before) / 3, sum(after) / 3
-            # A decisive, brief reversal; reject smooth perspective drift.
-            maximum = y - before_mean >= 1 and y - after_mean >= 1
-            minimum = before_mean - y >= 1 and after_mean - y >= 1
-            if not (maximum or minimum):
-                continue
-            point = (pts[index][1], pts[index][2])
-            if point_in_polygon(point, self.table_polygon):
-                return pts[index], pts[index - 3:index], pts[index + 1:index + 4]
-        return None
 
 
 def find_bounce(points, table_polygon, net_line=None):
@@ -322,6 +263,37 @@ def draw_overlay(frame, table, net_line, track, events, homography, surface_y):
     return view
 
 
+def create_video_writer(path, fps, size):
+    """Create an annotated-video writer or fail before processing begins."""
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"mp4v"), fps, size)
+    if not writer.isOpened():
+        writer.release()
+        raise SystemExit(f"Could not create annotated video at {path}")
+    return writer
+
+
+def ensure_calibration(args, fps):
+    """Return an existing calibration path or create the requested cache."""
+    if args.calibration:
+        return args.calibration
+    cache = Path(args.calibration_cache or f"{Path(args.video).stem}.table-calibration.json")
+    if not cache.exists():
+        diagnostic = cache.with_suffix(".png")
+        command = [sys.executable, str(Path(__file__).with_name("auto_calibrate.py")), args.video,
+                   "--output", str(cache), "--diagnostic", str(diagnostic),
+                   "--frame", str(round(args.start_seconds * fps))]
+        print("No calibration supplied; detecting and caching table geometry once.")
+        try:
+            subprocess.run(command, check=True, text=True)
+        except subprocess.CalledProcessError as exc:
+            raise SystemExit(
+                "Automatic calibration failed. Inspect its diagnostic or use "
+                "scripts/calibrate_video.py."
+            ) from exc
+    return str(cache)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("video")
@@ -347,22 +319,12 @@ def main():
         cap.release()
         if not ok:
             raise SystemExit("Could not read a calibration frame")
-        cv2.imwrite(args.extract_calibration_frame, frame)
+        if not cv2.imwrite(args.extract_calibration_frame, frame):
+            raise SystemExit(f"Could not write calibration frame to {args.extract_calibration_frame}")
         print(json.dumps({"calibration_frame": args.extract_calibration_frame, "image_size": [video_width, video_height]}, indent=2))
         return
-    if not args.calibration:
-        cache = Path(args.calibration_cache or f"{Path(args.video).stem}.table-calibration.json")
-        if not cache.exists():
-            diagnostic = cache.with_suffix(".png")
-            command = [sys.executable, str(Path(__file__).with_name("auto_calibrate.py")), args.video,
-                       "--output", str(cache), "--diagnostic", str(diagnostic),
-                       "--frame", str(round(args.start_seconds * fps))]
-            print("No calibration supplied; detecting and caching table geometry once.")
-            result = subprocess.run(command, text=True)
-            if result.returncode:
-                raise SystemExit("Automatic calibration failed. Inspect its diagnostic or use scripts/calibrate_video.py.")
-        args.calibration = str(cache)
-    calibration, homography, table = load_calibration(args.calibration, video_width, video_height)
+    calibration_path = ensure_calibration(args, fps)
+    calibration, homography, table = load_calibration(calibration_path, video_width, video_height)
     net_line = np.float32(calibration["net_line"]) * SCALE
     occlusion = np.float32(calibration.get("occlusion_polygon", [])) * SCALE
     tracking_polygon = np.float32(calibration["tracking_polygon"]) * SCALE
@@ -375,7 +337,7 @@ def main():
     warmup_launcher_tracks = calibration.get("warmup_launcher_tracks", 0)
     writer = None
     if not args.no_annotated:
-        writer = cv2.VideoWriter(args.annotated, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+        writer = create_video_writer(args.annotated, fps, (width, height))
     previous_gray, emitted = None, set()
     events = []
     active_attempt = None
@@ -424,8 +386,11 @@ def main():
         else:
             write_event(no_bounce_event(attempt))
 
+    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     with open(args.output, "w", encoding="utf-8") as output:
-        frame_number = round(args.start_seconds * fps)
+        # Seeking by timestamp is codec-dependent. Read the position OpenCV
+        # actually selected so reported frame numbers remain truthful.
+        frame_number = round(cap.get(cv2.CAP_PROP_POS_FRAMES))
         while True:
             ok, original = cap.read()
             if not ok:
@@ -471,12 +436,13 @@ def main():
                         confidence = round((0.82 if far else 0.72) * continuity * (0.45 if in_occlusion else 1.0), 2)
                         outcome = "unknown" if in_occlusion else ("far_table" if far else "near_table")
                         active_attempt["bounces"].append({"video_time_seconds": round(hit[0] / fps, 3), "video_timestamp": fmt_timestamp(hit[0] / fps), "hit_table": not in_occlusion, "is_in": bool(far and not in_occlusion), "outcome": outcome, "posx": posx if not in_occlusion else None, "posy": posy if not in_occlusion else None, "posz": posz if not in_occlusion else None, "confidence": confidence, "frame_number": hit[0], "_pixel": pixel, "_draw_frame": frame_number})
-            if writer:
+            if writer is not None:
                 writer.write(draw_overlay(frame, table, net_line, tracker.visible_points, events, homography, calibration["table_surface_y"]))
             frame_number += 1
         finish_attempt(active_attempt)
     cap.release()
-    if writer: writer.release()
+    if writer is not None:
+        writer.release()
     print(json.dumps({"events": len(events), "output": args.output, "annotated": None if args.no_annotated else args.annotated}, indent=2))
 
 
