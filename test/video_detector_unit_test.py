@@ -11,9 +11,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from analyze_video import (  # noqa: E402
     AttemptClassifier,
     DetectorSettings,
+    MultiBallTracker,
+    find_bounce,
     map_log_coordinate,
     shadow_contact_score,
-    find_bounce,
 )
 
 
@@ -88,6 +89,14 @@ class VideoDetectorUnitTest(unittest.TestCase):
 
         self.assertEqual(settings.motion_threshold, 9)
         self.assertEqual(settings.max_gap, 3)
+
+    def test_tracker_completes_a_path_after_the_allowed_gap(self):
+        tracker = MultiBallTracker(DetectorSettings(max_gap=1))
+
+        self.assertEqual(tracker.update(0, [(10, 20, 0)]), [])
+        self.assertEqual(tracker.update(1, []), [])
+
+        self.assertEqual(tracker.update(2, []), [[(0, 10, 20, 0)]])
 
 
 if __name__ == "__main__":

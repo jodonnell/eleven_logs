@@ -30,7 +30,6 @@ Candidate = Tuple[float, float, float]
 Track = List[TrackPoint]
 Bounce = Tuple[TrackPoint, Track, Track]
 Calibration = Dict[str, Any]
-TrackRecord = Dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -48,6 +47,11 @@ class DetectorSettings:
     motion_threshold: int = 18
     bright_ball_lower: Tuple[int, int, int] = (0, 0, 210)
     bright_ball_upper: Tuple[int, int, int] = (180, 145, 255)
+    max_candidate_area: int = 500
+    min_vertical_turn: float = 1
+    min_pre_bounce_speed: float = 12
+    max_post_bounce_speed_ratio: float = 0.35
+    flattening_strength_weight: float = 0.6
 
     @classmethod
     def from_calibration(cls, calibration: Calibration) -> "DetectorSettings":
@@ -89,6 +93,14 @@ class Attempt:
     pixel: Point
     returns: List[Track] = field(default_factory=list)
     bounces: List[BounceEvent] = field(default_factory=list)
+
+
+@dataclass
+class ActiveTrack:
+    """One currently visible candidate path and its missed-frame count."""
+
+    points: Track
+    gap: int = 0
 
 
 class CalibrationArguments(Protocol):
@@ -181,8 +193,14 @@ def find_bounce(
         after = [p[2] for p in points[index + 1:index + 3]]
         y = points[index][2]
         before_mean, after_mean = sum(before) / len(before), sum(after) / len(after)
-        maximum = y - before_mean >= 1 and y - after_mean >= 1
-        minimum = before_mean - y >= 1 and after_mean - y >= 1
+        maximum = (
+            y - before_mean >= settings.min_vertical_turn
+            and y - after_mean >= settings.min_vertical_turn
+        )
+        minimum = (
+            before_mean - y >= settings.min_vertical_turn
+            and after_mean - y >= settings.min_vertical_turn
+        )
         if not point_in_polygon((points[index][1], points[index][2]), table_polygon):
             continue
         if maximum or minimum:
@@ -198,8 +216,11 @@ def find_bounce(
             after_speeds = [abs(points[j + 1][2] - points[j][2]) for j in range(index, index + 2)]
             before_speed = sum(before_speeds) / len(before_speeds)
             after_speed = sum(after_speeds) / len(after_speeds)
-            if before_speed >= 12 and after_speed <= before_speed * 0.35:
-                flattening = (before_speed - after_speed) * 0.6
+            if (
+                before_speed >= settings.min_pre_bounce_speed
+                and after_speed <= before_speed * settings.max_post_bounce_speed_ratio
+            ):
+                flattening = (before_speed - after_speed) * settings.flattening_strength_weight
                 candidate = (flattening, points[index], points[index - 3:index], points[index + 1:index + 3])
                 if best is None or flattening > best[0]:
                     best = candidate
@@ -215,12 +236,12 @@ class MultiBallTracker:
     """
     def __init__(self, settings: DetectorSettings = DetectorSettings()) -> None:
         self.settings = settings
-        self.tracks: List[TrackRecord] = []
+        self.tracks: List[ActiveTrack] = []
 
     def update(self, frame_number: int, candidates: Sequence[Candidate]) -> List[Track]:
         pairs: List[Tuple[float, int, int]] = []
         for track_index, track in enumerate(self.tracks):
-            points = track["points"]
+            points = track.points
             if len(points) >= 2:
                 a, b = points[-2], points[-1]
                 predicted = (b[1] + (b[1] - a[1]), b[2] + (b[2] - a[2]))
@@ -238,29 +259,31 @@ class MultiBallTracker:
                 continue
             track = self.tracks[track_index]
             candidate = candidates[candidate_index]
-            track["points"].append((frame_number, candidate[0], candidate[1], candidate[2]))
-            track["gap"] = 0
+            track.points.append((frame_number, candidate[0], candidate[1], candidate[2]))
+            track.gap = 0
             used_tracks.add(track_index)
             used_candidates.add(candidate_index)
         for track_index, track in enumerate(self.tracks):
             if track_index not in used_tracks:
-                track["gap"] += 1
+                track.gap += 1
         completed: List[Track] = []
-        active: List[TrackRecord] = []
+        active: List[ActiveTrack] = []
         for track in self.tracks:
-            if track["gap"] > self.settings.max_gap:
-                completed.append(track["points"])
+            if track.gap > self.settings.max_gap:
+                completed.append(track.points)
             else:
                 active.append(track)
         self.tracks = active
         for candidate_index, candidate in enumerate(candidates):
             if candidate_index not in used_candidates:
-                self.tracks.append({"points": [(frame_number, candidate[0], candidate[1], candidate[2])], "gap": 0})
+                self.tracks.append(ActiveTrack([
+                    (frame_number, candidate[0], candidate[1], candidate[2]),
+                ]))
         return completed
 
     @property
     def visible_points(self) -> List[TrackPoint]:
-        return [point for track in self.tracks for point in track["points"][-12:]]
+        return [point for track in self.tracks for point in track.points[-12:]]
 
 
 def shadow_contact_score(hsv: np.ndarray, center: Point) -> float:
@@ -300,7 +323,7 @@ def candidates_for_frame(
     choices = []
     for i in range(1, count):
         area = stats[i, cv2.CC_STAT_AREA]
-        if not 1 <= area <= 500:
+        if not 1 <= area <= settings.max_candidate_area:
             continue
         center = tuple(map(float, centers[i]))
         if point_in_polygon(center, tracking_polygon):
@@ -400,6 +423,23 @@ class AttemptClassifier:
     def emit(self, event: BounceEvent) -> None:
         self.events.append(event)
 
+    def is_launcher_track(self, path: Track) -> bool:
+        start = (path[0][1], path[0][2])
+        horizontal_distance = path[-1][1] - path[0][1]
+        return (
+            point_in_rectangle(start, self.launcher_region, self.scale)
+            and len(path) >= self.settings.min_launch_track_points
+            and horizontal_distance <= -self.settings.launch_min_horizontal_distance
+        )
+
+    def is_return_track(self, path: Track) -> bool:
+        start = (path[0][1], path[0][2])
+        horizontal_distance = path[-1][1] - path[0][1]
+        return (
+            point_in_rectangle(start, self.return_region, self.scale)
+            and horizontal_distance >= self.settings.return_min_horizontal_distance
+        )
+
     def no_bounce_event(self, attempt: Attempt, draw_frame: int) -> BounceEvent:
         """Describe a launcher cycle without a confirmed returned bounce."""
         crossed_net = False
@@ -488,13 +528,7 @@ class AttemptClassifier:
             if len(path) < self.settings.min_track_points:
                 continue
             start_pixel = (path[0][1], path[0][2])
-            dx = path[-1][1] - path[0][1]
-            is_launcher = (
-                point_in_rectangle(start_pixel, self.launcher_region, self.scale)
-                and len(path) >= self.settings.min_launch_track_points
-                and dx <= -self.settings.launch_min_horizontal_distance
-            )
-            if is_launcher:
+            if self.is_launcher_track(path):
                 self.launcher_tracks_seen += 1
                 if self.launcher_tracks_seen > self.warmup_launcher_tracks:
                     self.finish_attempt(draw_frame)
@@ -503,8 +537,7 @@ class AttemptClassifier:
             attempt = self.active_attempt
             if attempt is None:
                 continue
-            is_return = point_in_rectangle(start_pixel, self.return_region, self.scale) and dx >= self.settings.return_min_horizontal_distance
-            if not is_return:
+            if not self.is_return_track(path):
                 continue
             attempt.returns.append(path)
             bounce = find_bounce(path, self.table, self.net_line, self.settings)
