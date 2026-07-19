@@ -12,6 +12,8 @@ from typing import Any, List, Optional, Tuple, Union
 import cv2
 import numpy as np
 
+from video_source import VideoSourceError, open_video_source
+
 
 TABLE_HALF_WIDTH = 0.7625
 TABLE_HALF_LENGTH = 1.37
@@ -237,15 +239,17 @@ def create_calibration(
     """Explicitly export detected calibration and its visual diagnostic."""
     output = Path(output)
     diagnostic_path = Path(diagnostic) if diagnostic else output.with_suffix(".png")
-    cap = cv2.VideoCapture(str(video))
-    if not cap.isOpened():
-        raise ValueError(f"Could not open {video}")
-    cap.set(cv2.CAP_PROP_POS_FRAMES, frame)
-    ok, original = cap.read()
-    cap.release()
-    if not ok:
+    source = open_video_source(video)
+    try:
+        source.seek_frame(frame)
+        video_frame = source.read()
+    finally:
+        source.close()
+    if video_frame is None:
         raise ValueError("Could not read the requested calibration frame")
-    data, table_center = calibration_from_frame(original, frame, diagnostic_path)
+    data, table_center = calibration_from_frame(
+        video_frame.image, video_frame.number, diagnostic_path,
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(data, indent=2) + "\n")
     return {
@@ -264,7 +268,7 @@ def main() -> None:
     args = parser.parse_args()
     try:
         report = create_calibration(args.video, args.output, args.diagnostic, args.frame)
-    except ValueError as exc:
+    except (ValueError, VideoSourceError) as exc:
         raise SystemExit(f"Automatic calibration failed: {exc}.") from exc
     print(json.dumps(report, indent=2))
 

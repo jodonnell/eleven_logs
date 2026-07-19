@@ -19,6 +19,7 @@ except ImportError as exc:
     raise SystemExit("Install dependencies first: python3 -m pip install --user opencv-python-headless numpy") from exc
 
 from auto_calibrate import calibration_from_frame
+from video_source import VideoFrame, VideoSource, VideoSourceError, open_video_source
 
 
 PROCESSING_WIDTH = 1024
@@ -1216,18 +1217,18 @@ def create_video_writer(
 
 
 def process_video(
-    cap: cv2.VideoCapture,
-    fps: float,
-    video_width: int,
-    video_height: int,
+    source: VideoSource,
     scale: float,
     calibration: Calibration,
     homography: np.ndarray,
     table: np.ndarray,
     end_seconds: Optional[float] = None,
     writer: Optional[cv2.VideoWriter] = None,
+    first_frame: Optional[VideoFrame] = None,
 ) -> List[BounceEvent]:
-    """Process an already-open capture and return its detected bounce events."""
+    """Process an already-open source and return its detected bounce events."""
+    fps = source.fps
+    video_width, video_height = source.width, source.height
     width, height = round(video_width * scale), round(video_height * scale)
     settings = DetectorSettings.from_calibration(calibration)
     net_line = np.float32(calibration["net_line"]) * scale
@@ -1240,27 +1241,37 @@ def process_video(
         video_width, video_height, scale, settings,
     )
     previous_gray = None
-    # Seeking by timestamp is codec-dependent. Read the position OpenCV
-    # actually selected so reported frame numbers remain truthful.
-    frame_number = round(cap.get(cv2.CAP_PROP_POS_FRAMES))
-    while True:
-        ok, original = cap.read()
-        if not ok or (end_seconds is not None and frame_number / fps >= end_seconds):
-            break
-        if frame_number % 3 == 0:
-            reading = telemetry.update(original, frame_number)
-            if reading is not None:
-                classifier.observe_telemetry(reading)
-        frame = cv2.resize(original, (width, height), interpolation=cv2.INTER_AREA)
-        gray, candidates = candidates_for_frame(frame, previous_gray, tracking_polygon, settings)
-        previous_gray = gray
-        classifier.process_tracks(tracker.update(frame_number, candidates), frame_number)
-        if writer is not None:
-            writer.write(draw_overlay(
-                frame, table, net_line, tracker.visible_points, classifier.events,
-                homography, calibration["table_surface_y"],
-            ))
-        frame_number += 1
+    next_frame = first_frame
+    frame_number = first_frame.number if first_frame is not None else 0
+    try:
+        while True:
+            video_frame = next_frame if next_frame is not None else source.read()
+            next_frame = None
+            if video_frame is None or (
+                end_seconds is not None
+                and video_frame.time_seconds >= end_seconds
+            ):
+                break
+            frame_number = video_frame.number
+            original = video_frame.image
+            if frame_number % 3 == 0:
+                reading = telemetry.update(original, frame_number)
+                if reading is not None:
+                    classifier.observe_telemetry(reading)
+            frame = cv2.resize(original, (width, height), interpolation=cv2.INTER_AREA)
+            gray, candidates = candidates_for_frame(frame, previous_gray, tracking_polygon, settings)
+            previous_gray = gray
+            classifier.process_tracks(tracker.update(frame_number, candidates), frame_number)
+            if writer is not None:
+                writer.write(draw_overlay(
+                    frame, table, net_line, tracker.visible_points, classifier.events,
+                    homography, calibration["table_surface_y"],
+                ))
+            frame_number += 1
+    except KeyboardInterrupt:
+        # A live source normally ends when the user stops it. Preserve and
+        # flush the completed session instead of discarding every event.
+        pass
     classifier.finish_attempt(frame_number)
     normalized = normalize_attempt_events(classifier.events, frame_number, fps)
     return attach_missing_machine_telemetry(
@@ -1270,7 +1281,7 @@ def process_video(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("video")
+    parser.add_argument("video", help="video file or srt:// URL")
     parser.add_argument("--calibration", help="Optional manually reviewed JSON calibration")
     parser.add_argument("--extract-calibration-frame", metavar="PNG", help="write a frame for per-camera corner calibration, then exit")
     parser.add_argument("--output", default="video_bounces.jsonl")
@@ -1279,52 +1290,59 @@ def main() -> None:
     parser.add_argument("--start-seconds", type=float, default=0, help="seek point; useful when reviewing a short interval")
     parser.add_argument("--end-seconds", type=float, help="stop after this video timestamp")
     args = parser.parse_args()
-    cap = cv2.VideoCapture(args.video)
-    if not cap.isOpened():
-        raise SystemExit(f"Could not open {args.video}")
-    fps = cap.get(cv2.CAP_PROP_FPS) or 60.0
-    if args.start_seconds:
-        cap.set(cv2.CAP_PROP_POS_MSEC, args.start_seconds * 1000)
-    video_width, video_height = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    try:
+        source = open_video_source(args.video)
+        try:
+            source.seek_seconds(args.start_seconds)
+        except VideoSourceError:
+            source.close()
+            raise
+    except VideoSourceError as exc:
+        raise SystemExit(str(exc)) from exc
+    fps = source.fps
+    video_width, video_height = source.width, source.height
     scale = min(1.0, PROCESSING_WIDTH / video_width)
     width, height = round(video_width * scale), round(video_height * scale)
     if args.extract_calibration_frame:
-        ok, frame = cap.read()
-        cap.release()
-        if not ok:
+        video_frame = source.read()
+        source.close()
+        if video_frame is None:
             raise SystemExit("Could not read a calibration frame")
-        if not cv2.imwrite(args.extract_calibration_frame, frame):
+        if not cv2.imwrite(args.extract_calibration_frame, video_frame.image):
             raise SystemExit(f"Could not write calibration frame to {args.extract_calibration_frame}")
         print(json.dumps({"calibration_frame": args.extract_calibration_frame, "image_size": [video_width, video_height]}, indent=2))
         return
-    if args.calibration:
-        calibration, homography, table = load_calibration(
-            args.calibration, video_width, video_height, scale,
-        )
-    else:
-        calibration_frame = round(cap.get(cv2.CAP_PROP_POS_FRAMES))
-        ok, first_frame = cap.read()
-        if not ok:
-            raise SystemExit("Could not read the first frame for automatic calibration")
-        try:
-            detected, _ = calibration_from_frame(first_frame, calibration_frame)
-        except ValueError as exc:
-            raise SystemExit(f"Automatic calibration failed: {exc}.") from exc
-        calibration, homography, table = calibration_geometry(
-            detected, video_width, video_height, scale,
-        )
-        cap.set(cv2.CAP_PROP_POS_FRAMES, calibration_frame)
     writer = None
-    if not args.no_annotated:
-        writer = create_video_writer(args.annotated, fps, (width, height))
-    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    events = process_video(
-        cap, fps, video_width, video_height, scale, calibration, homography, table,
-        args.end_seconds, writer,
-    )
-    cap.release()
-    if writer is not None:
-        writer.release()
+    first_frame = None
+    try:
+        if args.calibration:
+            calibration, homography, table = load_calibration(
+                args.calibration, video_width, video_height, scale,
+            )
+        else:
+            first_frame = source.read()
+            if first_frame is None:
+                raise SystemExit("Could not read the first frame for automatic calibration")
+            try:
+                detected, _ = calibration_from_frame(
+                    first_frame.image, first_frame.number,
+                )
+            except ValueError as exc:
+                raise SystemExit(f"Automatic calibration failed: {exc}.") from exc
+            calibration, homography, table = calibration_geometry(
+                detected, video_width, video_height, scale,
+            )
+        if not args.no_annotated:
+            writer = create_video_writer(args.annotated, fps, (width, height))
+        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+        events = process_video(
+            source, scale, calibration, homography, table,
+            args.end_seconds, writer, first_frame,
+        )
+    finally:
+        source.close()
+        if writer is not None:
+            writer.release()
     with open(args.output, "w", encoding="utf-8") as output:
         for event in events:
             output.write(json.dumps(event.to_record()) + "\n")

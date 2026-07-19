@@ -24,13 +24,14 @@ npm run prettier
 # lint
 npm run lint
 
-## Offline ball-machine video analysis
+## Ball-machine video analysis
 
-`scripts/analyze_video.py` streams a fixed spectator-view MP4 and writes one
-JSONL record for each conservative table-bounce candidate. It never loads the
-video into memory. Every camera placement requires its own calibration: table
-corners, coordinate orientation, net, and the launcher region are deliberately
-not inferred from `sample.mp4` or reused across setups.
+`scripts/analyze_video.py` reads either a fixed spectator-view video file or a
+live OBS SRT stream and writes one JSONL record for each conservative
+table-bounce candidate. It never loads the full video into memory. Every camera
+placement requires its own calibration: table corners, coordinate orientation,
+net, and the launcher region are deliberately not inferred from `sample.mp4` or
+reused across setups.
 
 Install the local Python dependencies once. Each run detects the green table,
 white `x=0` centre stripe, and the table-side (bottom) edge of the net from the
@@ -41,6 +42,24 @@ analysis; the normal workflow does not create or consume a calibration file:
 python3 -m pip install --user opencv-python-headless numpy
 python3 scripts/analyze_video.py sample.mp4
 ```
+
+For live input, use an OpenCV build whose FFmpeg backend supports SRT. When OBS
+is the SRT server/listener, connect the analyzer as the caller:
+
+```sh
+python3 scripts/analyze_video.py \
+  'srt://OBS_IP:9000?mode=caller&latency=120000' \
+  --no-annotated
+```
+
+The inverse arrangement also works: use `mode=listener` in the analyzer URL
+when OBS is configured as the caller.
+
+The analyzer waits for OBS, uses the first received frame for automatic
+calibration, and continues until OBS disconnects. Pressing Ctrl-C ends the
+session cleanly and writes the completed events. `--end-seconds` can bound a
+live session; `--start-seconds` is available only for seekable files. SRT is
+opened explicitly with OpenCV's FFmpeg backend.
 
 The annotated output shows the detected geometry and is the visual check: the
 yellow table polygon, magenta physical net-base line, and projected log-space
