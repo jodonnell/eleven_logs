@@ -214,6 +214,24 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertEqual(len(classifier.events), 1)
         self.assertEqual(classifier.events[0].outcome, "off_table")
 
+    def test_return_recovers_after_a_stale_bright_object_prefix(self):
+        classifier = self.classifier()
+        path = [
+            (0, 700, 100, 0.0),
+            (1, 705, 100, 0.0),
+            (2, 710, 100, 0.0),
+            (3, 200, 120, 0.0),
+            (4, 275, 125, 0.0),
+            (5, 350, 130, 0.0),
+            (6, 425, 135, 0.0),
+        ]
+
+        returned = classifier.return_segment(path)
+
+        self.assertIsNotNone(returned)
+        self.assertEqual(returned[0][0], 3)
+        self.assertTrue(classifier.is_return_track(path))
+
     def test_identity_homography_maps_pixel_to_table_coordinate(self):
         self.assertEqual(
             map_log_coordinate(np.eye(3, dtype=np.float32), (2.5, 4.0), 0.7786086),

@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Create a cached, per-camera table calibration from one video frame.
+"""Explicitly export a per-camera table calibration from one video frame.
 
-This is intentionally a one-time operation.  It detects the green table and
-the white centre line in the first usable frame, then writes a JSON file that
-the streaming analyser can reuse without making any pixel-position assumptions.
+The normal analyser detects this geometry in memory. This separate utility is
+for visual diagnostics and manually reviewed overrides.
 """
 import argparse
 import json
@@ -16,12 +15,14 @@ import numpy as np
 
 TABLE_HALF_WIDTH = 0.7625
 TABLE_HALF_LENGTH = 1.37
+CALIBRATION_WIDTH = 1024
 
 PathLike = Union[str, Path]
 Line = Tuple[float, float, float, float]
 Segment = Tuple[float, float, Line]
 Geometry = Tuple[List[List[float]], Line, Tuple[Line, Line]]
 CalibrationReport = dict[str, Any]
+Calibration = dict[str, Any]
 
 
 def line_at_y(line: Line, y: float) -> Optional[float]:
@@ -87,7 +88,11 @@ def detect_geometry(frame: np.ndarray) -> Geometry:
     horizontals = []
     for length, angle, line in lines:
         y = (line[1] + line[3]) / 2
-        if (abs(angle) <= 8 and length >= width * .15
+        # Perspective and foreground objects can split a rail into several
+        # shorter Hough segments. Geometry is anchored to the independently
+        # detected green surface, so accepting a shorter segment here is less
+        # error-prone than falling back to a long room/furniture edge nearby.
+        if (abs(angle) <= 8 and length >= width * .075
                 and green_top - 15 <= y <= green_bottom + 15):
             horizontals.append((y, length, line))
     if len(horizontals) < 3:
@@ -142,28 +147,15 @@ def detect_geometry(frame: np.ndarray) -> Geometry:
     return visible_table, center_line, (top[2], bottom[2])
 
 
-def create_calibration(
-    video: PathLike,
-    output: PathLike,
-    diagnostic: Optional[PathLike] = None,
+def calibration_from_frame(
+    original: np.ndarray,
     frame: int = 0,
-) -> CalibrationReport:
-    """Detect and write one reusable camera calibration.
-
-    Returns the small report printed by the CLI wrapper.  Expected detection
-    failures raise ``ValueError`` so callers can decide how to present them.
-    """
-    output = Path(output)
-    cap = cv2.VideoCapture(str(video))
-    if not cap.isOpened():
-        raise ValueError(f"Could not open {video}")
-    cap.set(cv2.CAP_PROP_POS_FRAMES, frame)
-    ok, original = cap.read()
-    cap.release()
-    if not ok:
-        raise ValueError("Could not read the requested calibration frame")
-    small = cv2.resize(original, None, fx=.25, fy=.25, interpolation=cv2.INTER_AREA)
-    height, width = small.shape[:2]
+    diagnostic: Optional[PathLike] = None,
+) -> Tuple[Calibration, List[int]]:
+    """Detect camera geometry from one frame and keep it in memory."""
+    scale = min(1.0, CALIBRATION_WIDTH / original.shape[1])
+    small = cv2.resize(original, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    inverse_scale = 1 / scale
     visible_table, center_line, _ = detect_geometry(small)
 
     # The white table stripe is x=0. Its visible endpoints establish z=-/+.
@@ -179,7 +171,10 @@ def create_calibration(
     # found relative to the detected rails, so no coordinates are baked in.
     candidates = []
     for length, angle, line in hough_segments(small):
-        if length < height * .35 or abs(angle) < 60:
+        # In a low side view the net spans roughly the table's visible depth,
+        # which can be much less than 35% of the full video height. Scale the
+        # requirement to the detected table instead of the surrounding room.
+        if length < (visible_table[2][1] - visible_table[0][1]) * .75 or abs(angle) < 60:
             continue
         top_x, bottom_x = line_at_y(line, visible_table[0][1]), line_at_y(line, visible_table[2][1])
         if top_x is None or bottom_x is None or top_x <= bottom_x:
@@ -200,46 +195,70 @@ def create_calibration(
     # white rail. This is the key distinction between net base and net top.
     _, net_top_x, net_bottom_x, net_line = max(candidates, key=lambda item: item[0])
     control = [
-        {"name": "x0_player_edge", "image": [left_x * 4, y * 4], "log": [0.0, -TABLE_HALF_LENGTH]},
-        {"name": "x0_opponent_edge", "image": [right_x * 4, y * 4], "log": [0.0, TABLE_HALF_LENGTH]},
-        {"name": "net_base_top", "image": [net_top_x * 4, visible_table[0][1] * 4], "log": [-TABLE_HALF_WIDTH, 0.0]},
-        {"name": "net_base_bottom", "image": [net_bottom_x * 4, visible_table[2][1] * 4], "log": [TABLE_HALF_WIDTH, 0.0]},
+        {"name": "x0_player_edge", "image": [left_x * inverse_scale, y * inverse_scale], "log": [0.0, -TABLE_HALF_LENGTH]},
+        {"name": "x0_opponent_edge", "image": [right_x * inverse_scale, y * inverse_scale], "log": [0.0, TABLE_HALF_LENGTH]},
+        {"name": "net_base_top", "image": [net_top_x * inverse_scale, visible_table[0][1] * inverse_scale], "log": [-TABLE_HALF_WIDTH, 0.0]},
+        {"name": "net_base_bottom", "image": [net_bottom_x * inverse_scale, visible_table[2][1] * inverse_scale], "log": [TABLE_HALF_WIDTH, 0.0]},
     ]
-    # The visual diagnostic makes automatic calibration reviewable.  The
-    # analyser draws the resulting log grid before it emits coordinates.
-    view = small.copy()
-    cv2.polylines(view, [np.int32(visible_table).reshape((-1, 1, 2))], True, (0, 255, 255), 2)
-    cv2.line(view, tuple(map(int, center_line[:2])), tuple(map(int, center_line[2:])), (255, 255, 255), 2)
-    cv2.line(view, (round(net_top_x), round(visible_table[0][1])), (round(net_bottom_x), round(visible_table[2][1])), (255, 0, 255), 2)
-    cv2.putText(view, "auto table + x=0 line", (16, 28), cv2.FONT_HERSHEY_SIMPLEX, .55, (0, 0, 255), 2)
-    diagnostic = Path(diagnostic) if diagnostic else output.with_suffix(".png")
-    diagnostic.parent.mkdir(parents=True, exist_ok=True)
-    if not cv2.imwrite(str(diagnostic), view):
-        raise ValueError(f"Could not write diagnostic image to {diagnostic}")
     data = {
-        "description": "Automatically detected once from the first usable frame; cache is camera-specific.",
+        "description": "Automatically detected in memory from the first usable frame.",
         "image_size": [int(original.shape[1]), int(original.shape[0])],
         "table_surface_y": 0.7786086,
         "control_points": control,
-        "table_polygon": [[x * 4, y * 4] for x, y in visible_table],
+        "table_polygon": [[x * inverse_scale, y * inverse_scale] for x, y in visible_table],
         "tracking_polygon": [[0, 0], [int(original.shape[1]), 0], [int(original.shape[1]), int(original.shape[0])], [0, int(original.shape[0])],],
-        "net_line": [[net_top_x * 4, visible_table[0][1] * 4], [net_bottom_x * 4, visible_table[2][1] * 4]],
+        "net_line": [[net_top_x * inverse_scale, visible_table[0][1] * inverse_scale], [net_bottom_x * inverse_scale, visible_table[2][1] * inverse_scale]],
         "auto_calibrated": True,
         "calibration_frame": frame,
-        "diagnostic": str(diagnostic),
     }
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(data, indent=2) + "\n")
+    if diagnostic is not None:
+        diagnostic_path = Path(diagnostic)
+        view = small.copy()
+        cv2.polylines(view, [np.int32(visible_table).reshape((-1, 1, 2))], True, (0, 255, 255), 2)
+        cv2.line(view, tuple(map(int, center_line[:2])), tuple(map(int, center_line[2:])), (255, 255, 255), 2)
+        cv2.line(view, (round(net_top_x), round(visible_table[0][1])), (round(net_bottom_x), round(visible_table[2][1])), (255, 0, 255), 2)
+        cv2.putText(view, "auto table + x=0 line", (16, 28), cv2.FONT_HERSHEY_SIMPLEX, .55, (0, 0, 255), 2)
+        diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
+        if not cv2.imwrite(str(diagnostic_path), view):
+            raise ValueError(f"Could not write diagnostic image to {diagnostic_path}")
+        data["diagnostic"] = str(diagnostic_path)
     center_x = line_at_y(net_line, y)
     if center_x is None:
         raise ValueError("could not locate the net at the centre stripe")
-    return {"calibration": str(output), "diagnostic": str(diagnostic), "table_center": [round(center_x * 4), round(y * 4)]}
+    return data, [round(center_x * inverse_scale), round(y * inverse_scale)]
+
+
+def create_calibration(
+    video: PathLike,
+    output: PathLike,
+    diagnostic: Optional[PathLike] = None,
+    frame: int = 0,
+) -> CalibrationReport:
+    """Explicitly export detected calibration and its visual diagnostic."""
+    output = Path(output)
+    diagnostic_path = Path(diagnostic) if diagnostic else output.with_suffix(".png")
+    cap = cv2.VideoCapture(str(video))
+    if not cap.isOpened():
+        raise ValueError(f"Could not open {video}")
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame)
+    ok, original = cap.read()
+    cap.release()
+    if not ok:
+        raise ValueError("Could not read the requested calibration frame")
+    data, table_center = calibration_from_frame(original, frame, diagnostic_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(data, indent=2) + "\n")
+    return {
+        "calibration": str(output),
+        "diagnostic": str(diagnostic_path),
+        "table_center": table_center,
+    }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("video")
-    parser.add_argument("--output", required=True, help="cached calibration JSON")
+    parser.add_argument("--output", required=True, help="exported calibration JSON")
     parser.add_argument("--diagnostic", help="annotated detection PNG")
     parser.add_argument("--frame", type=int, default=0, help="first usable frame (default: 0)")
     args = parser.parse_args()

@@ -32,27 +32,27 @@ video into memory. Every camera placement requires its own calibration: table
 corners, coordinate orientation, net, and the launcher region are deliberately
 not inferred from `sample.mp4` or reused across setups.
 
-Install the local Python dependencies once. On a new camera position, the
-first run detects the green table, white `x=0` centre stripe, and the
-table-side (bottom) edge of the net from the first usable frame. It caches
-that per-camera geometry beside the output; later runs reuse it and do not
-recalibrate while processing frames:
+Install the local Python dependencies once. Each run detects the green table,
+white `x=0` centre stripe, and the table-side (bottom) edge of the net from the
+first usable frame. That geometry stays in memory for the duration of the
+analysis; the normal workflow does not create or consume a calibration file:
 
 ```sh
 python3 -m pip install --user opencv-python-headless numpy
-python3 scripts/analyze_video.py sample.mp4 --calibration-cache my_camera.table-calibration.json
+python3 scripts/analyze_video.py sample.mp4
 ```
 
-The cache's adjacent PNG is a required visual check: it shows the yellow table
-polygon, white `x=0` stripe, and magenta physical net-base line. If the camera
-is unusually obstructed or the automatic diagnostic is wrong, provide a
-reviewed per-camera calibration with `--calibration`. The calibration maps to
-the same
+The annotated output shows the detected geometry and is the visual check: the
+yellow table polygon, magenta physical net-base line, and projected log-space
+grid must align with the table. An explicitly reviewed calibration can still
+be exported with `scripts/auto_calibrate.py` and supplied with `--calibration`
+for diagnostic work, but automatic analysis does not cache one. The geometry
+maps to the same
 player-relative convention used by `src/parser.js`: `posz > 0` is the
 far/opponent side and `posy` is the 0.7786m table surface. The physical image
 direction of each axis is per-camera calibration data, never a global rule.
-The JSON is rejected if its `image_size` does not match the input video. The
-generated `video_bounces_annotated.mp4` shows
+An explicitly supplied JSON is rejected if its `image_size` does not match the
+input video. The generated `video_bounces_annotated.mp4` shows
 the table, net, tracked path, markers, coordinates, and confidence.
 
 For a camera that needs different detection sensitivity, the calibration JSON

@@ -5,7 +5,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 
 import cv2
 import numpy as np
@@ -14,10 +13,29 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 VIDEO = ROOT / "sample.mp4"
 SAMPLE2_VIDEO = ROOT / "sample2-trimmed-58s.mp4"
-SAMPLE2_CALIBRATION = ROOT / "artifacts" / "sample2-auto.table-calibration.json"
+SAMPLE3_VIDEO = ROOT / "sample3-trimmed-44s.mp4"
 sys.path.insert(0, str(ROOT / "scripts"))
-from analyze_video import ensure_calibration  # noqa: E402
-from auto_calibrate import detect_geometry  # noqa: E402
+from auto_calibrate import calibration_from_frame, detect_geometry  # noqa: E402
+
+
+def first_frame_calibration(video: Path):
+    capture = cv2.VideoCapture(str(video))
+    ok, frame = capture.read()
+    capture.release()
+    if not ok:
+        raise AssertionError(f"could not read {video}")
+    return calibration_from_frame(frame)
+
+
+def normalized(points, width, height):
+    return [[x / width, y / height] for x, y in points]
+
+
+def assert_points_close(test, actual, expected, delta=.01):
+    test.assertEqual(len(actual), len(expected))
+    for actual_point, expected_point in zip(actual, expected):
+        test.assertAlmostEqual(actual_point[0], expected_point[0], delta=delta)
+        test.assertAlmostEqual(actual_point[1], expected_point[1], delta=delta)
 
 
 class WideViewCalibrationTest(unittest.TestCase):
@@ -40,39 +58,67 @@ class WideViewCalibrationTest(unittest.TestCase):
         self.assertAlmostEqual(center[1], 270, delta=5)
 
 
+@unittest.skipUnless(
+    VIDEO.exists() and SAMPLE2_VIDEO.exists() and SAMPLE3_VIDEO.exists(),
+    "all three sample videos are local fixtures",
+)
+class AutomaticGeometryRegressionTest(unittest.TestCase):
+    def test_first_frame_geometry_for_every_camera_view(self):
+        cases = [
+            (
+                VIDEO, [4096, 2160], [.2993, .4685],
+                [[.0504, .2389], [.6406, .2389], [.7595, .8870]],
+                [[.3459, .2389], [.2146, .8870]],
+            ),
+            (
+                SAMPLE2_VIDEO, [1024, 540], [.4375, .5000],
+                [[.2446, .3981], [.6569, .3981], [.7751, .6796], [.0503, .6796]],
+                [[.4507, .3981], [.4138, .6796]],
+            ),
+            (
+                SAMPLE3_VIDEO, [4096, 2160], [.4626, .5481],
+                [[.2935, .4565], [.6516, .4565], [.6587, .6981], [.1574, .6981]],
+                [[.4684, .4565], [.4534, .6981]],
+            ),
+        ]
+        for video, image_size, expected_center, expected_table, expected_net in cases:
+            with self.subTest(video=video.name):
+                calibration, center = first_frame_calibration(video)
+                width, height = calibration["image_size"]
+
+                self.assertEqual(calibration["image_size"], image_size)
+                assert_points_close(
+                    self, [[center[0] / width, center[1] / height]], [expected_center],
+                )
+                assert_points_close(
+                    self, normalized(calibration["table_polygon"], width, height),
+                    expected_table,
+                )
+                assert_points_close(
+                    self, normalized(calibration["net_line"], width, height),
+                    expected_net,
+                )
+
+
 @unittest.skipUnless(VIDEO.exists(), "sample.mp4 is a local video fixture")
 class AutoCalibrationTest(unittest.TestCase):
-    def test_analyzer_creates_a_cache_without_spawning_the_cli(self):
-        with tempfile.TemporaryDirectory() as directory:
-            cache = Path(directory) / "calibration.json"
-            args = SimpleNamespace(
-                calibration=None,
-                calibration_cache=str(cache),
-                video=str(VIDEO),
-                start_seconds=0,
-            )
+    def test_first_frame_calibration_stays_in_memory(self):
+        calibration, _ = first_frame_calibration(VIDEO)
 
-            self.assertEqual(ensure_calibration(args, 60), str(cache))
-            self.assertTrue(cache.exists())
+        self.assertTrue(calibration["auto_calibrated"])
+        self.assertNotIn("diagnostic", calibration)
+        self.assertNotIn("detector_settings", calibration)
+        self.assertNotIn("launcher_region", calibration)
+        self.assertNotIn("return_region", calibration)
 
     def test_first_frame_finds_verified_table_origin(self):
         """The origin stays at the white-center-stripe/net-base intersection."""
-        with tempfile.TemporaryDirectory() as directory:
-            cache = Path(directory) / "calibration.json"
-            result = subprocess.run(
-                [sys.executable, "scripts/auto_calibrate.py", str(VIDEO), "--output", str(cache)],
-                cwd=ROOT,
-                text=True,
-                capture_output=True,
-                check=True,
-            )
-            reported = json.loads(result.stdout)
-            calibration = json.loads(cache.read_text())
+        calibration, center = first_frame_calibration(VIDEO)
         # This point was visually approved in artifacts/auto_grid_check.png.
         # Tolerance allows small OpenCV/Hough implementation differences.
         width, height = calibration["image_size"]
-        self.assertAlmostEqual(reported["table_center"][0] / width, 1232 / 4096, delta=.01)
-        self.assertAlmostEqual(reported["table_center"][1] / height, 1004 / 2160, delta=.01)
+        self.assertAlmostEqual(center[0] / width, .2993, delta=.01)
+        self.assertAlmostEqual(center[1] / height, .4685, delta=.01)
         # The far-left lower rail is occluded in this view. The automatic
         # path must leave it unknown instead of extending the table to x=0.
         self.assertEqual(len(calibration["table_polygon"]), 3)
@@ -80,17 +126,9 @@ class AutoCalibrationTest(unittest.TestCase):
     def test_known_table_contacts_are_not_regressed_to_unknown(self):
         """Keep the three manually confirmed sample contacts detectable."""
         with tempfile.TemporaryDirectory() as directory:
-            cache = Path(directory) / "calibration.json"
             output = Path(directory) / "attempts.jsonl"
             subprocess.run(
-                [sys.executable, "scripts/auto_calibrate.py", str(VIDEO), "--output", str(cache)],
-                cwd=ROOT,
-                text=True,
-                capture_output=True,
-                check=True,
-            )
-            subprocess.run(
-                [sys.executable, "scripts/analyze_video.py", str(VIDEO), "--calibration", str(cache),
+                [sys.executable, "scripts/analyze_video.py", str(VIDEO),
                  "--output", str(output), "--no-annotated", "--end-seconds", "18"],
                 cwd=ROOT,
                 text=True,
@@ -101,7 +139,7 @@ class AutoCalibrationTest(unittest.TestCase):
         # User-verified contacts: about 4.5s (middle), 6s (close side), and
         # 17.1s (ball visibly converged with its shadow). The frames are
         # deliberately exact for this checked-in fixture; use a different
-        # fixture/cache for a moved camera.
+        # fixture for a moved camera.
         for frame in (258, 354, 1027):
             event = next(item for item in events if item["frame_number"] == frame)
             self.assertTrue(event["hit_table"], f"frame {frame} should be a table contact")
@@ -118,11 +156,11 @@ class AutoCalibrationTest(unittest.TestCase):
             output = Path(directory) / "sample.jsonl"
             subprocess.run(
                 [sys.executable, "scripts/analyze_video.py", str(VIDEO),
-                 "--calibration", str(ROOT / "artifacts" / "sample_auto_calibration.json"),
                  "--output", str(output), "--no-annotated"],
                 cwd=ROOT, text=True, capture_output=True, check=True,
             )
             actual = [json.loads(line)["outcome"] for line in output.read_text().splitlines()]
+            self.assertEqual({path.name for path in Path(directory).iterdir()}, {"sample.jsonl"})
 
         self.assertEqual(len(actual), len(expected))
         self.assertEqual(
@@ -132,8 +170,8 @@ class AutoCalibrationTest(unittest.TestCase):
 
 
 @unittest.skipUnless(
-    SAMPLE2_VIDEO.exists() and SAMPLE2_CALIBRATION.exists(),
-    "sample2 video and calibration are local fixtures",
+    SAMPLE2_VIDEO.exists(),
+    "sample2 video is a local fixture",
 )
 class Sample2OrderedRegressionTest(unittest.TestCase):
     def test_every_machine_launch_has_the_labeled_ordered_result(self):
@@ -147,17 +185,41 @@ class Sample2OrderedRegressionTest(unittest.TestCase):
             output = Path(directory) / "sample2.jsonl"
             subprocess.run(
                 [sys.executable, "scripts/analyze_video.py", str(SAMPLE2_VIDEO),
-                 "--calibration", str(SAMPLE2_CALIBRATION),
                  "--output", str(output), "--no-annotated"],
                 cwd=ROOT, text=True, capture_output=True, check=True,
             )
             actual = [json.loads(line)["outcome"] for line in output.read_text().splitlines()]
+            self.assertEqual({path.name for path in Path(directory).iterdir()}, {"sample2.jsonl"})
 
         self.assertEqual(len(actual), 48, "one result is required for every launch")
         # The user explicitly treats a visible out and a fully occluded miss
         # as equivalent non-hits; table contacts must still match every ball.
         self.assertEqual(
             [item == "hit" for item in actual],
+            [item == "hit" for item in expected],
+        )
+
+
+@unittest.skipUnless(SAMPLE3_VIDEO.exists(), "sample3 video is a local fixture")
+class Sample3UnhintedRegressionTest(unittest.TestCase):
+    def test_auto_calibrated_video_has_every_labeled_hit_in_order(self):
+        expected = (
+            "miss miss hit hit miss hit hit hit miss hit hit hit hit hit hit miss "
+            "hit hit hit hit hit hit hit miss hit miss hit hit hit hit hit hit"
+        ).split()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "sample3.jsonl"
+            subprocess.run(
+                [sys.executable, "scripts/analyze_video.py", str(SAMPLE3_VIDEO),
+                 "--output", str(output), "--no-annotated"],
+                cwd=ROOT, text=True, capture_output=True, check=True,
+            )
+            actual = [json.loads(line) for line in output.read_text().splitlines()]
+            self.assertEqual({path.name for path in Path(directory).iterdir()}, {"sample3.jsonl"})
+
+        self.assertEqual(len(actual), 32, "one result is required for every launch")
+        self.assertEqual(
+            [item["outcome"] == "hit" for item in actual],
             [item == "hit" for item in expected],
         )
 

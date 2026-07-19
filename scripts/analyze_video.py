@@ -10,7 +10,7 @@ import json
 import math
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol, Sequence, Set, Tuple, Union, cast
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 try:
     import cv2
@@ -18,7 +18,7 @@ try:
 except ImportError as exc:
     raise SystemExit("Install dependencies first: python3 -m pip install --user opencv-python-headless numpy") from exc
 
-from auto_calibrate import create_calibration
+from auto_calibrate import calibration_from_frame
 
 
 PROCESSING_WIDTH = 1024
@@ -107,25 +107,18 @@ class ActiveTrack:
     gap: int = 0
 
 
-class CalibrationArguments(Protocol):
-    calibration: Optional[str]
-    calibration_cache: Optional[str]
-    video: str
-    start_seconds: float
-
-
-def load_calibration(
-    path: PathLike, video_width: int, video_height: int, scale: float
+def calibration_geometry(
+    data: Calibration, video_width: int, video_height: int, scale: float,
+    source: str = "automatic calibration",
 ) -> Tuple[Calibration, np.ndarray, np.ndarray]:
-    data = json.loads(Path(path).read_text())
     required = ("image_size", "table_surface_y", "table_polygon", "tracking_polygon", "net_line")
     missing = [key for key in required if key not in data]
     if missing:
-        raise SystemExit(f"Calibration {path} is missing: {', '.join(missing)}")
+        raise SystemExit(f"{source} is missing: {', '.join(missing)}")
     expected_size = [video_width, video_height]
     if data["image_size"] != expected_size:
         raise SystemExit(
-            f"Calibration is for {data['image_size']}, but this video is {expected_size}. "
+            f"{source} is for {data['image_size']}, but this video is {expected_size}. "
             "Create a calibration for this camera/video; do not reuse it."
         )
     if "control_points" in data:
@@ -139,6 +132,13 @@ def load_calibration(
         log = np.float32([data["log_corners"][name] for name in names])
     table_polygon = np.float32(data["table_polygon"]) * scale
     return data, cv2.getPerspectiveTransform(image, log), table_polygon
+
+
+def load_calibration(
+    path: PathLike, video_width: int, video_height: int, scale: float
+) -> Tuple[Calibration, np.ndarray, np.ndarray]:
+    data = json.loads(Path(path).read_text())
+    return calibration_geometry(data, video_width, video_height, scale, f"Calibration {path}")
 
 
 def fmt_timestamp(seconds: float) -> str:
@@ -475,12 +475,25 @@ class AttemptClassifier:
         )
 
     def is_return_track(self, path: Track) -> bool:
-        start = (path[0][1], path[0][2])
-        horizontal_distance = path[-1][1] - path[0][1]
-        return (
-            point_in_rectangle(start, self.return_region, self.scale)
-            and horizontal_distance >= self.settings.return_min_horizontal_distance
-        )
+        return self.return_segment(path) is not None
+
+    def return_segment(self, path: Track) -> Optional[Track]:
+        """Discard a false prefix before a clean player-to-table return.
+
+        Bright static objects can own a tracker hypothesis until the moving
+        ball crosses them. The resulting path still contains an unambiguous
+        return, but its first point is on the wrong side of the frame. Locate
+        the first in-region point that has enough subsequent rightward travel
+        instead of requiring the track to have been clean from birth.
+        """
+        terminal_x = path[-1][1]
+        for index, point in enumerate(path):
+            if (
+                point_in_rectangle((point[1], point[2]), self.return_region, self.scale)
+                and terminal_x - point[1] >= self.settings.return_min_horizontal_distance
+            ):
+                return path[index:]
+        return None
 
     def is_reportable_launcher_track(self, path: Track) -> bool:
         start = (path[0][1], path[0][2])
@@ -640,8 +653,10 @@ class AttemptClassifier:
             attempt = self.active_attempt
             if attempt is None:
                 continue
-            if not self.is_return_track(path):
+            returned = self.return_segment(path)
+            if returned is None:
                 continue
+            path = returned
             attempt.returns.append(path)
             bounce = find_bounce(path, self.table, self.net_line, self.settings)
             if bounce:
@@ -713,11 +728,14 @@ def normalize_attempt_events(
     while anchor < total_frames:
         anchors.append(round(anchor))
         anchor += period
+    if not anchors:
+        return list(events)
     slots: List[Optional[BounceEvent]] = [None] * len(anchors)
     hit_slots: Dict[int, int] = {}
     for event in hits:
-        slot = min(range(len(anchors)), key=lambda index: abs(anchors[index] - event.frame_number))
-        if abs(anchors[slot] - event.frame_number) > period * .3:
+        event_frame = event.frame_number
+        slot = min(range(len(anchors)), key=lambda index: abs(anchors[index] - event_frame))
+        if abs(anchors[slot] - event_frame) > period * .3:
             continue
         current = slots[slot]
         if current is None or event.confidence > current.confidence:
@@ -773,24 +791,6 @@ def create_video_writer(
     return writer
 
 
-def ensure_calibration(args: CalibrationArguments, fps: float) -> str:
-    """Return an existing calibration path or create the requested cache."""
-    if args.calibration:
-        return args.calibration
-    cache = Path(args.calibration_cache or f"{Path(args.video).stem}.table-calibration.json")
-    if not cache.exists():
-        diagnostic = cache.with_suffix(".png")
-        print("No calibration supplied; detecting and caching table geometry once.")
-        try:
-            create_calibration(args.video, cache, diagnostic, round(args.start_seconds * fps))
-        except ValueError as exc:
-            raise SystemExit(
-                "Automatic calibration failed. Inspect its diagnostic and "
-                "supply a valid calibration with --calibration."
-            ) from exc
-    return str(cache)
-
-
 def process_video(
     cap: cv2.VideoCapture,
     fps: float,
@@ -839,8 +839,7 @@ def process_video(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("video")
-    parser.add_argument("--calibration", help="Cached per-camera JSON calibration")
-    parser.add_argument("--calibration-cache", help="where an automatic first-frame calibration is cached")
+    parser.add_argument("--calibration", help="Optional manually reviewed JSON calibration")
     parser.add_argument("--extract-calibration-frame", metavar="PNG", help="write a frame for per-camera corner calibration, then exit")
     parser.add_argument("--output", default="video_bounces.jsonl")
     parser.add_argument("--annotated", default="video_bounces_annotated.mp4")
@@ -866,8 +865,23 @@ def main() -> None:
             raise SystemExit(f"Could not write calibration frame to {args.extract_calibration_frame}")
         print(json.dumps({"calibration_frame": args.extract_calibration_frame, "image_size": [video_width, video_height]}, indent=2))
         return
-    calibration_path = ensure_calibration(cast(CalibrationArguments, args), fps)
-    calibration, homography, table = load_calibration(calibration_path, video_width, video_height, scale)
+    if args.calibration:
+        calibration, homography, table = load_calibration(
+            args.calibration, video_width, video_height, scale,
+        )
+    else:
+        calibration_frame = round(cap.get(cv2.CAP_PROP_POS_FRAMES))
+        ok, first_frame = cap.read()
+        if not ok:
+            raise SystemExit("Could not read the first frame for automatic calibration")
+        try:
+            detected, _ = calibration_from_frame(first_frame, calibration_frame)
+        except ValueError as exc:
+            raise SystemExit(f"Automatic calibration failed: {exc}.") from exc
+        calibration, homography, table = calibration_geometry(
+            detected, video_width, video_height, scale,
+        )
+        cap.set(cv2.CAP_PROP_POS_FRAMES, calibration_frame)
     writer = None
     if not args.no_annotated:
         writer = create_video_writer(args.annotated, fps, (width, height))
