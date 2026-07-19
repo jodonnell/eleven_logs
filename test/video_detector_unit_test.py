@@ -129,6 +129,20 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertFalse(event.hit_table)
         self.assertNotIn("pixel", event.to_record())
 
+    def test_classifier_reports_each_event_to_the_live_callback(self):
+        reported = []
+        classifier = self.classifier()
+        classifier.on_event = reported.append
+        launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        returned = [(30 + frame, 100 + frame * 20, 100, 0.0) for frame in range(9)]
+
+        classifier.process_tracks([launch], draw_frame=18)
+        classifier.process_tracks([returned], draw_frame=39)
+        classifier.finish_attempt(draw_frame=40)
+
+        self.assertEqual(reported, classifier.events)
+        self.assertEqual(len(reported), 1)
+
     def test_classifier_reports_crossed_net_return_that_ends_off_table(self):
         classifier = self.classifier()
         classifier.net_line = np.float32([(150, 0), (150, 500)])

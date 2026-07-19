@@ -10,7 +10,7 @@ import json
 import math
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 try:
     import cv2
@@ -791,6 +791,7 @@ class AttemptClassifier:
         video_height: int,
         scale: float,
         settings: DetectorSettings,
+        on_event: Optional[Callable[[BounceEvent], None]] = None,
     ) -> None:
         self.fps = fps
         self.calibration = calibration
@@ -800,6 +801,7 @@ class AttemptClassifier:
         self.homography = homography
         self.scale = scale
         self.settings = settings
+        self.on_event = on_event
         self.events: List[BounceEvent] = []
         self.emitted: Set[Tuple[int, int]] = set()
         self.active_attempt: Optional[Attempt] = None
@@ -830,6 +832,8 @@ class AttemptClassifier:
 
     def emit(self, event: BounceEvent) -> None:
         self.events.append(event)
+        if self.on_event is not None:
+            self.on_event(event)
 
     def observe_telemetry(self, reading: TelemetryReading) -> None:
         self.latest_telemetry = reading
@@ -1225,6 +1229,7 @@ def process_video(
     end_seconds: Optional[float] = None,
     writer: Optional[cv2.VideoWriter] = None,
     first_frame: Optional[VideoFrame] = None,
+    on_event: Optional[Callable[[BounceEvent], None]] = None,
 ) -> List[BounceEvent]:
     """Process an already-open source and return its detected bounce events."""
     fps = source.fps
@@ -1238,7 +1243,7 @@ def process_video(
     telemetry = TelemetryReader()
     classifier = AttemptClassifier(
         fps, calibration, table, net_line, occlusion, homography,
-        video_width, video_height, scale, settings,
+        video_width, video_height, scale, settings, on_event,
     )
     previous_gray = None
     next_frame = first_frame
@@ -1342,17 +1347,28 @@ def main() -> None:
         if annotated_path is not None:
             writer = create_video_writer(annotated_path, fps, (width, height))
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-        events = process_video(
-            source, scale, calibration, homography, table,
-            args.end_seconds, writer, first_frame,
-        )
+        with open(args.output, "w", encoding="utf-8") as output:
+            def write_event(event: BounceEvent) -> None:
+                output.write(json.dumps(event.to_record()) + "\n")
+                output.flush()
+
+            events = process_video(
+                source, scale, calibration, homography, table,
+                args.end_seconds, writer, first_frame, write_event,
+            )
+
+            # Cadence-based normalization can rename events and infer missed
+            # launches only after enough of the session is known. Replace the
+            # live snapshot with that canonical final result before exiting.
+            output.seek(0)
+            output.truncate()
+            for event in events:
+                output.write(json.dumps(event.to_record()) + "\n")
+            output.flush()
     finally:
         source.close()
         if writer is not None:
             writer.release()
-    with open(args.output, "w", encoding="utf-8") as output:
-        for event in events:
-            output.write(json.dumps(event.to_record()) + "\n")
     print(json.dumps({
         "events": len(events),
         "output": args.output,

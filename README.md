@@ -28,7 +28,10 @@ npm run lint
 
 `scripts/analyze_video.py` reads either a fixed spectator-view video file or a
 live OBS SRT stream and writes one JSONL record for each conservative
-table-bounce candidate. It never loads the full video into memory. Every camera
+table-bounce candidate. Each record is flushed to the output file as soon as
+the attempt is complete, so `tail -f video_bounces.jsonl` can follow a live
+session. At shutdown, the file is finalized with any cadence-inferred misses.
+It never loads the full video into memory. Every camera
 placement requires its own calibration: table corners, coordinate orientation,
 net, and the launcher region are deliberately not inferred from `sample.mp4` or
 reused across setups.
@@ -56,9 +59,9 @@ when OBS is configured as the caller.
 
 The analyzer waits for OBS, uses the first received frame for automatic
 calibration, and continues until OBS disconnects. Pressing Ctrl-C ends the
-session cleanly and writes the completed events. `--end-seconds` can bound a
-live session; `--start-seconds` is available only for seekable files. SRT is
-opened explicitly with OpenCV's FFmpeg backend.
+session cleanly and finalizes the events already written. `--end-seconds` can
+bound a live session; `--start-seconds` is available only for seekable files.
+SRT is opened explicitly with OpenCV's FFmpeg backend.
 
 Annotated video is disabled by default, which avoids an indefinitely growing
 recording during live analysis. Pass `--annotated` to write
