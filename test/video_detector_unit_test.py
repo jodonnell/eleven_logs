@@ -12,10 +12,12 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from analyze_video import (  # noqa: E402
     Attempt,
     AttemptClassifier,
+    DetectorDiagnostics,
     DetectorSettings,
     LiveAttemptNormalizer,
     MultiBallTracker,
     TelemetryReading,
+    candidates_for_frame,
     find_bounce,
     map_log_coordinate,
     normalize_attempt_events,
@@ -62,6 +64,50 @@ class VideoDetectorUnitTest(unittest.TestCase):
         hsv[:, :, :] = (65, 165, 160)
 
         self.assertEqual(shadow_contact_score(hsv, (50, 50)), 0.0)
+
+    def test_candidate_diagnostics_separate_raw_and_rejected_blobs(self):
+        frame = np.zeros((100, 100, 3), dtype=np.uint8)
+        frame[20:23, 20:23] = 255
+        frame[70:73, 70:73] = 255
+        previous_gray = np.zeros((100, 100), dtype=np.uint8)
+        tracking = np.float32([(0, 0), (50, 0), (50, 50), (0, 50)])
+        diagnostics = DetectorDiagnostics()
+        diagnostics.begin_frame()
+
+        _, candidates = candidates_for_frame(
+            frame, previous_gray, tracking, diagnostics=diagnostics,
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(
+            [item.kind for item in diagnostics.candidates],
+            ["raw", "rejected"],
+        )
+        self.assertEqual(
+            diagnostics.candidates[1].reason, "outside tracking region",
+        )
+
+    def test_track_diagnostics_report_classifier_decisions_and_reasons(self):
+        reported = []
+        classifier = self.classifier()
+        classifier.on_track_diagnostic = lambda item, frame: reported.append(
+            (item.kind, item.reason, frame)
+        )
+        short = [(frame, 50 + frame, 100, 0.0) for frame in range(3)]
+        launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        returned = [
+            (30 + frame, 100 + frame * 20, 100 + abs(4 - frame) * -10, 0.0)
+            for frame in range(9)
+        ]
+
+        classifier.process_tracks([short, launch], draw_frame=18)
+        classifier.process_tracks([returned], draw_frame=39)
+
+        self.assertEqual(
+            [kind for kind, _, _ in reported],
+            ["rejected", "launcher", "return", "confirmed_bounce"],
+        )
+        self.assertEqual(reported[0][1], "too short (3/9)")
 
     def test_shadow_contact_is_a_bounce_away_from_net(self):
         points = [(frame, 200 + frame * 4, 220, 0.0) for frame in range(9)]

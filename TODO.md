@@ -10,7 +10,7 @@ verification are complete.
 - Keep the fixtures stable so later detector changes can be compared against
   the same footage.
 
-## 2. Add detector diagnostics — TODO
+## 2. Add detector diagnostics — DONE
 
 - Give raw candidates, rejected candidates, unconfirmed tracks, valid launcher
   tracks, valid return tracks, and confirmed bounces distinct annotations.

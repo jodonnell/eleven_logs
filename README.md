@@ -84,6 +84,11 @@ direction of each axis is per-camera calibration data, never a global rule.
 An explicitly supplied JSON is rejected if its `image_size` does not match the
 input video. When requested, the generated annotated video shows
 the table, net, tracked path, markers, coordinates, and confidence.
+Its diagnostic legend distinguishes faint raw candidates, orange rejected
+candidates and tracks (with rejection reasons), cyan unconfirmed tracks, blue
+launcher tracks, green return tracks, and red confirmed bounces. Completed
+track annotations remain visible briefly for review; these diagnostics observe
+the detector and do not change its classification decisions.
 
 When the in-room TV is visible, the analyzer also reads its speed, spin, and
 blue spin arrow. The two alternating TV updates are kept separate: `machine`

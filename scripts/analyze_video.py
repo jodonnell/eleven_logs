@@ -171,6 +171,57 @@ class ActiveTrack:
     gap: int = 0
 
 
+@dataclass(frozen=True)
+class CandidateDiagnostic:
+    """One current-frame blob shown by the diagnostic renderer."""
+
+    center: Point
+    kind: str
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class TrackDiagnostic:
+    """A completed track and the classifier decision made for it."""
+
+    points: Track
+    kind: str
+    reason: str = ""
+
+
+class DetectorDiagnostics:
+    """Bounded rendering state that never participates in detection decisions."""
+
+    def __init__(self, track_lifetime_frames: int = 30) -> None:
+        self.track_lifetime_frames = track_lifetime_frames
+        self.candidates: List[CandidateDiagnostic] = []
+        self.unconfirmed_tracks: List[Track] = []
+        self.recent_tracks: List[Tuple[int, TrackDiagnostic]] = []
+
+    def begin_frame(self) -> None:
+        self.candidates = []
+        self.unconfirmed_tracks = []
+
+    def candidate(self, center: Point, kind: str, reason: str = "") -> None:
+        self.candidates.append(CandidateDiagnostic(center, kind, reason))
+
+    def set_unconfirmed_tracks(self, tracks: Sequence[ActiveTrack]) -> None:
+        self.unconfirmed_tracks = [track.points[-12:] for track in tracks]
+
+    def completed_track(self, diagnostic: TrackDiagnostic, frame_number: int) -> None:
+        expires = frame_number + self.track_lifetime_frames
+        self.recent_tracks.append((expires, diagnostic))
+        self.recent_tracks = [
+            item for item in self.recent_tracks if item[0] >= frame_number
+        ]
+
+    def visible_completed_tracks(self, frame_number: int) -> List[TrackDiagnostic]:
+        self.recent_tracks = [
+            item for item in self.recent_tracks if item[0] >= frame_number
+        ]
+        return [diagnostic for _, diagnostic in self.recent_tracks]
+
+
 def calibration_geometry(
     data: Calibration, video_width: int, video_height: int, scale: float,
     source: str = "automatic calibration",
@@ -700,6 +751,7 @@ def candidates_for_frame(
     previous_gray: Optional[np.ndarray],
     tracking_polygon: np.ndarray,
     settings: DetectorSettings = DetectorSettings(),
+    diagnostics: Optional[DetectorDiagnostics] = None,
 ) -> Tuple[np.ndarray, List[Candidate]]:
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -715,11 +767,18 @@ def candidates_for_frame(
     choices = []
     for i in range(1, count):
         area = stats[i, cv2.CC_STAT_AREA]
-        if not 1 <= area <= settings.max_candidate_area:
-            continue
         center = tuple(map(float, centers[i]))
-        if point_in_polygon(center, tracking_polygon):
-            choices.append((area, center, shadow_contact_score(hsv, center)))
+        if not 1 <= area <= settings.max_candidate_area:
+            if diagnostics is not None:
+                diagnostics.candidate(center, "rejected", f"area {area}")
+            continue
+        if not point_in_polygon(center, tracking_polygon):
+            if diagnostics is not None:
+                diagnostics.candidate(center, "rejected", "outside tracking region")
+            continue
+        if diagnostics is not None:
+            diagnostics.candidate(center, "raw")
+        choices.append((area, center, shadow_contact_score(hsv, center)))
     # At track start, prefer the compact moving ball over single-pixel codec
     # shimmer; once a track exists, motion prediction chooses continuity.
     choices.sort(key=lambda item: item[0], reverse=True)
@@ -741,6 +800,8 @@ def draw_overlay(
     events: Sequence[BounceEvent],
     homography: np.ndarray,
     surface_y: float,
+    diagnostics: Optional[DetectorDiagnostics] = None,
+    frame_number: Optional[int] = None,
 ) -> np.ndarray:
     view = frame.copy()
     poly = np.int32(table).reshape((-1, 1, 2))
@@ -764,8 +825,49 @@ def draw_overlay(
     for point in track:
         x, y = point[1], point[2]
         cv2.circle(view, (round(x), round(y)), 3, (0, 255, 255), -1)
+    if diagnostics is not None:
+        colors = {
+            "rejected": (0, 128, 255),
+            "launcher": (255, 80, 40),
+            "return": (40, 220, 40),
+            "confirmed_bounce": (0, 0, 255),
+        }
+        for candidate in diagnostics.candidates:
+            center = tuple(map(round, candidate.center))
+            if candidate.kind == "raw":
+                cv2.circle(view, center, 2, (190, 190, 190), 1)
+                continue
+            cv2.drawMarker(view, center, colors["rejected"], cv2.MARKER_TILTED_CROSS, 8, 1)
+            if candidate.reason:
+                cv2.putText(
+                    view, candidate.reason, (center[0] + 5, center[1] - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, .32, colors["rejected"], 1,
+                )
+        for path in diagnostics.unconfirmed_tracks:
+            points = np.int32([(point[1], point[2]) for point in path])
+            if len(points) >= 2:
+                cv2.polylines(view, [points], False, (255, 255, 0), 1)
+        current_frame = frame_number if frame_number is not None else 0
+        for completed in diagnostics.visible_completed_tracks(current_frame):
+            color = colors[completed.kind]
+            points = np.int32([(point[1], point[2]) for point in completed.points])
+            if len(points) >= 2:
+                cv2.polylines(view, [points], False, color, 2)
+            if len(points):
+                label = completed.kind
+                if completed.reason:
+                    label += f": {completed.reason}"
+                endpoint = completed.points[-1]
+                cv2.putText(
+                    view, label, (round(endpoint[1]) + 6, round(endpoint[2]) - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, .4, color, 1,
+                )
     for event in events:
-        if event.frame_number != event.draw_frame:
+        if frame_number is None:
+            visible = event.frame_number == event.draw_frame
+        else:
+            visible = event.draw_frame <= frame_number <= event.draw_frame + 30
+        if not visible:
             continue
         p = event.pixel
         cv2.drawMarker(view, (round(p[0]), round(p[1])), (0, 0, 255), cv2.MARKER_CROSS, 20, 3)
@@ -773,6 +875,21 @@ def draw_overlay(
         if event.posx is not None:
             label += f" x={event.posx:.2f} z={event.posz:.2f}"
         cv2.putText(view, label, (round(p[0]) + 12, round(p[1]) - 12), cv2.FONT_HERSHEY_SIMPLEX, .55, (0, 0, 255), 2)
+    if diagnostics is not None:
+        legend = (
+            ("raw candidate", (190, 190, 190)),
+            ("rejected", (0, 128, 255)),
+            ("unconfirmed", (255, 255, 0)),
+            ("launcher", (255, 80, 40)),
+            ("return", (40, 220, 40)),
+            ("confirmed bounce", (0, 0, 255)),
+        )
+        cv2.rectangle(view, (8, 39), (180, 151), (20, 20, 20), -1)
+        for index, (label, color) in enumerate(legend):
+            cv2.putText(
+                view, label, (16, 54 + index * 18),
+                cv2.FONT_HERSHEY_SIMPLEX, .42, color, 1,
+            )
     return view
 
 
@@ -794,6 +911,7 @@ class AttemptClassifier:
         on_event: Optional[Callable[[BounceEvent], None]] = None,
         on_attempt_finished: Optional[Callable[[], None]] = None,
         on_confirmed_hit: Optional[Callable[[BounceEvent], None]] = None,
+        on_track_diagnostic: Optional[Callable[[TrackDiagnostic, int], None]] = None,
     ) -> None:
         self.fps = fps
         self.calibration = calibration
@@ -806,6 +924,7 @@ class AttemptClassifier:
         self.on_event = on_event
         self.on_attempt_finished = on_attempt_finished
         self.on_confirmed_hit = on_confirmed_hit
+        self.on_track_diagnostic = on_track_diagnostic
         self.events: List[BounceEvent] = []
         self.emitted: Set[Tuple[int, int]] = set()
         self.active_attempt: Optional[Attempt] = None
@@ -833,6 +952,12 @@ class AttemptClassifier:
             "return_region", [0, 0, video_width * .28, video_height]
         )
         self.warmup_launcher_tracks = calibration.get("warmup_launcher_tracks", 0)
+
+    def diagnose_track(
+        self, path: Track, kind: str, draw_frame: int, reason: str = "",
+    ) -> None:
+        if self.on_track_diagnostic is not None:
+            self.on_track_diagnostic(TrackDiagnostic(path, kind, reason), draw_frame)
 
     def emit(self, event: BounceEvent) -> None:
         self.events.append(event)
@@ -1030,6 +1155,7 @@ class AttemptClassifier:
         if key in self.emitted:
             return
         self.emitted.add(key)
+        self.diagnose_track(path, "confirmed_bounce", draw_frame)
         pixel = (hit[1], hit[2])
         in_occlusion = len(self.occlusion) > 2 and point_in_polygon(pixel, self.occlusion)
         posx, posy, posz = map_log_coordinate(self.homography, pixel, self.calibration["table_surface_y"])
@@ -1066,18 +1192,27 @@ class AttemptClassifier:
     def process_tracks(self, tracks: Sequence[Track], draw_frame: int) -> None:
         for path in tracks:
             if len(path) < self.settings.min_track_points:
+                self.diagnose_track(
+                    path, "rejected", draw_frame,
+                    f"too short ({len(path)}/{self.settings.min_track_points})",
+                )
                 continue
-            start_pixel = (path[0][1], path[0][2])
             if self.is_launcher_track(path):
+                self.diagnose_track(path, "launcher", draw_frame)
                 self.start_attempt(path, draw_frame)
                 continue
             attempt = self.active_attempt
             if attempt is None:
+                self.diagnose_track(path, "rejected", draw_frame, "no active launch")
                 continue
             returned = self.return_segment(path)
             if returned is None:
+                self.diagnose_track(
+                    path, "rejected", draw_frame, "not a plausible return",
+                )
                 continue
             path = returned
+            self.diagnose_track(path, "return", draw_frame)
             attempt.returns.append(path)
             bounce = find_bounce(path, self.table, self.net_line, self.settings)
             if bounce:
@@ -1347,11 +1482,16 @@ def process_video(
     occlusion = np.float32(calibration.get("occlusion_polygon", [])) * scale
     tracking_polygon = np.float32(calibration["tracking_polygon"]) * scale
     tracker = MultiBallTracker(settings)
+    diagnostics = (
+        DetectorDiagnostics(track_lifetime_frames=max(1, round(fps * .5)))
+        if writer is not None else None
+    )
     telemetry = TelemetryReader()
     classifier = AttemptClassifier(
         fps, calibration, table, net_line, occlusion, homography,
         video_width, video_height, scale, settings, on_event,
         on_attempt_finished, on_confirmed_hit,
+        diagnostics.completed_track if diagnostics is not None else None,
     )
     previous_gray = None
     next_frame = first_frame
@@ -1372,13 +1512,20 @@ def process_video(
                 if reading is not None:
                     classifier.observe_telemetry(reading)
             frame = cv2.resize(original, (width, height), interpolation=cv2.INTER_AREA)
-            gray, candidates = candidates_for_frame(frame, previous_gray, tracking_polygon, settings)
+            if diagnostics is not None:
+                diagnostics.begin_frame()
+            gray, candidates = candidates_for_frame(
+                frame, previous_gray, tracking_polygon, settings, diagnostics,
+            )
             previous_gray = gray
             classifier.process_tracks(tracker.update(frame_number, candidates), frame_number)
+            if diagnostics is not None:
+                diagnostics.set_unconfirmed_tracks(tracker.tracks)
             if writer is not None:
                 writer.write(draw_overlay(
                     frame, table, net_line, tracker.visible_points, classifier.events,
                     homography, calibration["table_surface_y"],
+                    diagnostics, frame_number,
                 ))
             frame_number += 1
     except KeyboardInterrupt:
