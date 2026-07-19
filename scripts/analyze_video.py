@@ -91,6 +91,7 @@ class Attempt:
 
     frame: int
     pixel: Point
+    report_no_bounce: bool = True
     returns: List[Track] = field(default_factory=list)
     bounces: List[BounceEvent] = field(default_factory=list)
 
@@ -412,9 +413,23 @@ class AttemptClassifier:
         self.emitted: Set[Tuple[int, int]] = set()
         self.active_attempt: Optional[Attempt] = None
         self.launcher_tracks_seen = 0
-        self.launcher_region = calibration.get(
-            "launcher_region", [video_width * .58, 0, video_width, video_height]
-        )
+        configured_launcher_region = calibration.get("launcher_region")
+        self.launcher_region = configured_launcher_region or [
+            video_width * .58, 0, video_width, video_height,
+        ]
+        # In a wide view, only launches beginning above the opponent-side rail
+        # and away from the outermost frame edge are strong enough to justify
+        # a standalone no-bounce result. Other left-moving tracks may still
+        # hold a subsequently verified bounce, but cannot emit an unknown.
+        table_top = min(float(point[1]) for point in table) / scale
+        table_bottom = max(float(point[1]) for point in table) / scale
+        wide_view = table_bottom - table_top < video_height * .4
+        self.reportable_launcher_region = self.launcher_region
+        if wide_view:
+            launcher_bottom = min(video_height, table_top + video_height * .05)
+            self.reportable_launcher_region = configured_launcher_region or [
+                video_width * .58, 0, video_width * .95, launcher_bottom,
+            ]
         self.return_region = calibration.get(
             "return_region", [0, 0, video_width * .28, video_height]
         )
@@ -438,6 +453,12 @@ class AttemptClassifier:
         return (
             point_in_rectangle(start, self.return_region, self.scale)
             and horizontal_distance >= self.settings.return_min_horizontal_distance
+        )
+
+    def is_reportable_launcher_track(self, path: Track) -> bool:
+        start = (path[0][1], path[0][2])
+        return self.is_launcher_track(path) and point_in_rectangle(
+            start, self.reportable_launcher_region, self.scale,
         )
 
     def no_bounce_event(self, attempt: Attempt, draw_frame: int) -> BounceEvent:
@@ -483,7 +504,7 @@ class AttemptClassifier:
             return
         if self.active_attempt.bounces:
             self.emit(self.active_attempt.bounces[0])
-        else:
+        elif self.active_attempt.report_no_bounce:
             self.emit(self.no_bounce_event(self.active_attempt, draw_frame))
         self.active_attempt = None
 
@@ -532,7 +553,10 @@ class AttemptClassifier:
                 self.launcher_tracks_seen += 1
                 if self.launcher_tracks_seen > self.warmup_launcher_tracks:
                     self.finish_attempt(draw_frame)
-                    self.active_attempt = Attempt(path[0][0], start_pixel)
+                    self.active_attempt = Attempt(
+                        path[0][0], start_pixel,
+                        report_no_bounce=self.is_reportable_launcher_track(path),
+                    )
                 continue
             attempt = self.active_attempt
             if attempt is None:

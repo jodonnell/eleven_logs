@@ -20,7 +20,10 @@ from analyze_video import (  # noqa: E402
 
 class VideoDetectorUnitTest(unittest.TestCase):
     def classifier(self) -> AttemptClassifier:
-        calibration = {"table_surface_y": 0.7786086}
+        calibration = {
+            "table_surface_y": 0.7786086,
+            "launcher_region": [580, 0, 950, 300],
+        }
         return AttemptClassifier(
             fps=60,
             calibration=calibration,
@@ -77,6 +80,31 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertEqual(event.outcome, "off_table")
         self.assertFalse(event.hit_table)
         self.assertNotIn("pixel", event.to_record())
+
+    def test_default_launcher_region_rejects_table_and_frame_edge_tracks(self):
+        classifier = AttemptClassifier(
+            fps=60,
+            calibration={"table_surface_y": 0.7786086},
+            table=np.float32([(250, 200), (675, 200), (805, 370), (50, 370)]),
+            net_line=np.float32([(500, 0), (500, 500)]),
+            occlusion=np.float32([]),
+            homography=np.eye(3, dtype=np.float32),
+            video_width=1000,
+            video_height=500,
+            scale=1,
+            settings=DetectorSettings(),
+        )
+        launch = [(frame, 800 - frame * 10, 205, 0.0) for frame in range(18)]
+        lower_table_edge = [(frame, 800 - frame * 10, 300, 0.0) for frame in range(18)]
+        outer_frame_edge = [(frame, 980 - frame * 10, 100, 0.0) for frame in range(18)]
+
+        self.assertTrue(classifier.is_reportable_launcher_track(launch))
+        self.assertFalse(classifier.is_reportable_launcher_track(lower_table_edge))
+        self.assertFalse(classifier.is_reportable_launcher_track(outer_frame_edge))
+
+        classifier.process_tracks([lower_table_edge], draw_frame=18)
+        classifier.finish_attempt(draw_frame=19)
+        self.assertEqual(classifier.events, [])
 
     def test_identity_homography_maps_pixel_to_table_coordinate(self):
         self.assertEqual(
