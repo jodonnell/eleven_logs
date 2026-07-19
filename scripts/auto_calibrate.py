@@ -44,6 +44,36 @@ def hough_segments(frame: np.ndarray) -> List[Segment]:
     return result
 
 
+def green_table_extent(frame: np.ndarray) -> Tuple[int, int, np.ndarray]:
+    """Locate the table's vertical span without assuming it fills the view."""
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, np.array([35, 45, 30]), np.array([95, 255, 255]))
+    row_counts = np.count_nonzero(mask, axis=1)
+    rows = np.flatnonzero(row_counts >= frame.shape[1] * .05)
+    if len(rows) < 20:
+        raise ValueError("could not find a sufficiently large green table surface")
+    return int(rows[0]), int(rows[-1]), mask
+
+
+def table_edge_x(mask: np.ndarray, boundary_y: float, inward: int) -> Tuple[float, float]:
+    """Fit the two table sides near one boundary and extrapolate to its rail."""
+    height, width = mask.shape
+    start = round(boundary_y + inward * 3)
+    stop = round(boundary_y + inward * 25)
+    rows = range(max(0, min(start, stop)), min(height, max(start, stop)) + 1)
+    samples = []
+    for y in rows:
+        xs = np.flatnonzero(mask[y])
+        if len(xs) >= width * .05:
+            samples.append((y, int(xs[0]), int(xs[-1])))
+    if len(samples) < 4:
+        raise ValueError("could not trace the table side rails")
+    values = np.asarray(samples, dtype=np.float64)
+    left = float(np.polyval(np.polyfit(values[:, 0], values[:, 1], 1), boundary_y))
+    right = float(np.polyval(np.polyfit(values[:, 0], values[:, 2], 1), boundary_y))
+    return max(0.0, left), min(float(width - 1), right)
+
+
 def detect_geometry(frame: np.ndarray) -> Geometry:
     """Return the safely visible table area and visual x=0 line.
 
@@ -53,27 +83,51 @@ def detect_geometry(frame: np.ndarray) -> Geometry:
     """
     height, width = frame.shape[:2]
     lines = hough_segments(frame)
+    green_top, green_bottom, green_mask = green_table_extent(frame)
     horizontals = []
     for length, angle, line in lines:
         y = (line[1] + line[3]) / 2
-        if abs(angle) <= 8 and length >= width * .30 and height * .08 < y < height * .92:
+        if (abs(angle) <= 8 and length >= width * .15
+                and green_top - 15 <= y <= green_bottom + 15):
             horizontals.append((y, length, line))
     if len(horizontals) < 3:
         raise ValueError("could not find the table's horizontal boundaries and centre line")
-    # The table's top/bottom rails are the outermost long horizontal lines;
-    # its white centre stripe is the strongest line between them.
-    horizontals.sort()
-    top = horizontals[0]
-    bottom = horizontals[-1]
+    # Room geometry can contribute much longer horizontal lines than the
+    # table in a wide spectator view. Anchor the rail search to the green
+    # surface instead of treating the outermost Hough lines as table rails.
+    top = min(horizontals, key=lambda item: (abs(item[0] - green_top), -item[1]))
+    bottom = min(horizontals, key=lambda item: (abs(item[0] - green_bottom), -item[1]))
+    if bottom[0] - top[0] < height * .15:
+        raise ValueError("could not separate the table's near and far rails")
     between = [item for item in horizontals if top[0] + 35 < item[0] < bottom[0] - 35]
     if not between:
         raise ValueError("could not separate the white centre stripe from table rails")
     center = max(between, key=lambda item: item[1])
 
-    # The outer left rail can be hidden by the net. Find the visible right rail
-    # by requiring it to meet the right ends of both horizontal rails.
-    top_x = sorted((top[2][0], top[2][2]))
-    bottom_x = sorted((bottom[2][0], bottom[2][2]))
+    top_x = table_edge_x(green_mask, top[0], 1)
+    bottom_x = table_edge_x(green_mask, bottom[0], -1)
+
+    # The outer left rail can be hidden by the net or clipped by the frame.
+    # Preserve that uncertainty as a triangle, but use all four corners when
+    # the green surface proves that the near-left corner is visible.
+    if bottom_x[0] <= 2:
+        visible_table = [[top_x[0], top[0]], [top_x[1], top[0]], [bottom_x[1], bottom[0]]]
+    else:
+        visible_table = [
+            [top_x[0], top[0]], [top_x[1], top[0]],
+            [bottom_x[1], bottom[0]], [bottom_x[0], bottom[0]],
+        ]
+
+    # Extend the detected centre stripe to the fitted table sides. Hough often
+    # returns only one half of the stripe when the net or painted text splits it.
+    center_y = center[0]
+    fraction = (center_y - top[0]) / (bottom[0] - top[0])
+    center_left = top_x[0] + fraction * (bottom_x[0] - top_x[0])
+    center_right = top_x[1] + fraction * (bottom_x[1] - top_x[1])
+    center_line = (center_left, center_y, center_right, center_y)
+
+    # Find the visible right rail by requiring it to meet the right ends of
+    # both horizontal table boundaries.
     right_candidates = []
     for length, angle, line in lines:
         if length < height * .25 or not (35 < abs(angle) < 85):
@@ -85,9 +139,7 @@ def detect_geometry(frame: np.ndarray) -> Geometry:
         right_candidates.append((score, at_top, at_bottom))
     if not right_candidates:
         raise ValueError("could not find the visible right table rail")
-    _, right_top, right_bottom = min(right_candidates)
-    visible_table = [[top_x[0], top[0]], [right_top, top[0]], [right_bottom, bottom[0]]]
-    return visible_table, center[2], (top[2], bottom[2])
+    return visible_table, center_line, (top[2], bottom[2])
 
 
 def create_calibration(

@@ -7,11 +7,35 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+import cv2
+import numpy as np
+
 
 ROOT = Path(__file__).resolve().parents[1]
 VIDEO = ROOT / "sample.mp4"
 sys.path.insert(0, str(ROOT / "scripts"))
 from analyze_video import ensure_calibration  # noqa: E402
+from auto_calibrate import detect_geometry  # noqa: E402
+
+
+class WideViewCalibrationTest(unittest.TestCase):
+    def test_room_lines_do_not_replace_table_boundaries(self):
+        frame = np.full((540, 1024, 3), 35, dtype=np.uint8)
+        for y in (50, 100, 450, 500):
+            cv2.line(frame, (0, y), (1023, y), (220, 220, 220), 3)
+        table = np.int32([[250, 210], [675, 210], [805, 370], [50, 370]])
+        cv2.fillConvexPoly(frame, table, (50, 170, 60))
+        cv2.polylines(frame, [table], True, (230, 230, 230), 4)
+        cv2.line(frame, (150, 270), (724, 270), (230, 230, 230), 3)
+        cv2.line(frame, (460, 210), (410, 370), (15, 15, 15), 10)
+        cv2.line(frame, (466, 210), (416, 370), (240, 240, 240), 3)
+
+        polygon, center, _ = detect_geometry(frame)
+
+        self.assertEqual(len(polygon), 4)
+        self.assertAlmostEqual(polygon[0][1], 210, delta=5)
+        self.assertAlmostEqual(polygon[2][1], 370, delta=5)
+        self.assertAlmostEqual(center[1], 270, delta=5)
 
 
 @unittest.skipUnless(VIDEO.exists(), "sample.mp4 is a local video fixture")
