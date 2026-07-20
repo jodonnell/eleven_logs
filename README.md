@@ -130,5 +130,9 @@ or its tiny digits cannot be read conservatively.
 
 For a camera that needs different detection sensitivity, the calibration JSON
 may include a `detector_settings` object. It can override named thresholds such
-as `motion_threshold`, `track_match_distance`, or
-`min_shadow_contact_score`; omitted settings retain the tested defaults.
+as `motion_threshold`, `track_match_distance`, `min_shadow_contact_score`, or
+the candidate appearance limits; omitted settings retain the tested defaults.
+Candidate filtering checks brightness, saturation, shape compactness, aspect
+ratio, and a size range that grows toward the near end of the calibrated
+flight corridor. Single-pixel shimmer is rejected while compact two-pixel
+distant balls remain eligible for temporal tracking.

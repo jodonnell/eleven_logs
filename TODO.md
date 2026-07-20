@@ -25,7 +25,7 @@ verification are complete.
 - Verify that edge-of-table and wide-angle ball paths remain inside the allowed
   regions.
 
-## 4. Validate ball appearance — TODO
+## 4. Validate ball appearance — DONE
 
 - Filter candidates by pixel area, aspect ratio, brightness, saturation, and
   compactness.

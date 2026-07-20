@@ -87,7 +87,14 @@ class DetectorSettings:
     motion_threshold: int = 18
     bright_ball_lower: Tuple[int, int, int] = (0, 0, 210)
     bright_ball_upper: Tuple[int, int, int] = (180, 145, 255)
+    min_candidate_area: int = 2
+    near_min_candidate_area: int = 4
     max_candidate_area: int = 500
+    far_max_candidate_area_ratio: float = 0.20
+    max_candidate_aspect_ratio: float = 2.2
+    min_candidate_compactness: float = 0.45
+    min_candidate_brightness: float = 210
+    max_candidate_saturation: float = 145
     min_vertical_turn: float = 1
     min_pre_bounce_speed: float = 12
     max_post_bounce_speed_ratio: float = 0.35
@@ -766,19 +773,68 @@ def candidates_for_frame(
         return gray, []
     moving = cv2.threshold(cv2.absdiff(gray, previous_gray), settings.motion_threshold, 255, cv2.THRESH_BINARY)[1]
     mask = cv2.bitwise_and(bright, moving)
-    # Keep 1--2px distant balls; temporal/trajectory filtering handles noise.
-    count, _, stats, centers = cv2.connectedComponentsWithStats(mask)
+    # Preserve compact two-pixel distant balls, but discard single-pixel
+    # codec shimmer before it can seed a track.
+    count, labels, stats, centers = cv2.connectedComponentsWithStats(mask)
     choices = []
+    polygon_y = tracking_polygon[:, 1]
+    corridor_top, corridor_bottom = float(polygon_y.min()), float(polygon_y.max())
+    corridor_height = max(1.0, corridor_bottom - corridor_top)
     for i in range(1, count):
-        area = stats[i, cv2.CC_STAT_AREA]
+        area = int(stats[i, cv2.CC_STAT_AREA])
         center = tuple(map(float, centers[i]))
-        if not 1 <= area <= settings.max_candidate_area:
-            if diagnostics is not None:
-                diagnostics.candidate(center, "rejected", f"area {area}")
-            continue
         if not point_in_polygon(center, tracking_polygon):
             if diagnostics is not None:
                 diagnostics.candidate(center, "rejected", "outside tracking region")
+            continue
+
+        # Perspective makes the same ball occupy more pixels near the bottom
+        # of a fixed spectator view. Interpolate diameter (rather than area)
+        # through the calibrated flight corridor, then square it for a smooth
+        # area limit. This keeps small distant balls while rejecting large
+        # moving room highlights high in the image.
+        depth = min(1.0, max(0.0, (center[1] - corridor_top) / corridor_height))
+        far_diameter_ratio = math.sqrt(settings.far_max_candidate_area_ratio)
+        diameter_ratio = far_diameter_ratio + (1.0 - far_diameter_ratio) * depth
+        maximum_area = max(
+            settings.min_candidate_area,
+            round(settings.max_candidate_area * diameter_ratio ** 2),
+        )
+        minimum_area = round(
+            settings.min_candidate_area
+            + (settings.near_min_candidate_area - settings.min_candidate_area) * depth
+        )
+        if not minimum_area <= area <= maximum_area:
+            if diagnostics is not None:
+                diagnostics.candidate(
+                    center, "rejected",
+                    f"area {area} outside {minimum_area}-{maximum_area}",
+                )
+            continue
+
+        width = int(stats[i, cv2.CC_STAT_WIDTH])
+        height = int(stats[i, cv2.CC_STAT_HEIGHT])
+        aspect_ratio = max(width, height) / max(1, min(width, height))
+        if aspect_ratio > settings.max_candidate_aspect_ratio:
+            if diagnostics is not None:
+                diagnostics.candidate(center, "rejected", f"aspect ratio {aspect_ratio:.2f}")
+            continue
+        compactness = area / max(1, width * height)
+        if compactness < settings.min_candidate_compactness:
+            if diagnostics is not None:
+                diagnostics.candidate(center, "rejected", f"compactness {compactness:.2f}")
+            continue
+
+        component_pixels = hsv[labels == i]
+        saturation = float(np.median(component_pixels[:, 1]))
+        brightness = float(np.median(component_pixels[:, 2]))
+        if brightness < settings.min_candidate_brightness:
+            if diagnostics is not None:
+                diagnostics.candidate(center, "rejected", f"brightness {brightness:.0f}")
+            continue
+        if saturation > settings.max_candidate_saturation:
+            if diagnostics is not None:
+                diagnostics.candidate(center, "rejected", f"saturation {saturation:.0f}")
             continue
         if diagnostics is not None:
             diagnostics.candidate(center, "raw")

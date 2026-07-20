@@ -87,6 +87,75 @@ class VideoDetectorUnitTest(unittest.TestCase):
             diagnostics.candidates[1].reason, "outside tracking region",
         )
 
+    def candidate_frame(self, shape=(100, 100), color=(255, 255, 255)):
+        frame = np.zeros((shape[0], shape[1], 3), dtype=np.uint8)
+        previous_gray = np.zeros(shape, dtype=np.uint8)
+        tracking = np.float32([
+            (0, 0), (shape[1] - 1, 0),
+            (shape[1] - 1, shape[0] - 1), (0, shape[0] - 1),
+        ])
+        return frame, previous_gray, tracking, color
+
+    def test_candidate_appearance_rejects_single_pixel_codec_shimmer(self):
+        frame, previous_gray, tracking, color = self.candidate_frame()
+        frame[10, 10] = color
+        frame[10:12, 20:21] = color
+
+        _, candidates = candidates_for_frame(frame, previous_gray, tracking)
+
+        self.assertEqual([(round(x), round(y)) for x, y, _ in candidates], [(20, 10)])
+
+    def test_candidate_appearance_rejects_elongated_and_sparse_blobs(self):
+        frame, previous_gray, tracking, color = self.candidate_frame()
+        frame[10:12, 10:16] = color
+        for offset in range(4):
+            frame[30 + offset, 30 + offset] = color
+        diagnostics = DetectorDiagnostics()
+        diagnostics.begin_frame()
+
+        _, candidates = candidates_for_frame(
+            frame, previous_gray, tracking, diagnostics=diagnostics,
+        )
+
+        self.assertEqual(candidates, [])
+        self.assertEqual(
+            [item.reason.split()[0] for item in diagnostics.candidates],
+            ["aspect", "compactness"],
+        )
+
+    def test_candidate_appearance_checks_brightness_and_saturation(self):
+        frame, previous_gray, tracking, _ = self.candidate_frame()
+        frame[20:23, 20:23] = (200, 200, 200)
+        frame[40:43, 40:43] = (0, 255, 255)
+        settings = DetectorSettings(
+            bright_ball_lower=(0, 0, 150),
+            bright_ball_upper=(180, 255, 255),
+        )
+        diagnostics = DetectorDiagnostics()
+        diagnostics.begin_frame()
+
+        _, candidates = candidates_for_frame(
+            frame, previous_gray, tracking, settings, diagnostics,
+        )
+
+        self.assertEqual(candidates, [])
+        self.assertEqual(
+            [item.reason.split()[0] for item in diagnostics.candidates],
+            ["brightness", "saturation"],
+        )
+
+    def test_candidate_area_limit_grows_with_perspective(self):
+        frame, previous_gray, tracking, color = self.candidate_frame()
+        frame[8:18, 10:20] = color
+        frame[78:88, 70:80] = color
+
+        _, candidates = candidates_for_frame(
+            frame, previous_gray, tracking,
+            DetectorSettings(max_candidate_area=200, far_max_candidate_area_ratio=.1),
+        )
+
+        self.assertEqual([(round(x), round(y)) for x, y, _ in candidates], [(74, 82)])
+
     def test_track_diagnostics_report_classifier_decisions_and_reasons(self):
         reported = []
         classifier = self.classifier()
