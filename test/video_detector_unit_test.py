@@ -917,12 +917,12 @@ class VideoDetectorUnitTest(unittest.TestCase):
             normalizer.observe(event)
             normalizer.settle_attempt()
 
-        normalizer.advance(354)
+        normalizer.advance(381)
         self.assertFalse(any(
             item.get("sequence") == 4 and item["state"] == "finalized"
             for item in reported
         ))
-        normalizer.advance(355)
+        normalizer.advance(382)
 
         deadline = next(
             item for item in reported

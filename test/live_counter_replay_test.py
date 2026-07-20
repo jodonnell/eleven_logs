@@ -13,9 +13,13 @@ import cv2
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "test" / "fixtures" / "sample2-live-counter.json"
 VIDEO = ROOT / "sample2-trimmed-58s.mp4"
+QUEST_FIXTURE = ROOT / "test" / "fixtures" / "quest-2026-07-20-live-counter.json"
+QUEST_VIDEO = ROOT / "artifacts" / "live-counter-clean.mkv"
 sys.path.insert(0, str(ROOT / "scripts"))
 from live_counter_replay import (  # noqa: E402
     expected_streaks,
+    read_jsonl,
+    reconcile_live_messages,
     run_replay,
     streak_transitions,
     verify_records,
@@ -29,6 +33,43 @@ class LiveCounterReplayTest(unittest.TestCase):
         mismatches = run_replay(FIXTURE)
 
         self.assertEqual(mismatches, [], "\n" + "\n".join(mismatches))
+
+
+@unittest.skipUnless(QUEST_VIDEO.exists(), "Quest failure capture is local")
+class QuestLiveCounterReplayTest(unittest.TestCase):
+    def test_user_labeled_capture_publishes_exact_attempt_ledger(self):
+        fixture = json.loads(QUEST_FIXTURE.read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            canonical = Path(directory) / "canonical.jsonl"
+            live = Path(directory) / "live.jsonl"
+            subprocess.run([
+                sys.executable,
+                str(ROOT / "scripts" / "analyze_video.py"),
+                str(QUEST_VIDEO),
+                "--output", str(canonical),
+                "--live-events", str(live),
+                "--no-annotated",
+            ], cwd=ROOT, capture_output=True, text=True, check=True)
+
+            finalized = reconcile_live_messages(read_jsonl(live))
+
+        self.assertEqual(
+            [item["outcome"] for item in finalized], fixture["outcomes"],
+        )
+        self.assertEqual(
+            [item["sequence"] for item in finalized],
+            list(range(1, len(fixture["outcomes"]) + 1)),
+        )
+        self.assertEqual(
+            len({item["attempt_id"] for item in finalized}), len(finalized),
+        )
+        for item in finalized:
+            limit = fixture[
+                f"max_{item['outcome']}_publication_delay_seconds"
+            ]
+            self.assertLessEqual(
+                item["attempt_publication_delay_seconds"], limit, item,
+            )
 
 
 class StructuredLiveNormalizerTest(unittest.TestCase):
@@ -98,8 +139,10 @@ class StructuredLiveNormalizerTest(unittest.TestCase):
         self.assertEqual(len(attempt_ids), len(set(attempt_ids)))
         for index in fixture["no_swing_indexes"]:
             publication = finalized[index]
-            next_launch = fixture["attempts"][index + 1]["launch_frame_number"]
-            deadline = next_launch + fixture["launch_detection_delay_frames"]
+            # One launcher-like track can be a fragment of the current ball.
+            # Wait for corroborating cadence evidence, bounded by the same
+            # conservative 2.2-period deadline used by the live pipeline.
+            deadline = publication["anchor_frame_number"] + round(2.2 * 60)
             self.assertLessEqual(
                 publication["publication_frame_number"], deadline, finalized,
             )
