@@ -1769,6 +1769,13 @@ def create_video_writer(
     return writer
 
 
+def reset_output_file(path: PathLike) -> None:
+    """Start a new analysis session with no results from the prior session."""
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text("", encoding="utf-8")
+
+
 def process_video(
     source: VideoSource,
     scale: float,
@@ -1876,6 +1883,11 @@ def main() -> None:
     parser.add_argument("--end-seconds", type=float, help="stop after this video timestamp")
     args = parser.parse_args()
     annotated_path = None if args.no_annotated else args.annotated
+    if not args.extract_calibration_frame:
+        # Live SRT sources can block while waiting for the sender. Clear stale
+        # events before opening the source so observers immediately see that a
+        # new server session has begun.
+        reset_output_file(args.output)
     try:
         source = open_video_source(args.video)
         try:
@@ -1920,7 +1932,6 @@ def main() -> None:
             )
         if annotated_path is not None:
             writer = create_video_writer(annotated_path, fps, (width, height))
-        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
         with open(args.output, "w", encoding="utf-8") as output:
             def write_event(event: BounceEvent) -> None:
                 serialized = json.dumps(event.to_record())

@@ -8,10 +8,11 @@ import signal
 import subprocess
 import sys
 import threading
+import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +26,7 @@ class ShotEventBroker:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self.session_id = uuid.uuid4().hex
         self._events: List[tuple[int, Dict[str, Any]]] = []
         self._subscribers: List[queue.Queue[tuple[int, Dict[str, Any]]]] = []
 
@@ -46,6 +48,21 @@ class ShotEventBroker:
                 if item[0] > after_event_id:
                     updates.put_nowait(item)
         return updates
+
+    def resume_index(self, last_event_id: Optional[str]) -> int:
+        """Resume only when the browser's event ID belongs to this process."""
+        if not last_event_id:
+            return 0
+        session_id, separator, index = last_event_id.rpartition(":")
+        if separator != ":" or session_id != self.session_id:
+            return 0
+        try:
+            return max(0, int(index))
+        except ValueError:
+            return 0
+
+    def stream_id(self, event_id: int) -> str:
+        return f"{self.session_id}:{event_id}"
 
     def unsubscribe(
         self, updates: queue.Queue[tuple[int, Dict[str, Any]]],
@@ -86,17 +103,14 @@ def handler_for(events: ShotEventBroker):
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
-            try:
-                last_event_id = int(self.headers.get("Last-Event-ID", "0"))
-            except ValueError:
-                last_event_id = 0
+            last_event_id = events.resume_index(self.headers.get("Last-Event-ID"))
             updates = events.subscribe(last_event_id)
             try:
                 while True:
                     try:
                         event_id, event = updates.get(timeout=15)
                         payload = (
-                            f"id: {event_id}\n"
+                            f"id: {events.stream_id(event_id)}\n"
                             f"data: {json.dumps(event)}\n\n"
                         )
                     except queue.Empty:
@@ -126,6 +140,8 @@ def analyzer_command(args: argparse.Namespace) -> List[str]:
     ]
     if args.calibration:
         command.extend(["--calibration", args.calibration])
+    if args.annotated:
+        command.extend(["--annotated", args.annotated])
     return command
 
 
@@ -150,6 +166,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--calibration", help="optional analyzer calibration JSON")
+    parser.add_argument(
+        "--annotated",
+        nargs="?",
+        const="video_bounces_annotated.mp4",
+        help="write analyzer diagnostics, optionally to a custom MP4 path",
+    )
     parser.add_argument("--output", default="video_bounces.jsonl")
     return parser.parse_args()
 

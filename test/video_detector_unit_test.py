@@ -1,5 +1,6 @@
 """Focused unit tests for the classical-CV bounce helpers."""
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -26,6 +27,7 @@ from analyze_video import (  # noqa: E402
     map_log_coordinate,
     normalize_attempt_events,
     read_telemetry,
+    reset_output_file,
     shadow_contact_score,
 )
 
@@ -55,6 +57,16 @@ class VideoDetectorUnitTest(unittest.TestCase):
         event.outcome = outcome
         event.confidence = confidence
         return event
+
+    def test_reset_output_file_clears_previous_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "nested" / "video_bounces.jsonl"
+            output.parent.mkdir()
+            output.write_text('{"stale": true}\n', encoding="utf-8")
+
+            reset_output_file(output)
+
+            self.assertEqual(output.read_text(encoding="utf-8"), "")
 
     def test_shadow_score_rises_for_dark_table_patch_below_ball(self):
         hsv = np.zeros((100, 100, 3), dtype=np.uint8)

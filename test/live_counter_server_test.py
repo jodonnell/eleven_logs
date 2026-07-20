@@ -3,11 +3,15 @@
 import sys
 import unittest
 from pathlib import Path
+from argparse import Namespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from live_counter_server import ShotEventBroker  # pyright: ignore[reportMissingImports]  # noqa: E402
+from live_counter_server import (  # pyright: ignore[reportMissingImports]  # noqa: E402
+    ShotEventBroker,
+    analyzer_command,
+)
 
 
 class ShotEventBrokerTest(unittest.TestCase):
@@ -32,6 +36,25 @@ class ShotEventBrokerTest(unittest.TestCase):
 
         self.assertEqual(updates.get_nowait(), (2, {"outcome": "miss"}))
         self.assertEqual(updates.get_nowait(), (3, {"outcome": "out"}))
+
+    def test_browser_only_resumes_an_event_id_from_the_same_server_session(self):
+        events = ShotEventBroker()
+
+        self.assertEqual(events.resume_index(events.stream_id(12)), 12)
+        self.assertEqual(events.resume_index("previous-session:12"), 0)
+        self.assertEqual(events.resume_index("12"), 0)
+
+    def test_analyzer_command_forwards_annotated_video_path(self):
+        args = Namespace(
+            video="srt://camera:9000",
+            output="shots.jsonl",
+            calibration=None,
+            annotated="artifacts/live-debug.mp4",
+        )
+
+        command = analyzer_command(args)
+
+        self.assertEqual(command[-2:], ["--annotated", "artifacts/live-debug.mp4"])
 
 
 if __name__ == "__main__":

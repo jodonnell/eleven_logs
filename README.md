@@ -51,6 +51,10 @@ open `http://MAC_LAN_IP:8000` in the Quest browser:
 npm run counter:quest
 ```
 
+For a short detector-diagnostic session, use `npm run counter:quest:debug`.
+It also writes `artifacts/live-counter-debug.mp4`; stop it with Ctrl-C after
+the relevant hits and misses so the recording stays small.
+
 Press Ctrl-C in the terminal to stop both the server and analyzer. Use
 `--calibration PATH.json`, `--output PATH.jsonl`, `--host`, or `--port` after
 the video argument when needed.
