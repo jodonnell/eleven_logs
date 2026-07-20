@@ -1148,26 +1148,64 @@ class AttemptClassifier:
     def is_launcher_track(self, path: Track) -> bool:
         return self.launcher_rejection_reason(path) is None
 
-    def is_return_track(self, path: Track) -> bool:
-        return self.return_segment(path) is not None
+    def is_return_track(
+        self, path: Track, attempt: Optional[Attempt] = None,
+    ) -> bool:
+        return self.return_rejection_reason(path, attempt) is None
 
-    def return_segment(self, path: Track) -> Optional[Track]:
+    def return_candidate_segment(self, path: Track) -> Optional[Track]:
         """Discard a false prefix before a clean player-to-table return.
 
         Bright static objects can own a tracker hypothesis until the moving
         ball crosses them. The resulting path still contains an unambiguous
         return, but its first point is on the wrong side of the frame. Locate
-        the first in-region point that has enough subsequent rightward travel
-        instead of requiring the track to have been clean from birth.
+        the first in-region point that has enough subsequent camera-relative
+        travel toward the opponent instead of requiring the track to have
+        been clean from birth.
         """
         terminal_x = path[-1][1]
+        return_direction = -self.launch_direction
         for index, point in enumerate(path):
             if (
                 point_in_rectangle((point[1], point[2]), self.return_region, self.scale)
-                and terminal_x - point[1] >= self.settings.return_min_horizontal_distance
+                and (terminal_x - point[1]) * return_direction
+                >= self.settings.return_min_horizontal_distance
             ):
                 return path[index:]
         return None
+
+    def return_rejection_reason(
+        self, path: Track, attempt: Optional[Attempt] = None,
+    ) -> Optional[str]:
+        """Explain why a path cannot be the active launch's player return."""
+        in_return_region = any(
+            point_in_rectangle((point[1], point[2]), self.return_region, self.scale)
+            for point in path
+        )
+        if not in_return_region:
+            return "did not begin near player"
+
+        returned = self.return_candidate_segment(path)
+        if returned is None:
+            return "insufficient travel toward opponent"
+        if attempt is not None:
+            post_launch_observations = sum(
+                point[0] > attempt.frame for point in returned
+            )
+            if post_launch_observations < self.settings.min_track_observations:
+                return (
+                    "too few return observations after launch "
+                    f"({post_launch_observations}/"
+                    f"{self.settings.min_track_observations})"
+                )
+        return None
+
+    def return_segment(
+        self, path: Track, attempt: Optional[Attempt] = None,
+    ) -> Optional[Track]:
+        if self.return_rejection_reason(path, attempt) is not None:
+            return None
+        return self.return_candidate_segment(path)
 
     def is_reportable_launcher_track(self, path: Track) -> bool:
         start = (path[0][1], path[0][2])
@@ -1352,10 +1390,12 @@ class AttemptClassifier:
                 reason = self.launcher_rejection_reason(path) or "no active launch"
                 self.diagnose_track(path, "rejected", draw_frame, reason)
                 continue
-            returned = self.return_segment(path)
+            returned = self.return_segment(path, attempt)
             if returned is None:
                 self.diagnose_track(
-                    path, "rejected", draw_frame, "not a plausible return",
+                    path, "rejected", draw_frame,
+                    self.return_rejection_reason(path, attempt)
+                    or "not a plausible return",
                 )
                 continue
             path = returned

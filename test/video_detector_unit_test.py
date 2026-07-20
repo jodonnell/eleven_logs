@@ -459,6 +459,7 @@ class VideoDetectorUnitTest(unittest.TestCase):
             (4, 275, 125, 0.0),
             (5, 350, 130, 0.0),
             (6, 425, 135, 0.0),
+            (7, 500, 140, 0.0),
         ]
 
         returned = classifier.return_segment(path)
@@ -466,6 +467,79 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertIsNotNone(returned)
         self.assertEqual(returned[0][0], 3)
         self.assertTrue(classifier.is_return_track(path))
+
+    def test_return_follows_calibrated_direction_in_mirrored_view(self):
+        classifier = self.classifier({
+            "table_surface_y": 0.7786086,
+            "launcher_region": [0, 0, 420, 300],
+            "return_region": [720, 0, 1000, 300],
+        })
+        returned = [(30 + frame, 900 - frame * 20, 100, 0.0) for frame in range(9)]
+        wrong_way = [(30 + frame, 750 + frame * 20, 100, 0.0) for frame in range(9)]
+
+        self.assertTrue(classifier.is_return_track(returned))
+        self.assertFalse(classifier.is_return_track(wrong_way))
+        self.assertEqual(
+            classifier.return_rejection_reason(wrong_way),
+            "insufficient travel toward opponent",
+        )
+
+    def test_return_requires_observations_after_its_active_launch(self):
+        classifier = self.classifier()
+        launch = [
+            (30 + frame, 800 - frame * 10, 100, 0.0)
+            for frame in range(18)
+        ]
+        classifier.process_tracks([launch], draw_frame=48)
+        assert classifier.active_attempt is not None
+        ended_before_launch = [
+            (frame, 100 + frame * 20, 100, 0.0) for frame in range(9)
+        ]
+        stale_prefix_then_return = [
+            (20, 100, 100, 0.0),
+            (21, 105, 100, 0.0),
+            (31, 120, 100, 0.0),
+            (32, 160, 100, 0.0),
+            (33, 200, 100, 0.0),
+            (34, 240, 100, 0.0),
+        ]
+
+        self.assertEqual(
+            classifier.return_rejection_reason(
+                ended_before_launch, classifier.active_attempt,
+            ),
+            "too few return observations after launch (0/3)",
+        )
+        self.assertIsNone(
+            classifier.return_rejection_reason(
+                stale_prefix_then_return, classifier.active_attempt,
+            )
+        )
+
+        classifier.process_tracks(
+            [ended_before_launch], draw_frame=50,
+        )
+        self.assertEqual(classifier.active_attempt.returns, [])
+
+    def test_partially_occluded_return_needs_several_post_launch_observations(self):
+        classifier = self.classifier()
+        attempt = Attempt(10, (800, 100))
+        mostly_pre_launch = [
+            (5, 100, 120, 0.0),
+            (6, 130, 125, 0.0),
+            (7, 160, 130, 0.0),
+            (8, 190, 135, 0.0),
+            (9, 220, 140, 0.0),
+            (10, 250, 145, 0.0),
+            (11, 280, 150, 0.0),
+            (12, 310, 155, 0.0),
+        ]
+
+        self.assertFalse(classifier.is_return_track(mostly_pre_launch, attempt))
+        self.assertEqual(
+            classifier.return_rejection_reason(mostly_pre_launch, attempt),
+            "too few return observations after launch (2/3)",
+        )
 
     def test_identity_homography_maps_pixel_to_table_coordinate(self):
         self.assertEqual(

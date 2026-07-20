@@ -47,7 +47,7 @@ verification are complete.
 - Prevent static shimmer and unrelated scene motion from opening an attempt.
 - Verify launch detection across the machine's supported speeds and spins.
 
-## 7. Validate return tracks — TODO
+## 7. Validate return tracks — DONE
 
 - Require a return to begin near the player side after a credible launch and
   travel toward the opponent side.

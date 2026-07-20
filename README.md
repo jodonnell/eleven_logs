@@ -142,4 +142,9 @@ Launcher tracks must begin in the calibrated machine-side region and make
 sustained horizontal progress toward the calibrated player side. This follows
 mirrored camera orientation without constraining vertical arcs, delivery speed,
 or spin shape, while static shimmer and back-and-forth scene motion cannot open
-an attempt.
+an attempt. Return tracks likewise must begin near the calibrated player side
+and make camera-relative progress toward the opponent. A stale-object prefix
+may predate the physical ball, so association requires several observations
+after the active credible launch starts; the next credible launch closes that
+attempt. This keeps partially occluded returns while rejecting tracks that
+finished before the active launch.
