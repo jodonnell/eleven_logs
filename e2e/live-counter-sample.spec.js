@@ -1,7 +1,11 @@
 import { expect, test } from "@playwright/test"
+import { existsSync, readFileSync } from "node:fs"
 
-test("recovers from zero while analyzing the checked-in sample video", async ({
+const output = "/tmp/eleven-playwright-sample2.jsonl"
+
+test("leaves zero after a reset while processing all of sample2", async ({
   page,
+  request,
 }) => {
   await page.addInitScript(() => {
     window.visibleCounts = []
@@ -25,10 +29,17 @@ test("recovers from zero while analyzing the checked-in sample video", async ({
           }
           return cursor === wanted.length
         }),
-      { timeout: 40_000 },
+      { timeout: 85_000 },
     )
     .toBe(true)
 
-  await page.waitForTimeout(5_000)
+  await expect
+    .poll(
+      async () => (await (await request.get("/status")).json()).done,
+      { timeout: 85_000 },
+    )
+    .toBe(true)
+  expect(existsSync(output)).toBe(true)
+  expect(readFileSync(output, "utf8").trim().split("\n")).toHaveLength(48)
   await expect(page.locator("#count")).toHaveText("0")
 })

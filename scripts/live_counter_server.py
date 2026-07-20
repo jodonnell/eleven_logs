@@ -31,6 +31,7 @@ class ShotEventBroker:
         self._events: List[tuple[int, Dict[str, Any]]] = []
         self._subscribers: List[queue.Queue[tuple[int, Dict[str, Any]]]] = []
         self._subscriber_connected = threading.Event()
+        self._source_done = threading.Event()
 
     def publish(self, event: Dict[str, Any]) -> None:
         with self._lock:
@@ -54,6 +55,13 @@ class ShotEventBroker:
 
     def wait_for_subscriber(self) -> None:
         self._subscriber_connected.wait()
+
+    def mark_source_done(self) -> None:
+        self._source_done.set()
+
+    def status(self) -> Dict[str, Any]:
+        with self._lock:
+            return {"done": self._source_done.is_set(), "messages": len(self._events)}
 
     def resume_index(self, last_event_id: Optional[str]) -> int:
         """Resume only when the browser's event ID belongs to this process."""
@@ -88,6 +96,8 @@ def handler_for(events: ShotEventBroker):
                 self._send_file(COUNTER_SCRIPT, "text/javascript; charset=utf-8")
             elif path == "/events":
                 self._send_events()
+            elif path == "/status":
+                self._send_json(events.status())
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -99,6 +109,15 @@ def handler_for(events: ShotEventBroker):
                 return
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(content)
+
+        def _send_json(self, value: Dict[str, Any]) -> None:
+            content = json.dumps(value).encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(content)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
@@ -129,7 +148,7 @@ def handler_for(events: ShotEventBroker):
                 events.unsubscribe(updates)
 
         def log_message(self, format: str, *args: Any) -> None:
-            if self.path.split("?", 1)[0] != "/events":
+            if self.path.split("?", 1)[0] not in ("/events", "/status"):
                 super().log_message(format, *args)
 
     return CounterHandler
@@ -190,7 +209,10 @@ def run_analyzer(
         start_new_session=True,
     )
     process_holder.append(process)
-    read_analyzer(process, events)
+    try:
+        read_analyzer(process, events)
+    finally:
+        events.mark_source_done()
 
 
 def replay_events(path: Path, interval_seconds: float, events: ShotEventBroker) -> None:
@@ -201,6 +223,7 @@ def replay_events(path: Path, interval_seconds: float, events: ShotEventBroker) 
             continue
         time.sleep(interval_seconds)
         events.publish(json.loads(line))
+    events.mark_source_done()
 
 
 def parse_args() -> argparse.Namespace:

@@ -26,6 +26,15 @@ class ShotEventBrokerTest(unittest.TestCase):
         self.assertEqual(event_id, 1)
         self.assertEqual(received, shot)
 
+    def test_status_reports_message_count_and_completed_source(self):
+        events = ShotEventBroker()
+        events.publish({"outcome": "hit"})
+
+        self.assertEqual(events.status(), {"done": False, "messages": 1})
+        events.mark_source_done()
+
+        self.assertEqual(events.status(), {"done": True, "messages": 1})
+
     def test_subscription_replays_only_events_after_given_id(self):
         events = ShotEventBroker()
         events.publish({"outcome": "hit"})
