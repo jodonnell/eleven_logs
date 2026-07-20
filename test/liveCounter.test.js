@@ -1,5 +1,6 @@
 import {
   currentHitStreak,
+  reduceCounterState,
   reconcileShotMessage,
 } from "../live-counter/counter.js"
 
@@ -73,7 +74,7 @@ describe("live hit counter", () => {
     expect(currentHitStreak(reconciled)).toBe(2)
   })
 
-  it("keeps display-only reset signals out of canonical shot history", () => {
+  it("retains display-only reset signals as a streak boundary", () => {
     const shots = [{ frame_number: 100, outcome: "hit" }]
 
     const reconciled = reconcileShotMessage(shots, {
@@ -81,6 +82,38 @@ describe("live hit counter", () => {
       after_hit_frame_number: 100,
     })
 
-    expect(reconciled).toBe(shots)
+    expect(reconciled).toEqual([
+      ...shots,
+      expect.objectContaining({ outcome: "miss", display_only: true }),
+    ])
+    expect(currentHitStreak(reconciled)).toBe(0)
+  })
+
+  it("counts hits after a timed reset instead of remaining at zero", () => {
+    const messages = [
+      { outcome: "hit", frame_number: 100 },
+      { outcome: "hit", frame_number: 160 },
+      { outcome: "hit", frame_number: 220 },
+      { type: "reset", after_hit_frame_number: 220 },
+      {
+        type: "snapshot",
+        shots: [
+          { outcome: "hit", frame_number: 100 },
+          { outcome: "hit", frame_number: 160 },
+          { outcome: "hit", frame_number: 220 },
+        ],
+      },
+      { outcome: "hit", frame_number: 280 },
+      { outcome: "hit", frame_number: 340 },
+      { outcome: "hit", frame_number: 400 },
+    ]
+    let state = { shots: [], streak: 0 }
+
+    const visible = messages.map((message) => {
+      state = reduceCounterState(state, message)
+      return state.streak
+    })
+
+    expect(visible).toEqual([1, 2, 3, 0, 0, 1, 2, 3])
   })
 })

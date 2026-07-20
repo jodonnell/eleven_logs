@@ -62,9 +62,29 @@ def reconcile_live_messages(
     shots: List[Dict[str, Any]] = []
     for message in messages:
         if message.get("type") == "snapshot":
+            reset = next(
+                (item for item in reversed(shots) if item.get("display_only")),
+                None,
+            )
             shots = list(message["shots"])
+            canonical_reset = reset is None or any(
+                item["outcome"] in ("miss", "out")
+                and item.get("attempt_frame_number", item["frame_number"])
+                > reset["after_hit_frame_number"]
+                for item in shots
+            )
+            if reset is not None and not canonical_reset:
+                shots.append(reset)
         elif message.get("type") == "reset":
-            continue
+            shots = [item for item in shots if not item.get("display_only")]
+            frame = message["after_hit_frame_number"] + 1
+            shots.append({
+                "outcome": "miss",
+                "frame_number": frame,
+                "attempt_frame_number": frame,
+                "display_only": True,
+                "after_hit_frame_number": message["after_hit_frame_number"],
+            })
         else:
             shots.append(message)
     return shots

@@ -894,6 +894,18 @@ class VideoDetectorUnitTest(unittest.TestCase):
 
         self.assertEqual([item.outcome for item in reported], ["out"])
 
+    def test_real_hit_replaces_a_previously_emitted_cadence_slot(self):
+        reported = []
+        normalizer = LiveAttemptNormalizer(60, reported.append)
+        normalizer.period = 60
+        normalizer.emitted_anchors.append(250)
+        hit = self.cadence_event(250)
+
+        normalizer.observe_confirmed_hit(hit)
+
+        self.assertEqual([item.outcome for item in reported], ["hit"])
+        self.assertEqual(normalizer.latest_hit_frame, 250)
+
     def test_settlement_snapshot_cannot_undo_the_newly_closed_miss(self):
         messages = []
         normalizer = LiveAttemptNormalizer(

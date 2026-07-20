@@ -85,10 +85,15 @@ browser-order regression with:
 
 ```sh
 npm run counter:replay
+npm run test:e2e:counter
+npm run test:e2e:counter:sample
 ```
 
 Failures print a compact expected/actual result with shot timestamp and live
-publication delay. The shorter structured unit fixture covers 5 hits, 2
+publication delay. The Playwright checks exercise the served page and SSE
+stream with both deterministic messages and the checked-in `sample.mp4`, and
+verify that the visible counter recovers after a reset. The shorter structured
+unit fixture covers 5 hits, 2
 no-swings, 3 hits, 1 out, and 3 hits for fast normalizer iteration.
 
 Press Ctrl-C in the terminal to stop both the server and analyzer. Use

@@ -16,6 +16,8 @@
     "lint": "eslint src/*.js test/*.js",
     "prettier": "prettier src/*.js test/*.js --write",
     "test": "jest ./test/",
+    "test:e2e:counter": "playwright test e2e/live-counter.spec.js",
+    "test:e2e:counter:sample": "playwright test e2e/live-counter-sample.spec.js --config playwright.sample.config.js",
     "test:video": "python3 -m unittest test/video_source_test.py test/auto_calibration_test.py test/video_detector_unit_test.py test/live_counter_replay_test.py",
     "test:watch": "jest --watch ./test/"
   },
@@ -26,6 +28,7 @@
     "lodash": "^4.17.21"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "esbuild": "^0.19.11",
     "esbuild-jest": "^0.5.0",
     "eslint": "^8.56.0",

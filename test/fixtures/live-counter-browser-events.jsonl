@@ -1,0 +1,9 @@
+{"outcome":"hit","frame_number":100,"attempt_frame_number":100}
+{"outcome":"hit","frame_number":160,"attempt_frame_number":160}
+{"outcome":"hit","frame_number":220,"attempt_frame_number":220}
+{"type":"reset","after_hit_frame_number":220,"publication_frame_number":289}
+{"type":"snapshot","shots":[{"outcome":"hit","frame_number":100,"attempt_frame_number":100},{"outcome":"hit","frame_number":160,"attempt_frame_number":160},{"outcome":"hit","frame_number":220,"attempt_frame_number":220}]}
+{"outcome":"hit","frame_number":280,"attempt_frame_number":280}
+{"type":"snapshot","shots":[{"outcome":"hit","frame_number":100,"attempt_frame_number":100},{"outcome":"hit","frame_number":160,"attempt_frame_number":160},{"outcome":"hit","frame_number":220,"attempt_frame_number":220},{"outcome":"hit","frame_number":280,"attempt_frame_number":280}]}
+{"outcome":"hit","frame_number":340,"attempt_frame_number":340}
+{"outcome":"hit","frame_number":400,"attempt_frame_number":400}

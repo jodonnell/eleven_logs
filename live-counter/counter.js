@@ -15,9 +15,43 @@ export const currentHitStreak = (shots) => {
   return streak
 }
 
-export const reconcileShotMessage = (shots, message) =>
-  message.type === "snapshot"
-    ? [...message.shots]
-    : message.type === "reset"
-      ? shots
-      : [...shots, message]
+export const reconcileShotMessage = (shots, message) => {
+  if (message.type === "snapshot") {
+    return reconcileSnapshot(shots, message.shots)
+  }
+  if (message.type === "reset") {
+    return [
+      ...shots.filter((shot) => !shot.display_only),
+      {
+        outcome: "miss",
+        frame_number: message.after_hit_frame_number + 1,
+        attempt_frame_number: message.after_hit_frame_number + 1,
+        display_only: true,
+        after_hit_frame_number: message.after_hit_frame_number,
+      },
+    ]
+  }
+  return [...shots, message]
+}
+
+const logicalFrame = (shot) => shot.attempt_frame_number ?? shot.frame_number
+
+const reconcileSnapshot = (current, canonical) => {
+  const reset = [...current].reverse().find((shot) => shot.display_only)
+  if (
+    !reset ||
+    canonical.some(
+      (shot) =>
+        (shot.outcome === "miss" || shot.outcome === "out") &&
+        logicalFrame(shot) > reset.after_hit_frame_number,
+    )
+  ) {
+    return [...canonical]
+  }
+  return [...canonical, reset]
+}
+
+export const reduceCounterState = (state, message) => {
+  const shots = reconcileShotMessage(state.shots, message)
+  return { shots, streak: currentHitStreak(shots) }
+}

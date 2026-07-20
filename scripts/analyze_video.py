@@ -1735,11 +1735,9 @@ class LiveAttemptNormalizer:
             for frame in self.immediate_event_frames
         ):
             return
-        if self.period is not None and any(
-            abs(event.frame_number - anchor) <= self.period * .3
-            for anchor in self.emitted_anchors
-        ):
-            return
+        # A cadence slot may already contain a provisional miss. Never let
+        # that suppress later direct evidence of a real table contact; the
+        # following snapshot will reconcile the provisional slot.
         self.on_event(replace(event, outcome="hit"))
         self.immediate_event_frames.append(event.frame_number)
         self.latest_hit_frame = event.frame_number
@@ -2156,6 +2154,7 @@ def main() -> None:
         with open(args.output, "w", encoding="utf-8") as output:
             processing_frame = first_frame.number if first_frame is not None else 0
             live_normalizer: Optional[LiveAttemptNormalizer] = None
+            live_stdout_open = args.live_stdout
 
             def observe_processing_frame(frame_number: int) -> None:
                 nonlocal processing_frame
@@ -2164,12 +2163,17 @@ def main() -> None:
                     live_normalizer.advance(frame_number)
 
             def write_live_record(record: Dict[str, Any]) -> None:
+                nonlocal live_stdout_open
                 serialized = json.dumps(record)
                 if live_events_output is not None:
                     live_events_output.write(serialized + "\n")
                     live_events_output.flush()
-                if args.live_stdout:
-                    print(serialized, flush=True)
+                if live_stdout_open:
+                    try:
+                        print(serialized, flush=True)
+                    except BrokenPipeError:
+                        live_stdout_open = False
+                        sys.stdout = open("/dev/null", "w", encoding="utf-8")
 
             def write_event(event: BounceEvent) -> None:
                 record: Dict[str, Any] = event.to_record()

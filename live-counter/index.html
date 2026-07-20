@@ -83,21 +83,17 @@
     </main>
 
     <script type="module">
-      import { currentHitStreak, reconcileShotMessage } from "/counter.js"
+      import { reduceCounterState } from "/counter.js"
 
       const count = document.querySelector("#count")
       const status = document.querySelector("#status")
       const events = new EventSource("/events")
-      let shots = []
+      let counterState = { shots: [], streak: 0 }
 
       events.onmessage = ({ data }) => {
         const shot = JSON.parse(data)
-        if (shot.type === "reset") {
-          count.textContent = 0
-          return
-        }
-        shots = reconcileShotMessage(shots, shot)
-        count.textContent = currentHitStreak(shots)
+        counterState = reduceCounterState(counterState, shot)
+        count.textContent = counterState.streak
       }
 
       events.onopen = () => {
