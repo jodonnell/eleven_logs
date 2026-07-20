@@ -1,6 +1,9 @@
 {
   "video": "sample2-trimmed-58s.mp4",
   "max_no_swing_publication_delay_seconds": 3.0,
+  "max_hit_publication_delay_seconds": 5.5,
+  "max_out_publication_delay_seconds": 3.1,
+  "max_miss_publication_delay_seconds": 3.0,
   "outcomes": [
     "hit", "hit", "out", "out", "hit", "out", "hit", "out",
     "hit", "out", "hit", "hit", "hit", "hit", "out", "hit",

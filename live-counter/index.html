@@ -88,7 +88,7 @@
       const count = document.querySelector("#count")
       const status = document.querySelector("#status")
       const events = new EventSource("/events")
-      let counterState = { shots: [], streak: 0 }
+      let counterState = { attempts: [], streak: 0 }
 
       events.onmessage = ({ data }) => {
         const shot = JSON.parse(data)

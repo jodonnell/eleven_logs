@@ -35,17 +35,21 @@ file or live SRT URL:
 npm run counter -- 'srt://OBS_IP:9000?mode=caller&latency=120000'
 ```
 
-Then open <http://127.0.0.1:8000>. The server streams each analyzer shot record
-unchanged to the page, where the session count increases for every confirmed
-`hit` and resets to zero for a `miss` or `out`. A detected new launch closes
+Then open <http://127.0.0.1:8000>. The server streams keyed attempt upserts to
+the page, where the session count increases for every finalized `hit` and
+resets to zero for a finalized `miss` or `out`. A detected new launch closes
 the previous attempt immediately, so an attempt without a confirmed return to
-the opponent's table resets the streak without waiting for cadence warm-up.
-After three hits establish the launcher rhythm, the display also resets 15%
-of a cycle after an expected hit fails to appear. This display-only deadline
-keeps an undetected launch from leaving a stale streak on screen; saved shot
-records still require visual or next-launch evidence.
-Refreshing the page replays the session's shot records so the browser can
-reconstruct the current streak.
+the opponent's table finalizes that launch without waiting for a later batch.
+After three hits establish the launcher rhythm, every inferred launch receives
+a stable attempt ID. The newest slot remains pending until direct evidence, the
+next credible launch, or a conservative cadence deadline finalizes it.
+Refreshing the page replays these keyed attempt upserts so the browser can
+reconstruct the same finalized ledger and streak.
+
+The first three contacts must remain buffered long enough to infer cadence, so
+video-only startup can publish those initial attempts several seconds late.
+After warm-up, confirmed hits publish at detection time; unseen misses still
+wait for a credible following launch or the conservative cadence deadline.
 
 When OBS is available at `192.168.1.197:9000` and the counter should be
 available to a Quest on the same local network, use the shortcut below, then
@@ -65,9 +69,10 @@ It writes two complementary artifacts:
 - `artifacts/live-counter-events.jsonl` preserves every live publication with
   its shot frame, publication frame, and publication delay.
 
-The event stream also carries cadence snapshots. The browser uses their
-logical `attempt_frame_number` to replace provisional observations while
-retaining each detector evidence `frame_number` for diagnostics.
+The event stream carries `attempt_upsert` records with a `pending -> finalized`
+lifecycle. Finalized outcomes are immutable; the browser calculates the count
+only from the ordered finalized ledger. Evidence `frame_number` and publication
+latency remain available for diagnostics.
 
 Stop it with Ctrl-C after the labeled sequence. Change the bound with
 `--clean-recording-seconds`, or force recording from stream startup with

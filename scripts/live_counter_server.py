@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Serve raw live-analyzer shot events to a local browser page."""
+"""Serve live analyzer attempt-ledger upserts to a local browser page."""
 
 import argparse
 import json

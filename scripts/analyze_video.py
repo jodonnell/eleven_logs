@@ -1087,7 +1087,7 @@ class AttemptClassifier:
         scale: float,
         settings: DetectorSettings,
         on_event: Optional[Callable[[BounceEvent], None]] = None,
-        on_attempt_finished: Optional[Callable[[], None]] = None,
+        on_attempt_finished: Optional[Callable[[int], None]] = None,
         on_confirmed_hit: Optional[Callable[[BounceEvent], None]] = None,
         on_confirmed_non_hit: Optional[Callable[[BounceEvent], None]] = None,
         on_track_diagnostic: Optional[Callable[[TrackDiagnostic, int], None]] = None,
@@ -1281,14 +1281,14 @@ class AttemptClassifier:
         finished_previous = self.active_attempt is not None
         self.finish_attempt(draw_frame)
         if finished_previous and self.on_attempt_finished is not None:
-            self.on_attempt_finished()
+            self.on_attempt_finished(path[0][0])
         self.active_attempt = Attempt(
             path[0][0], (path[0][1], path[0][2]),
             report_no_bounce=self.is_reportable_launcher_track(path),
             machine_telemetry=self.telemetry_near(path[0][0]),
         )
         if self.on_attempt_started is not None:
-            self.on_attempt_started(draw_frame)
+            self.on_attempt_started(self.active_attempt.frame)
 
     def return_evidence(self, path: Track) -> Tuple[bool, bool]:
         start_pixel = (path[0][1], path[0][2])
@@ -1591,7 +1591,16 @@ def attempt_event_slots(
         if abs(anchors[slot] - event_frame) > period * .3:
             continue
         current = slots[slot]
-        if current is None or event.confidence > current.confidence:
+        if (
+            current is None
+            or abs(anchors[slot] - event.frame_number)
+            < abs(anchors[slot] - current.frame_number)
+            or (
+                abs(anchors[slot] - event.frame_number)
+                == abs(anchors[slot] - current.frame_number)
+                and event.confidence > current.confidence
+            )
+        ):
             slots[slot] = replace(event, outcome="hit")
         hit_slots[id(event)] = slot
 
@@ -1644,38 +1653,57 @@ def normalize_attempt_events(
     period, slots = attempt_event_slots(events, total_frames, fps)
     if period is None:
         return list(events)
-    return [replace(event, attempt_frame_number=anchor) for anchor, event in slots]
+    normalized = [
+        replace(event, attempt_frame_number=anchor) for anchor, event in slots
+    ]
+    if (
+        normalized
+        and normalized[-1].outcome == "out"
+        and abs(
+            normalized[-1].frame_number
+            - (normalized[-1].attempt_frame_number or normalized[-1].frame_number)
+        ) > period * .5
+    ):
+        anchor = normalized[-1].attempt_frame_number
+        assert anchor is not None
+        normalized[-1] = BounceEvent(
+            video_time_seconds=round(anchor / fps, 3),
+            video_timestamp=fmt_timestamp(anchor / fps),
+            hit_table=False,
+            is_in=False,
+            outcome="miss",
+            posx=None,
+            posy=None,
+            posz=None,
+            confidence=0.3,
+            frame_number=anchor,
+            pixel=(0, 0),
+            draw_frame=anchor,
+            attempt_frame_number=anchor,
+        )
+    return normalized
 
 
 class LiveAttemptNormalizer:
-    """Emit settled canonical slots while retaining batch finalization.
+    """Publish one monotonic ledger entry for every inferred machine launch.
 
-    The first three confirmed opponent-table contacts are buffered because
-    fewer observations cannot establish a cadence. Once warm, a slot is held
-    until a result in a later inferred slot is observed, allowing the following
-    launch to finish the preceding attempt before a miss can be emitted.
+    Cadence is needed because an entirely unseen ball has no visual track to
+    anchor it. Slot indexes become stable attempt IDs as soon as three hits
+    establish cadence. The newest slot remains pending until later credible
+    evidence closes it; finalized entries are never revised.
     """
 
     def __init__(
         self,
         fps: float,
-        on_event: Callable[[BounceEvent], None],
-        on_snapshot: Optional[Callable[[Sequence[BounceEvent]], None]] = None,
-        on_reset: Optional[Callable[[int], None]] = None,
+        on_attempt: Callable[[Dict[str, Any]], None],
     ) -> None:
         self.fps = fps
-        self.on_event = on_event
-        self.on_snapshot = on_snapshot
-        self.on_reset = on_reset
+        self.on_attempt = on_attempt
         self.events: List[BounceEvent] = []
         self.period: Optional[float] = None
-        self.emitted_anchors: List[int] = []
-        self.immediate_event_frames: List[int] = []
-        self.immediate_non_hit_frames: List[int] = []
+        self.ledger: List[Dict[str, Any]] = []
         self.pending_attempt_events: List[BounceEvent] = []
-        self.settlement_frame: Optional[float] = None
-        self.latest_hit_frame: Optional[int] = None
-        self.reset_after_hit_frame: Optional[int] = None
 
     def observe(self, event: BounceEvent) -> None:
         self.events.append(event)
@@ -1698,156 +1726,229 @@ class LiveAttemptNormalizer:
                 item.confidence,
             ),
         )
-        if any(
-            abs(event.frame_number - frame) <= self.fps * .5
-            for frame in self.immediate_non_hit_frames
-        ):
-            return None
         outcome = "out" if event.outcome == "off_table" else "miss"
-        published = replace(event, outcome=outcome)
-        if self.period is not None:
-            _, slots = attempt_event_slots(
-                self.events,
-                round(max(item.frame_number for item in self.events) + self.period * 1.5),
-                self.fps,
-            )
-            matching_anchors = [
-                anchor for anchor, slotted in slots
-                if slotted.frame_number == event.frame_number
-            ]
-            if matching_anchors:
-                published = replace(
-                    published, attempt_frame_number=matching_anchors[0],
-                )
-        self.immediate_event_frames.append(event.frame_number)
-        return published
+        return replace(event, outcome=outcome)
 
-    def publish_finished_attempt(self) -> None:
-        """Publish the final pending attempt outside cadence settlement."""
-        published = self.finished_attempt_event()
-        if published is not None:
-            self.on_event(published)
+    def candidate_slots(
+        self, extra: Optional[BounceEvent] = None, total_frames: Optional[int] = None,
+    ) -> List[Tuple[int, BounceEvent]]:
+        evidence = list(self.events)
+        if extra is not None and not any(
+            item.frame_number == extra.frame_number
+            and item.outcome == extra.outcome
+            for item in evidence
+        ):
+            evidence.append(extra)
+        hits = [
+            item for item in evidence
+            if item.hit_table and item.outcome == "far_table"
+        ]
+        self.period = infer_attempt_period(
+            [item.frame_number for item in hits], self.fps,
+        )
+        if self.period is None:
+            return []
+        horizon = total_frames
+        if horizon is None:
+            horizon = round(
+                max(item.frame_number for item in evidence) + self.period * 1.05
+            )
+        self.period, slots = attempt_event_slots(evidence, horizon, self.fps)
+        return slots
+
+    def attempt_record(
+        self, index: int, anchor: int, state: str,
+        event: Optional[BounceEvent] = None,
+    ) -> Dict[str, Any]:
+        record: Dict[str, Any] = {
+            "attempt_id": f"attempt-{index + 1:04d}",
+            "sequence": index + 1,
+            "anchor_frame_number": anchor,
+            "state": state,
+        }
+        if event is not None:
+            record.update(event.to_record())
+            record["outcome"] = event.outcome
+            record["attempt_frame_number"] = anchor
+        return record
+
+    def sync_slots(
+        self, slots: Sequence[Tuple[int, BounceEvent]], finalize_through: int,
+    ) -> None:
+        for index, (anchor, _event) in enumerate(slots):
+            if index < len(self.ledger):
+                continue
+            pending = self.attempt_record(index, anchor, "pending")
+            self.ledger.append(pending)
+            self.on_attempt(pending)
+        last = min(finalize_through, len(slots) - 1)
+        for index in range(last + 1):
+            if self.ledger[index]["state"] == "finalized":
+                continue
+            anchor = self.ledger[index]["anchor_frame_number"]
+            finalized = self.attempt_record(
+                index, anchor, "finalized", slots[index][1],
+            )
+            self.ledger[index] = finalized
+            self.on_attempt(finalized)
+
+    def finalize_direct(
+        self, event: BounceEvent, outcome: str,
+    ) -> None:
+        direct = replace(event, outcome=outcome)
+        slots = self.candidate_slots(event)
+        if not slots or self.period is None:
+            return
+        self.sync_slots(slots, -1)
+        pending = [
+            index for index, item in enumerate(self.ledger)
+            if item["state"] == "pending"
+        ]
+        if not pending:
+            return
+        target = min(
+            pending,
+            key=lambda index: abs(
+                self.ledger[index]["anchor_frame_number"] - event.frame_number
+            ),
+        )
+        if (
+            abs(self.ledger[target]["anchor_frame_number"] - event.frame_number)
+            > self.period * .5
+        ):
+            return
+        self.sync_slots(slots, target - 1)
+        if self.ledger[target]["state"] == "finalized":
+            return
+        anchor = self.ledger[target]["anchor_frame_number"]
+        finalized = self.attempt_record(target, anchor, "finalized", direct)
+        self.ledger[target] = finalized
+        self.on_attempt(finalized)
 
     def observe_confirmed_hit(self, event: BounceEvent) -> None:
         """Publish direct visual evidence without waiting for cadence."""
-        if any(
-            abs(event.frame_number - frame) <= self.fps * .5
-            for frame in self.immediate_event_frames
-        ):
-            return
-        # A cadence slot may already contain a provisional miss. Never let
-        # that suppress later direct evidence of a real table contact; the
-        # following snapshot will reconcile the provisional slot.
-        self.on_event(replace(event, outcome="hit"))
-        self.immediate_event_frames.append(event.frame_number)
-        self.latest_hit_frame = event.frame_number
-        self.reset_after_hit_frame = None
+        self.finalize_direct(event, "hit")
 
     def observe_confirmed_non_hit(self, event: BounceEvent) -> None:
         """Publish a completed visible out or net return immediately."""
-        if any(
-            abs(event.frame_number - frame) <= self.fps * .5
-            for frame in self.immediate_event_frames
-        ):
-            return
         outcome = "out" if event.outcome == "off_table" else "miss"
-        self.on_event(replace(event, outcome=outcome))
-        self.immediate_event_frames.append(event.frame_number)
-        self.immediate_non_hit_frames.append(event.frame_number)
-        self.reset_after_hit_frame = self.latest_hit_frame
+        self.finalize_direct(event, outcome)
 
     def advance(self, frame_number: int) -> None:
-        """Reset the display shortly after an expected hit fails to arrive.
-
-        This is deliberately a display-only signal, not a fabricated shot.
-        Canonical miss/out records still require visual or next-launch evidence.
-        """
-        if (
-            self.on_reset is None
-            or self.period is None
-            or self.latest_hit_frame is None
-            or self.reset_after_hit_frame == self.latest_hit_frame
-        ):
-            return
-        deadline = self.latest_hit_frame + self.period * 1.15
-        if frame_number >= deadline:
-            self.on_reset(self.latest_hit_frame)
-            self.reset_after_hit_frame = self.latest_hit_frame
-
-    def settle_attempt(self) -> None:
-        """Advance once after a detected launch closes the prior attempt."""
-        # Hold the newly closed attempt until after the cadence snapshot. If
-        # the shot were sent first, a snapshot built without its settled slot
-        # could immediately undo the browser reset at the same launch.
-        published = self.finished_attempt_event()
-        if not self.events:
-            if published is not None:
-                self.on_event(published)
-            return
-        hits = [
-            event for event in self.events
-            if event.hit_table and event.outcome == "far_table"
-        ]
-        self.period = infer_attempt_period(
-            [event.frame_number for event in hits], self.fps,
-        )
+        """Finalize an overdue unseen slot after a conservative cadence wait."""
         if self.period is None:
-            if published is not None:
-                self.on_event(published)
             return
-        newest_evidence = max(event.frame_number for event in self.events)
-        if self.settlement_frame is None:
-            self.settlement_frame = newest_evidence + self.period
-        else:
-            self.settlement_frame = max(
-                self.settlement_frame + self.period,
-                newest_evidence + self.period,
-            )
-        self.period, slots = attempt_event_slots(
-            self.events, round(self.settlement_frame) + 1, self.fps,
+        pending = next((
+            index for index, item in enumerate(self.ledger)
+            if item["state"] == "pending"
+        ), None)
+        if pending is None and not self.ledger:
+            return
+        anchor = (
+            self.ledger[pending]["anchor_frame_number"]
+            if pending is not None
+            else round(self.ledger[-1]["anchor_frame_number"] + self.period)
         )
-        assert self.period is not None
-        for anchor, event in slots:
-            if any(
-                abs(anchor - frame) <= self.period * .3
-                or abs(event.frame_number - frame) <= self.fps * .5
-                for frame in self.immediate_event_frames
-            ) and not any(
-                abs(anchor - emitted) <= self.period * .5
-                for emitted in self.emitted_anchors
-            ):
-                self.emitted_anchors.append(anchor)
-        for anchor, event in slots:
-            if anchor + self.period > self.settlement_frame:
-                continue
-            if any(
-                abs(anchor - emitted) <= self.period * .5
-                for emitted in self.emitted_anchors
-            ):
-                continue
-            self.on_event(replace(event, attempt_frame_number=anchor))
-            self.emitted_anchors.append(anchor)
-        if self.on_snapshot is not None:
-            settled = [
-                replace(event, attempt_frame_number=anchor)
-                for anchor, event in slots
-                if any(
-                    abs(anchor - emitted) <= self.period * .5
-                    for emitted in self.emitted_anchors
-                )
-            ]
-            self.on_snapshot(settled)
-        if published is not None:
-            self.on_event(published)
+        if pending is None and frame_number < anchor:
+            return
+        if pending is None:
+            marker = BounceEvent(
+                video_time_seconds=round(anchor / self.fps, 3),
+                video_timestamp=fmt_timestamp(anchor / self.fps),
+                hit_table=False,
+                is_in=False,
+                outcome="unknown",
+                posx=None,
+                posy=None,
+                posz=None,
+                confidence=0.2,
+                frame_number=anchor,
+                pixel=(0, 0),
+                draw_frame=frame_number,
+                attempt_frame_number=anchor,
+            )
+            slots = self.candidate_slots(
+                extra=marker, total_frames=round(anchor + self.period),
+            )
+            self.sync_slots(slots, -1)
+            pending = next((
+                index for index, item in enumerate(self.ledger)
+                if item["state"] == "pending"
+            ), None)
+            if pending is None:
+                return
+        if frame_number < anchor + self.period * 1.75:
+            return
+        marker_frame = round(anchor + self.period)
+        marker = BounceEvent(
+            video_time_seconds=round(marker_frame / self.fps, 3),
+            video_timestamp=fmt_timestamp(marker_frame / self.fps),
+            hit_table=False,
+            is_in=False,
+            outcome="unknown",
+            posx=None,
+            posy=None,
+            posz=None,
+            confidence=0.2,
+            frame_number=marker_frame,
+            pixel=(0, 0),
+            draw_frame=frame_number,
+            attempt_frame_number=marker_frame,
+        )
+        slots = self.candidate_slots(
+            extra=marker, total_frames=round(marker_frame + self.period),
+        )
+        if pending < len(slots) and slots[pending][1].outcome != "hit":
+            self.sync_slots(slots, pending)
+
+    def settle_attempt(self, next_launch_frame: Optional[int] = None) -> None:
+        """Advance once after a detected launch closes the prior attempt."""
+        self.finished_attempt_event()
+        total_frames = None
+        launch_marker = None
+        if next_launch_frame is not None and self.period is not None:
+            total_frames = round(next_launch_frame + self.period * 1.05)
+            launch_marker = BounceEvent(
+                video_time_seconds=round(next_launch_frame / self.fps, 3),
+                video_timestamp=fmt_timestamp(next_launch_frame / self.fps),
+                hit_table=False,
+                is_in=False,
+                outcome="unknown",
+                posx=None,
+                posy=None,
+                posz=None,
+                confidence=0.2,
+                frame_number=next_launch_frame,
+                pixel=(0, 0),
+                draw_frame=next_launch_frame,
+                attempt_frame_number=next_launch_frame,
+            )
+        slots = self.candidate_slots(
+            extra=launch_marker, total_frames=total_frames,
+        )
+        if slots:
+            self.sync_slots(slots, len(slots) - 2)
 
     def finalize(self, total_frames: int) -> List[BounceEvent]:
         return normalize_attempt_events(self.events, total_frames, self.fps)
 
     def finish_session(self, total_frames: Optional[int] = None) -> None:
         """Flush the final detected attempt without inventing trailing cycles."""
-        self.publish_finished_attempt()
-        if self.on_snapshot is not None and total_frames is not None:
-            self.on_snapshot(self.finalize(total_frames))
+        final_event = self.finished_attempt_event()
+        if total_frames is None:
+            return
+        slots = self.candidate_slots(total_frames=total_frames)
+        if final_event is not None and slots and self.period is not None:
+            final_anchor = slots[-1][0]
+            evidence_anchor = (
+                final_event.attempt_frame_number or final_event.frame_number
+            )
+            if abs(final_anchor - evidence_anchor) <= self.period * .5:
+                slots[-1] = (
+                    final_anchor,
+                    replace(final_event, attempt_frame_number=final_anchor),
+                )
+        self.sync_slots(slots, len(slots) - 1)
 
 
 def attach_missing_machine_telemetry(
@@ -1921,13 +2022,14 @@ def process_video(
     writer: Optional[cv2.VideoWriter] = None,
     first_frame: Optional[VideoFrame] = None,
     on_event: Optional[Callable[[BounceEvent], None]] = None,
-    on_attempt_finished: Optional[Callable[[], None]] = None,
+    on_attempt_finished: Optional[Callable[[int], None]] = None,
     on_confirmed_hit: Optional[Callable[[BounceEvent], None]] = None,
     on_confirmed_non_hit: Optional[Callable[[BounceEvent], None]] = None,
     on_processing_frame: Optional[Callable[[int], None]] = None,
     clean_writer: Optional[cv2.VideoWriter] = None,
     clean_frame_limit: Optional[int] = None,
     clean_start_on_launch: bool = False,
+    on_attempt_started: Optional[Callable[[int], None]] = None,
 ) -> List[BounceEvent]:
     """Process an already-open source and return its detected bounce events."""
     fps = source.fps
@@ -1948,9 +2050,11 @@ def process_video(
     telemetry = TelemetryReader()
     clean_recording_started = not clean_start_on_launch
 
-    def mark_clean_recording_started(_frame_number: int) -> None:
+    def mark_clean_recording_started(frame_number: int) -> None:
         nonlocal clean_recording_started
         clean_recording_started = True
+        if on_attempt_started is not None:
+            on_attempt_started(frame_number)
 
     classifier = AttemptClassifier(
         fps, calibration, contact_polygon, net_line, occlusion, homography,
@@ -2175,46 +2279,29 @@ def main() -> None:
                         live_stdout_open = False
                         sys.stdout = open("/dev/null", "w", encoding="utf-8")
 
-            def write_event(event: BounceEvent) -> None:
-                record: Dict[str, Any] = event.to_record()
+            def write_attempt(attempt: Dict[str, Any]) -> None:
+                record = {"type": "attempt_upsert", **attempt}
                 record["publication_frame_number"] = processing_frame
                 record["publication_video_time_seconds"] = round(
                     processing_frame / fps, 3,
                 )
-                record["publication_delay_frames"] = (
-                    processing_frame - event.frame_number
-                )
-                record["publication_delay_seconds"] = round(
-                    (processing_frame - event.frame_number) / fps, 3,
-                )
-                serialized = json.dumps(record)
-                output.write(serialized + "\n")
-                output.flush()
+                if attempt["state"] == "finalized":
+                    evidence_frame = attempt.get(
+                        "frame_number", attempt["anchor_frame_number"],
+                    )
+                    record["publication_delay_frames"] = (
+                        processing_frame - evidence_frame
+                    )
+                    record["publication_delay_seconds"] = round(
+                        (processing_frame - evidence_frame) / fps, 3,
+                    )
+                    record["attempt_publication_delay_seconds"] = round(
+                        (processing_frame - attempt["anchor_frame_number"]) / fps,
+                        3,
+                    )
                 write_live_record(record)
 
-            def write_snapshot(events: Sequence[BounceEvent]) -> None:
-                write_live_record({
-                    "type": "snapshot",
-                    "publication_frame_number": processing_frame,
-                    "publication_video_time_seconds": round(
-                        processing_frame / fps, 3,
-                    ),
-                    "shots": [event.to_record() for event in events],
-                })
-
-            def write_reset(after_hit_frame: int) -> None:
-                write_live_record({
-                    "type": "reset",
-                    "after_hit_frame_number": after_hit_frame,
-                    "publication_frame_number": processing_frame,
-                    "publication_video_time_seconds": round(
-                        processing_frame / fps, 3,
-                    ),
-                })
-
-            live_normalizer = LiveAttemptNormalizer(
-                fps, write_event, write_snapshot, write_reset,
-            )
+            live_normalizer = LiveAttemptNormalizer(fps, write_attempt)
             events = process_video(
                 source, scale, calibration, homography, table,
                 args.end_seconds, writer, first_frame,
@@ -2229,8 +2316,8 @@ def main() -> None:
             live_normalizer.finish_session(processing_frame)
 
             # Cadence-based normalization can rename events and infer missed
-            # launches only after enough of the session is known. Replace the
-            # live snapshot with that canonical final result before exiting.
+            # launches only after enough of the session is known. Preserve the
+            # canonical analysis file independently of the live ledger log.
             output.seek(0)
             output.truncate()
             for event in events:

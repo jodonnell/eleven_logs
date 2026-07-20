@@ -58,36 +58,20 @@ def expected_streaks(outcomes: Sequence[str]) -> List[int]:
 def reconcile_live_messages(
     messages: Sequence[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """Apply the same shot/snapshot state updates as the browser."""
-    shots: List[Dict[str, Any]] = []
+    """Apply monotonic attempt upserts exactly as the browser does."""
+    attempts: Dict[str, Dict[str, Any]] = {}
     for message in messages:
-        if message.get("type") == "snapshot":
-            reset = next(
-                (item for item in reversed(shots) if item.get("display_only")),
-                None,
-            )
-            shots = list(message["shots"])
-            canonical_reset = reset is None or any(
-                item["outcome"] in ("miss", "out")
-                and item.get("attempt_frame_number", item["frame_number"])
-                > reset["after_hit_frame_number"]
-                for item in shots
-            )
-            if reset is not None and not canonical_reset:
-                shots.append(reset)
-        elif message.get("type") == "reset":
-            shots = [item for item in shots if not item.get("display_only")]
-            frame = message["after_hit_frame_number"] + 1
-            shots.append({
-                "outcome": "miss",
-                "frame_number": frame,
-                "attempt_frame_number": frame,
-                "display_only": True,
-                "after_hit_frame_number": message["after_hit_frame_number"],
-            })
-        else:
-            shots.append(message)
-    return shots
+        if message.get("type") != "attempt_upsert":
+            continue
+        attempt_id = message["attempt_id"]
+        current = attempts.get(attempt_id)
+        if current is not None and current["state"] == "finalized":
+            continue
+        attempts[attempt_id] = message
+    return sorted(
+        (item for item in attempts.values() if item["state"] == "finalized"),
+        key=lambda item: item["sequence"],
+    )
 
 
 def mismatch_line(
@@ -119,7 +103,7 @@ def verify_records(
         wanted = expected[index] if index < len(expected) else "<none>"
         record = canonical[index] if index < len(canonical) else None
         actual = record["outcome"] if record else "<missing>"
-        if record is None or is_hit(wanted) != is_hit(actual):
+        if record is None or wanted != actual:
             mismatches.append(mismatch_line(index, wanted, actual, record))
 
     logical_frames = [
@@ -148,7 +132,7 @@ def verify_records(
         wanted = expected[index]
         record = browser_shots[index]
         actual = record["outcome"]
-        if is_hit(wanted) != is_hit(actual):
+        if wanted != actual:
             mismatches.append(mismatch_line(index, wanted, actual, record))
     browser_streaks = streak_transitions(browser_shots)
     for index, (wanted, actual) in enumerate(zip(wanted_streaks, browser_streaks)):
@@ -161,24 +145,34 @@ def verify_records(
             ))
 
     shot_publications = [
-        record for record in live if record.get("type") not in ("snapshot", "reset")
+        record for record in live
+        if record.get("type") == "attempt_upsert"
+        and record.get("state") == "finalized"
     ]
+    ids = [record["attempt_id"] for record in shot_publications]
+    if len(ids) != len(set(ids)):
+        mismatches.append("duplicate-finalized-attempt-ids")
     for index, record in enumerate(shot_publications):
-        required = ("frame_number", "publication_frame_number", "publication_delay_seconds")
+        required = (
+            "attempt_id", "anchor_frame_number", "frame_number",
+            "publication_frame_number", "publication_delay_seconds",
+            "attempt_publication_delay_seconds",
+        )
         missing = [name for name in required if name not in record]
         if missing:
             mismatches.append(
                 mismatch_line(index, "publication metadata", f"missing:{','.join(missing)}", record)
             )
-        if (
-            record.get("outcome") == "miss"
-            and record.get("publication_delay_seconds", 0)
-            > fixture["max_no_swing_publication_delay_seconds"]
-        ):
+        outcome = record.get("outcome")
+        limit = fixture.get(
+            f"max_{outcome}_publication_delay_seconds",
+            fixture["max_no_swing_publication_delay_seconds"],
+        )
+        if record.get("attempt_publication_delay_seconds", 0) > limit:
             mismatches.append(mismatch_line(
                 index,
-                f"delay<={fixture['max_no_swing_publication_delay_seconds']}s",
-                f"delay={record['publication_delay_seconds']}s",
+                f"attempt-delay<={limit}s",
+                f"attempt-delay={record['attempt_publication_delay_seconds']}s",
                 record,
             ))
     return mismatches

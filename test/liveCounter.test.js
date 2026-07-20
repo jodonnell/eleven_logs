@@ -1,136 +1,63 @@
 import {
   currentHitStreak,
+  reconcileAttemptUpsert,
   reduceCounterState,
-  reconcileShotMessage,
 } from "../live-counter/counter.js"
 
-describe("live hit counter", () => {
-  it("calculates the streak in shot order rather than arrival order", () => {
-    const shots = [
-      { frame_number: 200, outcome: "hit" },
-      { frame_number: 300, outcome: "hit" },
-      { frame_number: 100, outcome: "miss" },
+const attempt = (sequence, state, outcome) => ({
+  type: "attempt_upsert",
+  attempt_id: `attempt-${String(sequence).padStart(4, "0")}`,
+  sequence,
+  anchor_frame_number: sequence * 100,
+  state,
+  ...(outcome ? { outcome } : {}),
+})
+
+describe("live hit counter attempt ledger", () => {
+  it("calculates the streak only from ordered finalized attempts", () => {
+    const attempts = [
+      attempt(3, "finalized", "hit"),
+      attempt(1, "finalized", "out"),
+      attempt(4, "pending"),
+      attempt(2, "finalized", "hit"),
     ]
 
-    expect(currentHitStreak(shots)).toBe(2)
+    expect(currentHitStreak(attempts)).toBe(2)
   })
 
-  it("retroactively resets and retains hits made after a late miss", () => {
-    const shots = [
-      { frame_number: 100, outcome: "hit" },
-      { frame_number: 300, outcome: "hit" },
-      { frame_number: 200, outcome: "miss" },
-    ]
+  it("upserts a pending attempt by stable ID", () => {
+    const pending = attempt(1, "pending")
+    const finalized = attempt(1, "finalized", "hit")
 
-    expect(currentHitStreak(shots)).toBe(1)
+    expect(reconcileAttemptUpsert([pending], finalized)).toEqual([finalized])
   })
 
-  it("resets when the newest chronological shot is a miss", () => {
-    const shots = [
-      { frame_number: 100, outcome: "hit" },
-      { frame_number: 300, outcome: "miss" },
-      { frame_number: 200, outcome: "hit" },
-    ]
+  it("does not replace a finalized outcome with contradictory evidence", () => {
+    const hit = attempt(1, "finalized", "hit")
+    const contradiction = attempt(1, "finalized", "out")
 
-    expect(currentHitStreak(shots)).toBe(0)
+    expect(reconcileAttemptUpsert([hit], contradiction)).toEqual([hit])
   })
 
-  it("treats an out as a missed streak shot", () => {
-    const shots = [
-      { frame_number: 100, outcome: "hit" },
-      { frame_number: 200, outcome: "out" },
-      { frame_number: 300, outcome: "hit" },
-    ]
-
-    expect(currentHitStreak(shots)).toBe(1)
-  })
-
-  it("uses a reconciled attempt frame while preserving the evidence frame", () => {
-    const shots = [
-      { frame_number: 100, attempt_frame_number: 100, outcome: "hit" },
-      { frame_number: 500, attempt_frame_number: 200, outcome: "out" },
-      { frame_number: 300, attempt_frame_number: 300, outcome: "hit" },
-    ]
-
-    expect(currentHitStreak(shots)).toBe(1)
-  })
-
-  it("replaces provisional shots with a cadence-reconciled snapshot", () => {
-    const provisional = [
-      { frame_number: 100, outcome: "hit" },
-      { frame_number: 150, outcome: "miss" },
-    ]
-    const snapshot = {
-      type: "snapshot",
-      shots: [
-        { frame_number: 100, attempt_frame_number: 90, outcome: "hit" },
-        { frame_number: 200, attempt_frame_number: 150, outcome: "hit" },
-      ],
-    }
-
-    const reconciled = reconcileShotMessage(provisional, snapshot)
-
-    expect(reconciled).toEqual(snapshot.shots)
-    expect(currentHitStreak(reconciled)).toBe(2)
-  })
-
-  it("retains display-only reset signals as a streak boundary", () => {
-    const shots = [{ frame_number: 100, outcome: "hit" }]
-
-    const reconciled = reconcileShotMessage(shots, {
-      type: "reset",
-      after_hit_frame_number: 100,
-    })
-
-    expect(reconciled).toEqual([
-      expect.objectContaining({ outcome: "miss", display_only: true }),
-    ])
-    expect(currentHitStreak(reconciled)).toBe(0)
-  })
-
-  it("counts hits after a timed reset instead of remaining at zero", () => {
+  it("derives every visible transition from the finalized ledger", () => {
     const messages = [
-      { outcome: "hit", frame_number: 100 },
-      { outcome: "hit", frame_number: 160 },
-      { outcome: "hit", frame_number: 220 },
-      { type: "reset", after_hit_frame_number: 220 },
-      {
-        type: "snapshot",
-        shots: [
-          { outcome: "hit", frame_number: 100 },
-          { outcome: "hit", frame_number: 160 },
-          { outcome: "hit", frame_number: 220 },
-        ],
-      },
-      { outcome: "hit", frame_number: 280 },
-      { outcome: "hit", frame_number: 340 },
-      { outcome: "hit", frame_number: 400 },
+      attempt(1, "pending"),
+      attempt(1, "finalized", "hit"),
+      attempt(2, "pending"),
+      attempt(2, "finalized", "hit"),
+      attempt(3, "pending"),
+      attempt(3, "finalized", "miss"),
+      attempt(4, "pending"),
+      attempt(4, "finalized", "hit"),
     ]
-    let state = { shots: [], streak: 0 }
+    let state = { attempts: [], streak: 0 }
 
     const visible = messages.map((message) => {
       state = reduceCounterState(state, message)
       return state.streak
     })
 
-    expect(visible).toEqual([1, 2, 3, 0, 0, 1, 2, 3])
-  })
-
-  it("counts a late-published hit whose evidence frame precedes the reset", () => {
-    let state = reduceCounterState(
-      { shots: [], streak: 0 },
-      { outcome: "hit", frame_number: 100 },
-    )
-    state = reduceCounterState(state, {
-      type: "reset",
-      after_hit_frame_number: 100,
-    })
-
-    state = reduceCounterState(state, {
-      outcome: "hit",
-      frame_number: 90,
-    })
-
-    expect(state.streak).toBe(1)
+    expect(visible).toEqual([0, 1, 1, 2, 2, 0, 0, 1])
+    expect(state.attempts).toHaveLength(4)
   })
 })

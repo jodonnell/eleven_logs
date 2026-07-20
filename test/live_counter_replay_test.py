@@ -39,9 +39,9 @@ class StructuredLiveNormalizerTest(unittest.TestCase):
         processing_frame = 0
         publications = []
 
-        def publish(event):
+        def publish(attempt):
             publications.append({
-                **event.to_record(),
+                **attempt,
                 "publication_frame_number": processing_frame,
             })
 
@@ -72,35 +72,37 @@ class StructuredLiveNormalizerTest(unittest.TestCase):
             processing_frame = launch + fixture["launch_detection_delay_frames"]
             if pending is not None:
                 normalizer.observe(pending)
-                normalizer.settle_attempt()
+                normalizer.settle_attempt(launch)
             pending = detected_event(launch, item["outcome"])
             if item["outcome"] == "hit":
                 processing_frame = pending.draw_frame
                 normalizer.observe_confirmed_hit(pending)
         processing_frame = fixture["attempts"][-1]["launch_frame_number"] + 60
         normalizer.observe(pending)
-        normalizer.finish_session()
+        normalizer.finish_session(processing_frame)
 
         expected = [item["outcome"] for item in fixture["attempts"]]
-        self.assertEqual(
-            [item["outcome"] for item in publications],
-            expected,
-            publications,
-        )
-        self.assertEqual(len(publications), len(fixture["attempts"]))
-        self.assertEqual(
-            streak_transitions(publications), expected_streaks(expected),
-        )
-        logical_frames = [
-            item.get("attempt_frame_number", item["frame_number"])
-            for item in publications
+        finalized = [
+            item for item in publications if item["state"] == "finalized"
         ]
-        self.assertEqual(len(logical_frames), len(set(logical_frames)))
+        self.assertEqual(
+            [item["outcome"] for item in finalized],
+            expected,
+            finalized,
+        )
+        self.assertEqual(len(finalized), len(fixture["attempts"]))
+        self.assertEqual(
+            streak_transitions(finalized), expected_streaks(expected),
+        )
+        attempt_ids = [item["attempt_id"] for item in finalized]
+        self.assertEqual(len(attempt_ids), len(set(attempt_ids)))
         for index in fixture["no_swing_indexes"]:
-            publication = publications[index]
+            publication = finalized[index]
             next_launch = fixture["attempts"][index + 1]["launch_frame_number"]
             deadline = next_launch + fixture["launch_detection_delay_frames"]
-            self.assertLessEqual(publication["publication_frame_number"], deadline)
+            self.assertLessEqual(
+                publication["publication_frame_number"], deadline, finalized,
+            )
 
     def test_mismatch_report_includes_expected_actual_timestamp_and_delay(self):
         fixture = {
