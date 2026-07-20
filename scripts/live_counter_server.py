@@ -142,6 +142,14 @@ def analyzer_command(args: argparse.Namespace) -> List[str]:
         command.extend(["--calibration", args.calibration])
     if args.annotated:
         command.extend(["--annotated", args.annotated])
+    if args.clean_recording:
+        command.extend([
+            "--clean-recording", args.clean_recording,
+            "--clean-recording-seconds", str(args.clean_recording_seconds),
+            "--clean-recording-start", args.clean_recording_start,
+        ])
+    if args.live_events:
+        command.extend(["--live-events", args.live_events])
     return command
 
 
@@ -171,6 +179,26 @@ def parse_args() -> argparse.Namespace:
         nargs="?",
         const="video_bounces_annotated.mp4",
         help="write analyzer diagnostics, optionally to a custom MP4 path",
+    )
+    parser.add_argument(
+        "--clean-recording",
+        help="bounded clean detector-input MP4 forwarded to the analyzer",
+    )
+    parser.add_argument(
+        "--clean-recording-seconds",
+        type=float,
+        default=120,
+        help="maximum clean recording length (default: 120 seconds)",
+    )
+    parser.add_argument(
+        "--clean-recording-start",
+        choices=("launch", "immediate"),
+        default="launch",
+        help="when the analyzer starts the clean recording",
+    )
+    parser.add_argument(
+        "--live-events",
+        help="append-only live publication JSONL forwarded to the analyzer",
     )
     parser.add_argument("--output", default="video_bounces.jsonl")
     return parser.parse_args()

@@ -1,4 +1,7 @@
-import { currentHitStreak } from "../live-counter/counter.js"
+import {
+  currentHitStreak,
+  reconcileShotMessage,
+} from "../live-counter/counter.js"
 
 describe("live hit counter", () => {
   it("calculates the streak in shot order rather than arrival order", () => {
@@ -39,5 +42,34 @@ describe("live hit counter", () => {
     ]
 
     expect(currentHitStreak(shots)).toBe(1)
+  })
+
+  it("uses a reconciled attempt frame while preserving the evidence frame", () => {
+    const shots = [
+      { frame_number: 100, attempt_frame_number: 100, outcome: "hit" },
+      { frame_number: 500, attempt_frame_number: 200, outcome: "out" },
+      { frame_number: 300, attempt_frame_number: 300, outcome: "hit" },
+    ]
+
+    expect(currentHitStreak(shots)).toBe(1)
+  })
+
+  it("replaces provisional shots with a cadence-reconciled snapshot", () => {
+    const provisional = [
+      { frame_number: 100, outcome: "hit" },
+      { frame_number: 150, outcome: "miss" },
+    ]
+    const snapshot = {
+      type: "snapshot",
+      shots: [
+        { frame_number: 100, attempt_frame_number: 90, outcome: "hit" },
+        { frame_number: 200, attempt_frame_number: 150, outcome: "hit" },
+      ],
+    }
+
+    const reconciled = reconcileShotMessage(provisional, snapshot)
+
+    expect(reconciled).toEqual(snapshot.shots)
+    expect(currentHitStreak(reconciled)).toBe(2)
   })
 })

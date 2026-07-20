@@ -133,6 +133,7 @@ class BounceEvent:
     frame_number: int
     pixel: Point = field(repr=False)
     draw_frame: int = field(repr=False)
+    attempt_frame_number: Optional[int] = None
     return_crossed_net: Optional[bool] = None
     hit: Optional[Dict[str, Any]] = None
     machine: Optional[Dict[str, Any]] = None
@@ -141,6 +142,8 @@ class BounceEvent:
         record = asdict(self)
         record.pop("pixel")
         record.pop("draw_frame")
+        if record["attempt_frame_number"] is None:
+            record.pop("attempt_frame_number")
         if record["return_crossed_net"] is None:
             record.pop("return_crossed_net")
         if record["hit"] is None:
@@ -1018,17 +1021,12 @@ def draw_overlay(
                 cv2.circle(view, center, 2, (190, 190, 190), 1)
                 continue
             cv2.drawMarker(view, center, colors["rejected"], cv2.MARKER_TILTED_CROSS, 8, 1)
-            if candidate.reason:
-                cv2.putText(
-                    view, candidate.reason, (center[0] + 5, center[1] - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, .32, colors["rejected"], 1,
-                )
         for path in diagnostics.unconfirmed_tracks:
             points = np.int32([(point[1], point[2]) for point in path])
             if len(points) >= 2:
                 cv2.polylines(view, [points], False, (255, 255, 0), 1)
         current_frame = frame_number if frame_number is not None else 0
-        for completed in diagnostics.visible_completed_tracks(current_frame):
+        for completed in diagnostics.visible_completed_tracks(current_frame)[-8:]:
             color = colors[completed.kind]
             points = np.int32([(point[1], point[2]) for point in completed.points])
             if len(points) >= 2:
@@ -1092,6 +1090,7 @@ class AttemptClassifier:
         on_attempt_finished: Optional[Callable[[], None]] = None,
         on_confirmed_hit: Optional[Callable[[BounceEvent], None]] = None,
         on_track_diagnostic: Optional[Callable[[TrackDiagnostic, int], None]] = None,
+        on_attempt_started: Optional[Callable[[int], None]] = None,
     ) -> None:
         self.fps = fps
         self.calibration = calibration
@@ -1105,6 +1104,7 @@ class AttemptClassifier:
         self.on_attempt_finished = on_attempt_finished
         self.on_confirmed_hit = on_confirmed_hit
         self.on_track_diagnostic = on_track_diagnostic
+        self.on_attempt_started = on_attempt_started
         self.events: List[BounceEvent] = []
         self.emitted: Set[Tuple[int, int]] = set()
         self.active_attempt: Optional[Attempt] = None
@@ -1283,6 +1283,8 @@ class AttemptClassifier:
             report_no_bounce=self.is_reportable_launcher_track(path),
             machine_telemetry=self.telemetry_near(path[0][0]),
         )
+        if self.on_attempt_started is not None:
+            self.on_attempt_started(draw_frame)
 
     def return_evidence(self, path: Track) -> Tuple[bool, bool]:
         start_pixel = (path[0][1], path[0][2])
@@ -1342,6 +1344,7 @@ class AttemptClassifier:
             frame_number=attempt.frame,
             pixel=attempt.pixel,
             draw_frame=draw_frame,
+            attempt_frame_number=attempt.frame,
             return_crossed_net=bool(crossed_net) if attempt.returns else None,
             machine=(
                 attempt.machine_telemetry.to_record(self.fps)
@@ -1414,6 +1417,7 @@ class AttemptClassifier:
             frame_number=hit[0],
             pixel=pixel,
             draw_frame=draw_frame,
+            attempt_frame_number=self.active_attempt.frame,
             hit=(
                 hit_telemetry.to_record(self.fps) if hit_telemetry else None
             ),
@@ -1535,8 +1539,17 @@ def attempt_event_slots(
         for event in hits
     ]
     phase += sorted(signed)[len(signed) // 2]
-    while phase - period >= period * .5:
+    earliest_evidence = min(event.frame_number for event in events)
+    while phase - period >= earliest_evidence - period * .3:
         phase -= period
+    # A live source may sit idle for minutes before and after a drill. Cadence
+    # can fill gaps between observed attempts, but must not manufacture cycles
+    # across those idle regions. One period beyond the last processed piece of
+    # evidence is sufficient to close a final detected launch.
+    # draw_frame can be the moment Ctrl-C/EOF finally closes an attempt, long
+    # after the shot itself. Only the evidence frame bounds active cadence.
+    latest_evidence = max(event.frame_number for event in events)
+    total_frames = min(total_frames, round(latest_evidence + period))
     anchors: List[int] = []
     anchor = phase
     while anchor < total_frames:
@@ -1605,7 +1618,7 @@ def normalize_attempt_events(
     period, slots = attempt_event_slots(events, total_frames, fps)
     if period is None:
         return list(events)
-    return [event for _, event in slots]
+    return [replace(event, attempt_frame_number=anchor) for anchor, event in slots]
 
 
 class LiveAttemptNormalizer:
@@ -1617,9 +1630,15 @@ class LiveAttemptNormalizer:
     launch to finish the preceding attempt before a miss can be emitted.
     """
 
-    def __init__(self, fps: float, on_event: Callable[[BounceEvent], None]) -> None:
+    def __init__(
+        self,
+        fps: float,
+        on_event: Callable[[BounceEvent], None],
+        on_snapshot: Optional[Callable[[Sequence[BounceEvent]], None]] = None,
+    ) -> None:
         self.fps = fps
         self.on_event = on_event
+        self.on_snapshot = on_snapshot
         self.events: List[BounceEvent] = []
         self.period: Optional[float] = None
         self.emitted_anchors: List[int] = []
@@ -1649,7 +1668,22 @@ class LiveAttemptNormalizer:
             ),
         )
         outcome = "out" if event.outcome == "off_table" else "miss"
-        self.on_event(replace(event, outcome=outcome))
+        published = replace(event, outcome=outcome)
+        if self.period is not None:
+            _, slots = attempt_event_slots(
+                self.events,
+                round(max(item.frame_number for item in self.events) + self.period * 1.5),
+                self.fps,
+            )
+            matching_anchors = [
+                anchor for anchor, slotted in slots
+                if slotted.frame_number == event.frame_number
+            ]
+            if matching_anchors:
+                published = replace(
+                    published, attempt_frame_number=matching_anchors[0],
+                )
+        self.on_event(published)
         self.immediate_event_frames.append(event.frame_number)
 
     def observe_confirmed_hit(self, event: BounceEvent) -> None:
@@ -1711,11 +1745,27 @@ class LiveAttemptNormalizer:
                 for emitted in self.emitted_anchors
             ):
                 continue
-            self.on_event(event)
+            self.on_event(replace(event, attempt_frame_number=anchor))
             self.emitted_anchors.append(anchor)
+        if self.on_snapshot is not None:
+            settled = [
+                replace(event, attempt_frame_number=anchor)
+                for anchor, event in slots
+                if any(
+                    abs(anchor - emitted) <= self.period * .5
+                    for emitted in self.emitted_anchors
+                )
+            ]
+            self.on_snapshot(settled)
 
     def finalize(self, total_frames: int) -> List[BounceEvent]:
         return normalize_attempt_events(self.events, total_frames, self.fps)
+
+    def finish_session(self, total_frames: Optional[int] = None) -> None:
+        """Flush the final detected attempt without inventing trailing cycles."""
+        self.publish_finished_attempt()
+        if self.on_snapshot is not None and total_frames is not None:
+            self.on_snapshot(self.finalize(total_frames))
 
 
 def attach_missing_machine_telemetry(
@@ -1758,11 +1808,14 @@ def attach_missing_machine_telemetry(
 
 
 def create_video_writer(
-    path: PathLike, fps: float, size: Tuple[int, int]
+    path: PathLike,
+    fps: float,
+    size: Tuple[int, int],
+    codec: str = "mp4v",
 ) -> cv2.VideoWriter:
     """Create an annotated-video writer or fail before processing begins."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"mp4v"), fps, size)
+    writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*codec), fps, size)
     if not writer.isOpened():
         writer.release()
         raise SystemExit(f"Could not create annotated video at {path}")
@@ -1788,6 +1841,10 @@ def process_video(
     on_event: Optional[Callable[[BounceEvent], None]] = None,
     on_attempt_finished: Optional[Callable[[], None]] = None,
     on_confirmed_hit: Optional[Callable[[BounceEvent], None]] = None,
+    on_processing_frame: Optional[Callable[[int], None]] = None,
+    clean_writer: Optional[cv2.VideoWriter] = None,
+    clean_frame_limit: Optional[int] = None,
+    clean_start_on_launch: bool = False,
 ) -> List[BounceEvent]:
     """Process an already-open source and return its detected bounce events."""
     fps = source.fps
@@ -1806,15 +1863,24 @@ def process_video(
         if writer is not None else None
     )
     telemetry = TelemetryReader()
+    clean_recording_started = not clean_start_on_launch
+
+    def mark_clean_recording_started(_frame_number: int) -> None:
+        nonlocal clean_recording_started
+        clean_recording_started = True
+
     classifier = AttemptClassifier(
         fps, calibration, contact_polygon, net_line, occlusion, homography,
         video_width, video_height, scale, settings, on_event,
         on_attempt_finished, on_confirmed_hit,
         diagnostics.completed_track if diagnostics is not None else None,
+        mark_clean_recording_started,
     )
     previous_gray = None
     next_frame = first_frame
     frame_number = first_frame.number if first_frame is not None else 0
+    clean_frames_written = 0
+    clean_seed_written = False
     try:
         while True:
             video_frame = next_frame if next_frame is not None else source.read()
@@ -1826,11 +1892,43 @@ def process_video(
                 break
             frame_number = video_frame.number
             original = video_frame.image
+            if on_processing_frame is not None:
+                on_processing_frame(frame_number)
+            if (
+                clean_writer is not None
+                and clean_start_on_launch
+                and not clean_seed_written
+            ):
+                # Keep one stable setup frame for automatic calibration. The
+                # continuous bounded recording still waits for detector
+                # activity, so a long headset setup does not consume it.
+                clean_seed_written = True
             if frame_number % 3 == 0:
                 reading = telemetry.update(original, frame_number)
                 if reading is not None:
                     classifier.observe_telemetry(reading)
             frame = cv2.resize(original, (width, height), interpolation=cv2.INTER_AREA)
+            wrote_clean_seed = (
+                clean_writer is not None
+                and clean_start_on_launch
+                and clean_frames_written == 0
+                and clean_seed_written
+            )
+            if wrote_clean_seed:
+                clean_writer.write(frame)
+                clean_frames_written += 1
+            elif (
+                clean_writer is not None
+                and clean_recording_started
+                and (
+                    clean_frame_limit is None
+                    or clean_frames_written < clean_frame_limit
+                )
+            ):
+                # Store the exact resized detector input losslessly before any
+                # diagnostics are drawn. This makes offline replay pixel-equivalent.
+                clean_writer.write(frame)
+                clean_frames_written += 1
             if diagnostics is not None:
                 diagnostics.begin_frame()
             gray, candidates = candidates_for_frame(
@@ -1853,6 +1951,8 @@ def process_video(
         # A live source normally ends when the user stops it. Preserve and
         # flush the completed session instead of discarding every event.
         pass
+    if on_processing_frame is not None:
+        on_processing_frame(frame_number)
     classifier.finish_attempt(frame_number)
     normalized = normalize_attempt_events(classifier.events, frame_number, fps)
     return attach_missing_machine_telemetry(
@@ -1878,16 +1978,42 @@ def main() -> None:
         metavar="MP4",
         help="write annotated video, optionally to a custom path",
     )
+    parser.add_argument(
+        "--clean-recording",
+        metavar="MP4",
+        help="record clean decoded detector input before overlays are drawn",
+    )
+    parser.add_argument(
+        "--clean-recording-seconds",
+        type=float,
+        default=120,
+        help="maximum clean recording length (default: 120 seconds)",
+    )
+    parser.add_argument(
+        "--clean-recording-start",
+        choices=("launch", "immediate"),
+        default="launch",
+        help="start clean capture at the first detected launch (default) or immediately",
+    )
+    parser.add_argument(
+        "--live-events",
+        metavar="JSONL",
+        help="append-only live publication log with shot and publication frames",
+    )
     parser.add_argument("--no-annotated", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--start-seconds", type=float, default=0, help="seek point; useful when reviewing a short interval")
     parser.add_argument("--end-seconds", type=float, help="stop after this video timestamp")
     args = parser.parse_args()
+    if args.clean_recording_seconds <= 0:
+        parser.error("--clean-recording-seconds must be greater than zero")
     annotated_path = None if args.no_annotated else args.annotated
     if not args.extract_calibration_frame:
         # Live SRT sources can block while waiting for the sender. Clear stale
         # events before opening the source so observers immediately see that a
         # new server session has begun.
         reset_output_file(args.output)
+        if args.live_events is not None:
+            reset_output_file(args.live_events)
     try:
         source = open_video_source(args.video)
         try:
@@ -1911,6 +2037,8 @@ def main() -> None:
         print(json.dumps({"calibration_frame": args.extract_calibration_frame, "image_size": [video_width, video_height]}, indent=2))
         return
     writer = None
+    clean_writer = None
+    live_events_output = None
     first_frame = None
     try:
         if args.calibration:
@@ -1932,21 +2060,70 @@ def main() -> None:
             )
         if annotated_path is not None:
             writer = create_video_writer(annotated_path, fps, (width, height))
+        if args.clean_recording is not None:
+            if Path(args.clean_recording).suffix.lower() != ".mkv":
+                raise SystemExit("--clean-recording must use an .mkv path for lossless FFV1")
+            clean_writer = create_video_writer(
+                args.clean_recording, fps, (width, height), codec="FFV1",
+            )
+        if args.live_events is not None:
+            live_events_output = open(args.live_events, "a", encoding="utf-8")
         with open(args.output, "w", encoding="utf-8") as output:
-            def write_event(event: BounceEvent) -> None:
-                serialized = json.dumps(event.to_record())
-                output.write(serialized + "\n")
-                output.flush()
+            processing_frame = first_frame.number if first_frame is not None else 0
+
+            def observe_processing_frame(frame_number: int) -> None:
+                nonlocal processing_frame
+                processing_frame = frame_number
+
+            def write_live_record(record: Dict[str, Any]) -> None:
+                serialized = json.dumps(record)
+                if live_events_output is not None:
+                    live_events_output.write(serialized + "\n")
+                    live_events_output.flush()
                 if args.live_stdout:
                     print(serialized, flush=True)
 
-            live_normalizer = LiveAttemptNormalizer(fps, write_event)
+            def write_event(event: BounceEvent) -> None:
+                record: Dict[str, Any] = event.to_record()
+                record["publication_frame_number"] = processing_frame
+                record["publication_video_time_seconds"] = round(
+                    processing_frame / fps, 3,
+                )
+                record["publication_delay_frames"] = (
+                    processing_frame - event.frame_number
+                )
+                record["publication_delay_seconds"] = round(
+                    (processing_frame - event.frame_number) / fps, 3,
+                )
+                serialized = json.dumps(record)
+                output.write(serialized + "\n")
+                output.flush()
+                write_live_record(record)
+
+            def write_snapshot(events: Sequence[BounceEvent]) -> None:
+                write_live_record({
+                    "type": "snapshot",
+                    "publication_frame_number": processing_frame,
+                    "publication_video_time_seconds": round(
+                        processing_frame / fps, 3,
+                    ),
+                    "shots": [event.to_record() for event in events],
+                })
+
+            live_normalizer = LiveAttemptNormalizer(
+                fps, write_event, write_snapshot,
+            )
             events = process_video(
                 source, scale, calibration, homography, table,
                 args.end_seconds, writer, first_frame,
                 live_normalizer.observe, live_normalizer.settle_attempt,
                 live_normalizer.observe_confirmed_hit,
+                observe_processing_frame,
+                clean_writer,
+                round(args.clean_recording_seconds * fps),
+                args.clean_recording_start == "launch",
             )
+            live_normalizer.finish_session(processing_frame)
 
             # Cadence-based normalization can rename events and infer missed
             # launches only after enough of the session is known. Replace the
@@ -1960,10 +2137,16 @@ def main() -> None:
         source.close()
         if writer is not None:
             writer.release()
+        if clean_writer is not None:
+            clean_writer.release()
+        if live_events_output is not None:
+            live_events_output.close()
     print(json.dumps({
         "events": len(events),
         "output": args.output,
         "annotated": annotated_path,
+        "clean_recording": args.clean_recording,
+        "live_events": args.live_events,
     }, indent=2), file=sys.stderr if args.live_stdout else sys.stdout)
 
 

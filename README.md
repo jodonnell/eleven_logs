@@ -52,8 +52,40 @@ npm run counter:quest
 ```
 
 For a short detector-diagnostic session, use `npm run counter:quest:debug`.
-It also writes `artifacts/live-counter-debug.mp4`; stop it with Ctrl-C after
-the relevant hits and misses so the recording stays small.
+It writes two complementary artifacts:
+
+- `artifacts/live-counter-clean.mkv` is lossless FFV1 detector input captured before
+  overlays. Recording begins at the first detected machine launch and is
+  capped at 45 seconds by the Quest debug shortcut, so headset/setup time does
+  not consume the bound. Expect roughly 1.3 GB at the current resolution.
+- `artifacts/live-counter-events.jsonl` preserves every live publication with
+  its shot frame, publication frame, and publication delay.
+
+The event stream also carries cadence snapshots. The browser uses their
+logical `attempt_frame_number` to replace provisional observations while
+retaining each detector evidence `frame_number` for diagnostics.
+
+Stop it with Ctrl-C after the labeled sequence. Change the bound with
+`--clean-recording-seconds`, or force recording from stream startup with
+`--clean-recording-start immediate`. Clean recording remains optional for
+normal use. Render verbose overlays afterward, without burdening live capture:
+
+```sh
+python3 scripts/analyze_video.py artifacts/live-counter-clean.mkv \
+  --annotated artifacts/live-counter-debug.mp4 \
+  --output artifacts/live-counter-replay.jsonl
+```
+
+Run the checked-in clean sample through the detector, live normalizer, and
+browser-order regression with:
+
+```sh
+npm run counter:replay
+```
+
+Failures print a compact expected/actual result with shot timestamp and live
+publication delay. The shorter structured unit fixture covers 5 hits, 2
+no-swings, 3 hits, 1 out, and 3 hits for fast normalizer iteration.
 
 Press Ctrl-C in the terminal to stop both the server and analyzer. Use
 `--calibration PATH.json`, `--output PATH.jsonl`, `--host`, or `--port` after

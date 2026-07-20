@@ -1,0 +1,20 @@
+{
+  "launch_detection_delay_frames": 10,
+  "no_swing_indexes": [5, 6],
+  "attempts": [
+    {"launch_frame_number": 0, "outcome": "hit"},
+    {"launch_frame_number": 60, "outcome": "hit"},
+    {"launch_frame_number": 120, "outcome": "hit"},
+    {"launch_frame_number": 180, "outcome": "hit"},
+    {"launch_frame_number": 240, "outcome": "hit"},
+    {"launch_frame_number": 300, "outcome": "miss"},
+    {"launch_frame_number": 360, "outcome": "miss"},
+    {"launch_frame_number": 420, "outcome": "hit"},
+    {"launch_frame_number": 480, "outcome": "hit"},
+    {"launch_frame_number": 540, "outcome": "hit"},
+    {"launch_frame_number": 600, "outcome": "out"},
+    {"launch_frame_number": 660, "outcome": "hit"},
+    {"launch_frame_number": 720, "outcome": "hit"},
+    {"launch_frame_number": 780, "outcome": "hit"}
+  ]
+}

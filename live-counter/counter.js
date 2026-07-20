@@ -1,6 +1,8 @@
 export const currentHitStreak = (shots) => {
   const ordered = [...shots].sort(
-    (left, right) => left.frame_number - right.frame_number,
+    (left, right) =>
+      (left.attempt_frame_number ?? left.frame_number) -
+      (right.attempt_frame_number ?? right.frame_number),
   )
   let streak = 0
   for (const shot of ordered) {
@@ -12,3 +14,6 @@ export const currentHitStreak = (shots) => {
   }
   return streak
 }
+
+export const reconcileShotMessage = (shots, message) =>
+  message.type === "snapshot" ? [...message.shots] : [...shots, message]

@@ -297,6 +297,16 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertEqual(len(settled), 1)
         self.assertEqual(settled[0], classifier.events)
 
+    def test_classifier_signals_when_the_first_machine_launch_is_detected(self):
+        started = []
+        classifier = self.classifier()
+        classifier.on_attempt_started = started.append
+        launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+
+        classifier.process_tracks([launch], draw_frame=18)
+
+        self.assertEqual(started, [18])
+
     def test_confirmed_hit_is_reported_before_the_attempt_finishes(self):
         reported = []
         normalizer = LiveAttemptNormalizer(60, reported.append)
@@ -780,6 +790,19 @@ class VideoDetectorUnitTest(unittest.TestCase):
 
         self.assertEqual([event.outcome for event in normalized], ["hit", "miss", "hit", "hit"])
 
+    def test_cadence_does_not_fill_long_idle_setup_or_tail_periods(self):
+        events = [self.cadence_event(frame) for frame in (7382, 7461, 7539)]
+        events[-1].draw_frame = 12882
+
+        normalized = normalize_attempt_events(events, total_frames=12882, fps=60)
+
+        self.assertLessEqual(len(normalized), 4)
+        self.assertEqual(
+            [event.outcome for event in normalized[:3]],
+            ["hit", "hit", "hit"],
+        )
+        self.assertGreaterEqual(normalized[0].frame_number, 7300)
+
     def test_live_normalizer_emits_settled_hits_after_cadence_warmup(self):
         reported = []
         normalizer = LiveAttemptNormalizer(60, reported.append)
@@ -807,6 +830,16 @@ class VideoDetectorUnitTest(unittest.TestCase):
 
         self.assertEqual(reported, [])
         normalizer.settle_attempt()
+
+        self.assertEqual([event.outcome for event in reported], ["miss"])
+
+    def test_live_normalizer_flushes_only_the_final_detected_attempt(self):
+        reported = []
+        normalizer = LiveAttemptNormalizer(60, reported.append)
+        normalizer.observe(self.cadence_event(70, "unknown", .2))
+
+        normalizer.finish_session()
+        normalizer.finish_session()
 
         self.assertEqual([event.outcome for event in reported], ["miss"])
 

@@ -44,17 +44,54 @@ class ShotEventBrokerTest(unittest.TestCase):
         self.assertEqual(events.resume_index("previous-session:12"), 0)
         self.assertEqual(events.resume_index("12"), 0)
 
+    def test_reconnect_after_restart_replays_the_new_session_from_the_start(self):
+        previous = ShotEventBroker()
+        previous.publish({"outcome": "hit", "frame_number": 10})
+        stale_id = previous.stream_id(1)
+        restarted = ShotEventBroker()
+        shot = {"outcome": "miss", "frame_number": 20}
+        restarted.publish(shot)
+
+        updates = restarted.subscribe(restarted.resume_index(stale_id))
+
+        self.assertEqual(updates.get_nowait(), (1, shot))
+
     def test_analyzer_command_forwards_annotated_video_path(self):
         args = Namespace(
             video="srt://camera:9000",
             output="shots.jsonl",
             calibration=None,
             annotated="artifacts/live-debug.mp4",
+            clean_recording=None,
+            clean_recording_seconds=120,
+            clean_recording_start="launch",
+            live_events=None,
         )
 
         command = analyzer_command(args)
 
         self.assertEqual(command[-2:], ["--annotated", "artifacts/live-debug.mp4"])
+
+    def test_analyzer_command_forwards_bounded_clean_capture_and_live_log(self):
+        args = Namespace(
+            video="srt://camera:9000",
+            output="shots.jsonl",
+            calibration=None,
+            annotated=None,
+            clean_recording="artifacts/live-clean.mkv",
+            clean_recording_seconds=90,
+            clean_recording_start="launch",
+            live_events="artifacts/live-events.jsonl",
+        )
+
+        command = analyzer_command(args)
+
+        self.assertEqual(command[-8:], [
+            "--clean-recording", "artifacts/live-clean.mkv",
+            "--clean-recording-seconds", "90",
+            "--clean-recording-start", "launch",
+            "--live-events", "artifacts/live-events.jsonl",
+        ])
 
 
 if __name__ == "__main__":

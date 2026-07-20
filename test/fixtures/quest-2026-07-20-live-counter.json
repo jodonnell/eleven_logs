@@ -1,0 +1,17 @@
+{
+  "video": "artifacts/live-counter-clean.mkv",
+  "max_no_swing_publication_delay_seconds": 2.5,
+  "notes": "User-labeled Quest sequence; net contacts count as non-hits.",
+  "outcomes": [
+    "hit", "hit", "hit", "hit", "hit",
+    "miss", "miss",
+    "hit",
+    "miss", "miss",
+    "hit",
+    "out",
+    "miss", "miss",
+    "out",
+    "hit",
+    "miss"
+  ]
+}
