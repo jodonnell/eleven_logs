@@ -83,7 +83,6 @@ describe("live hit counter", () => {
     })
 
     expect(reconciled).toEqual([
-      ...shots,
       expect.objectContaining({ outcome: "miss", display_only: true }),
     ])
     expect(currentHitStreak(reconciled)).toBe(0)
@@ -115,5 +114,23 @@ describe("live hit counter", () => {
     })
 
     expect(visible).toEqual([1, 2, 3, 0, 0, 1, 2, 3])
+  })
+
+  it("counts a late-published hit whose evidence frame precedes the reset", () => {
+    let state = reduceCounterState(
+      { shots: [], streak: 0 },
+      { outcome: "hit", frame_number: 100 },
+    )
+    state = reduceCounterState(state, {
+      type: "reset",
+      after_hit_frame_number: 100,
+    })
+
+    state = reduceCounterState(state, {
+      outcome: "hit",
+      frame_number: 90,
+    })
+
+    expect(state.streak).toBe(1)
   })
 })

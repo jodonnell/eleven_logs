@@ -94,6 +94,11 @@
         const shot = JSON.parse(data)
         counterState = reduceCounterState(counterState, shot)
         count.textContent = counterState.streak
+        document.dispatchEvent(
+          new CustomEvent("counter-update", {
+            detail: { message: shot, streak: counterState.streak },
+          }),
+        )
       }
 
       events.onopen = () => {
