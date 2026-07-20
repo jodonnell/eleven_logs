@@ -27,8 +27,8 @@ from analyze_video import (  # noqa: E402
 
 
 class VideoDetectorUnitTest(unittest.TestCase):
-    def classifier(self) -> AttemptClassifier:
-        calibration = {
+    def classifier(self, calibration=None) -> AttemptClassifier:
+        calibration = calibration or {
             "table_surface_y": 0.7786086,
             "launcher_region": [580, 0, 950, 300],
         }
@@ -365,6 +365,65 @@ class VideoDetectorUnitTest(unittest.TestCase):
         classifier.process_tracks([lower_table_edge], draw_frame=18)
         classifier.finish_attempt(draw_frame=19)
         self.assertEqual(classifier.events, [])
+
+    def test_launcher_track_follows_calibrated_direction_in_mirrored_view(self):
+        classifier = self.classifier({
+            "table_surface_y": 0.7786086,
+            "launcher_region": [0, 0, 420, 300],
+            "return_region": [720, 0, 1000, 300],
+        })
+        launch = [(frame, 200 + frame * 10, 100, 0.0) for frame in range(18)]
+        wrong_way = [(frame, 400 - frame * 10, 100, 0.0) for frame in range(18)]
+
+        self.assertTrue(classifier.is_launcher_track(launch))
+        self.assertFalse(classifier.is_launcher_track(wrong_way))
+        self.assertEqual(
+            classifier.launcher_rejection_reason(wrong_way),
+            "insufficient travel toward player",
+        )
+
+    def test_launcher_track_requires_sustained_progress_toward_player(self):
+        classifier = self.classifier()
+        shimmer = [(frame, 800 + (frame % 2) * 2, 100, 0.0) for frame in range(18)]
+        unrelated_motion = [
+            (frame, x, 100, 0.0)
+            for frame, x in enumerate(
+                [800, 760, 720, 680, 640, 600, 560, 600, 640,
+                 680, 640, 600, 560, 520, 560, 520, 500, 480]
+            )
+        ]
+
+        self.assertFalse(classifier.is_launcher_track(shimmer))
+        self.assertEqual(
+            classifier.launcher_rejection_reason(shimmer),
+            "insufficient travel toward player",
+        )
+        self.assertFalse(classifier.is_launcher_track(unrelated_motion))
+        self.assertEqual(
+            classifier.launcher_rejection_reason(unrelated_motion),
+            "inconsistent travel toward player",
+        )
+
+    def test_launcher_validation_accepts_supported_speed_and_spin_shapes(self):
+        classifier = self.classifier()
+        cases = {
+            "slow topspin": [
+                (frame, 850 - frame * 5, 80 + frame * .4, 0.0)
+                for frame in range(30)
+            ],
+            "fast backspin": [
+                (frame, 850 - frame * 20, 120 - frame * 1.5, 0.0)
+                for frame in range(18)
+            ],
+            "sidespin arc": [
+                (frame, 850 - frame * 10, 100 + ((frame - 9) ** 2) * .25, 0.0)
+                for frame in range(18)
+            ],
+        }
+
+        for label, path in cases.items():
+            with self.subTest(label):
+                self.assertTrue(classifier.is_launcher_track(path))
 
     def test_decisive_return_reports_for_unreportable_launcher(self):
         classifier = AttemptClassifier(

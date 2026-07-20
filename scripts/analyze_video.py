@@ -88,6 +88,7 @@ class DetectorSettings:
     prediction_error_per_gap: float = 10
     max_direction_change_degrees: float = 170
     launch_min_horizontal_distance: float = 120
+    launch_min_directional_ratio: float = 0.8
     return_min_horizontal_distance: float = 120
     min_shadow_contact_score: float = 28
     net_shadow_exclusion_distance: float = 70
@@ -1077,6 +1078,9 @@ class AttemptClassifier:
         self.return_region = calibration.get(
             "return_region", [0, 0, video_width * .28, video_height]
         )
+        launcher_center_x = (self.launcher_region[0] + self.launcher_region[2]) / 2
+        return_center_x = (self.return_region[0] + self.return_region[2]) / 2
+        self.launch_direction = 1 if return_center_x > launcher_center_x else -1
         self.warmup_launcher_tracks = calibration.get("warmup_launcher_tracks", 0)
 
     def diagnose_track(
@@ -1119,14 +1123,30 @@ class AttemptClassifier:
         machine = readings[-2] if len(readings) >= 2 else None
         return hit, machine
 
-    def is_launcher_track(self, path: Track) -> bool:
+    def launcher_rejection_reason(self, path: Track) -> Optional[str]:
+        """Explain why a completed path cannot establish a machine launch."""
         start = (path[0][1], path[0][2])
-        horizontal_distance = path[-1][1] - path[0][1]
-        return (
-            point_in_rectangle(start, self.launcher_region, self.scale)
-            and len(path) >= self.settings.min_launch_track_points
-            and horizontal_distance <= -self.settings.launch_min_horizontal_distance
-        )
+        if not point_in_rectangle(start, self.launcher_region, self.scale):
+            return "did not begin near launcher"
+        if len(path) < self.settings.min_launch_track_points:
+            return f"launch too short ({len(path)}/{self.settings.min_launch_track_points})"
+
+        directed_steps = [
+            (end[1] - beginning[1]) * self.launch_direction
+            for beginning, end in zip(path, path[1:])
+        ]
+        directed_distance = (path[-1][1] - path[0][1]) * self.launch_direction
+        if directed_distance < self.settings.launch_min_horizontal_distance:
+            return "insufficient travel toward player"
+
+        horizontal_travel = sum(abs(step) for step in directed_steps)
+        directional_ratio = directed_distance / max(horizontal_travel, 1e-6)
+        if directional_ratio < self.settings.launch_min_directional_ratio:
+            return "inconsistent travel toward player"
+        return None
+
+    def is_launcher_track(self, path: Track) -> bool:
+        return self.launcher_rejection_reason(path) is None
 
     def is_return_track(self, path: Track) -> bool:
         return self.return_segment(path) is not None
@@ -1329,7 +1349,8 @@ class AttemptClassifier:
                 continue
             attempt = self.active_attempt
             if attempt is None:
-                self.diagnose_track(path, "rejected", draw_frame, "no active launch")
+                reason = self.launcher_rejection_reason(path) or "no active launch"
+                self.diagnose_track(path, "rejected", draw_frame, reason)
                 continue
             returned = self.return_segment(path)
             if returned is None:

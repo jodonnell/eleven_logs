@@ -41,7 +41,7 @@ verification are complete.
   position.
 - Reject implausible jumps between unrelated bright objects.
 
-## 6. Validate launcher tracks — TODO
+## 6. Validate launcher tracks — DONE
 
 - Require a launch to begin near the machine and travel toward the player.
 - Prevent static shimmer and unrelated scene motion from opening an attempt.

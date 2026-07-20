@@ -138,3 +138,8 @@ flight corridor. Single-pixel shimmer is rejected while compact two-pixel
 distant balls remain eligible for temporal tracking. Tracks require three
 consistent observations before classification, and candidate links are gated
 by frame-aware position prediction, speed, acceleration, and direction change.
+Launcher tracks must begin in the calibrated machine-side region and make
+sustained horizontal progress toward the calibrated player side. This follows
+mirrored camera orientation without constraining vertical arcs, delivery speed,
+or spin shape, while static shimmer and back-and-forth scene motion cannot open
+an attempt.
