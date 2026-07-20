@@ -2,6 +2,7 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import cv2
 import numpy as np
@@ -12,11 +13,14 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from analyze_video import (  # noqa: E402
     Attempt,
     AttemptClassifier,
+    BounceEvent,
     DetectorDiagnostics,
     DetectorSettings,
     LiveAttemptNormalizer,
     MultiBallTracker,
     TelemetryReading,
+    TelemetryReader,
+    attach_missing_machine_telemetry,
     candidates_for_frame,
     find_bounce,
     map_log_coordinate,
@@ -623,6 +627,63 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertEqual(reading.speed_mps, 9.6)
         self.assertEqual(reading.spin_revolutions_per_second, 77)
         self.assertEqual(reading.spin_direction["label"], "up-right")
+
+    def test_low_resolution_three_digit_spin_is_read(self):
+        cap = cv2.VideoCapture(str(ROOT / "sample2-trimmed-58s.mp4"))
+        cap.set(cv2.CAP_PROP_POS_MSEC, 3_400)
+        ok, frame = cap.read()
+        cap.release()
+
+        self.assertTrue(ok)
+        reading = read_telemetry(frame, 204)
+        self.assertIsNotNone(reading)
+        self.assertEqual(reading.speed_mps, 10.4)
+        self.assertEqual(reading.spin_revolutions_per_second, 109)
+        self.assertEqual(reading.spin_direction["label"], "up")
+
+    def test_implausible_low_resolution_spin_ocr_is_rejected(self):
+        frame = np.zeros((10, 10, 3), dtype=np.uint8)
+        direction = {"x": 0, "y": 1, "angle_degrees": 90, "label": "up"}
+
+        with (
+            patch("analyze_video.read_hud_number", side_effect=[19.5, 517]),
+            patch("analyze_video.read_spin_direction", return_value=direction),
+        ):
+            reading = read_telemetry(frame, 1, (0, 0, 1, 1))
+
+        self.assertIsNone(reading)
+
+    def test_low_resolution_telemetry_jitter_is_one_state(self):
+        original = TelemetryReading(
+            1, 10.5, 51,
+            {"x": 0, "y": 1, "angle_degrees": 90, "label": "up"},
+        )
+        jittered = TelemetryReading(
+            2, 10.6, 50,
+            {"x": 0, "y": 1, "angle_degrees": 90, "label": "up"},
+        )
+
+        self.assertTrue(TelemetryReader.same_values(original, jittered))
+
+    def test_return_out_uses_telemetry_before_event_as_player_hit(self):
+        direction = {"x": 0, "y": 1, "angle_degrees": 90, "label": "up"}
+        machine = TelemetryReading(180, 10.6, 50, direction)
+        player = TelemetryReading(201, 10.4, 109, direction)
+        next_machine = TelemetryReading(246, 10.5, 51, direction)
+        event = BounceEvent(
+            4.067, "00:04.067", False, False, "out",
+            None, None, None, .58, 244, (0, 0), 244,
+            return_crossed_net=True,
+            machine=next_machine.to_record(60),
+        )
+
+        attached = attach_missing_machine_telemetry(
+            [event], [machine, player, next_machine], 60,
+        )[0]
+
+        self.assertEqual(attached.hit["speed_mps"], 10.4)
+        self.assertEqual(attached.hit["spin_revolutions_per_second"], 109)
+        self.assertEqual(attached.machine["speed_mps"], 10.6)
 
     def test_hit_and_machine_telemetry_attach_to_the_landing(self):
         classifier = self.classifier()

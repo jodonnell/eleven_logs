@@ -24,6 +24,7 @@ from video_source import VideoFrame, VideoSource, VideoSourceError, open_video_s
 
 
 PROCESSING_WIDTH = 1024
+MAX_SPIN_REVOLUTIONS_PER_SECOND = 150
 
 PathLike = Union[str, Path]
 Point = Tuple[float, float]
@@ -59,16 +60,16 @@ LOW_RES_DIGIT_TEMPLATES = {
         for variant in bitmap.split("|")
     ]
     for digit, bitmap in {
-        "0": "0100/1011/1001/1011|1001/1001/1111|1011/1001/1111",
+        "0": "0100/1011/1001/1011|1001/1001/1111|1011/1001/1111|1101/1001/1101",
         "1": "111/001/001|111/011/011",
         "2": "0011/0010/1100|0100/0011/0110/1100|0100/0011/0110/1110",
         "3": "011/110/011|100/011/110/011",
         "4": "0010/0110/1010/0011|0010/0110/1010/1011|0110/1010/1111",
         "5": "1000/1111/0011|1100/0111/0001|1110/1000/1111/0011|1110/1000/1111/1011",
-        "6": "1000/1111/1011|1011/1110/1001|1100/1111/1001",
+        "6": "1000/1111/1011|1011/1110/1001|1100/1111/1001|01100/11000/11110/11110/01100",
         "7": "011/010/100|011/010/110|111/001/011/010",
         "8": "1011/1110/1001|1011/1110/1011|1101/0111/1101",
-        "9": "0100/1011/1111/0010|1101/1111/0001",
+        "9": "0100/1011/1111/0010|1101/1111/0001|1011/1111/0011",
     }.items()
 }
 
@@ -709,6 +710,29 @@ def read_hud_number(
         confidence = min(confidence, score)
     if confidence < .38:
         return None
+    if height < 15 and needs_decimal and decimal_x is not None:
+        decimal_index = next((
+            index for index, (center_x, _) in enumerate(recognized)
+            if center_x > decimal_x
+        ), len(recognized))
+        # Compression can fragment one final speed digit into two core
+        # components (the sample's 10.6 otherwise becomes 10.71). Rejoin the
+        # wider antialiased glyph to preserve the HUD's one-decimal format.
+        if len(recognized) - decimal_index > 1:
+            right_start = math.ceil(decimal_x + 1)
+            right_side = white[:, right_start:]
+            ys, xs = np.nonzero(right_side)
+            if len(xs):
+                glyph = right_side[
+                    ys.min():ys.max() + 1,
+                    xs.min():xs.max() + 1,
+                ]
+                digit, score = classify_digit(glyph)
+                if score >= .38:
+                    recognized = recognized[:decimal_index] + [
+                        (right_start + round(float(xs.mean())), digit)
+                    ]
+                    confidence = min(confidence, score)
     text = ""
     for center_x, digit in recognized:
         if needs_decimal and decimal_x is not None and decimal_x < center_x and "." not in text:
@@ -780,7 +804,14 @@ def read_telemetry(
     direction = read_spin_direction(frame, bounds)
     if speed is None or spin is None or direction is None:
         return None
-    if not 0 < speed < 100 or not 0 <= spin < 1000:
+    # At low capture resolutions, unit text or compression artifacts can be
+    # mistaken for another digit (for example, "51 rev/s" becoming 517).
+    # Reject readings outside Eleven's displayed range instead of attaching a
+    # confidently repeated but physically bogus value to every attempt.
+    if (
+        not 0 < speed < 100
+        or not 0 <= spin <= MAX_SPIN_REVOLUTIONS_PER_SECOND
+    ):
         return None
     return TelemetryReading(frame_number, float(speed), int(spin), direction)
 
@@ -797,9 +828,15 @@ class TelemetryReader:
 
     @staticmethod
     def same_values(left: TelemetryReading, right: TelemetryReading) -> bool:
+        # Five-pixel-tall HUD digits occasionally fluctuate by one final
+        # speed/spin unit during a screen transition. Treat that as the same
+        # displayed state so it cannot displace the actual machine reading.
         return (
-            left.speed_mps == right.speed_mps
-            and left.spin_revolutions_per_second == right.spin_revolutions_per_second
+            abs(left.speed_mps - right.speed_mps) <= .11
+            and abs(
+                left.spin_revolutions_per_second
+                - right.spin_revolutions_per_second
+            ) <= 1
             and left.spin_direction["label"] == right.spin_direction["label"]
         )
 
@@ -1661,9 +1698,30 @@ def attach_missing_machine_telemetry(
     readings: Sequence[TelemetryReading],
     fps: float,
 ) -> List[BounceEvent]:
-    """Give inferred misses the nearby delivery reading when one is visible."""
+    """Attach nearby HUD states to events inferred during normalization."""
     attached = []
     for event in events:
+        # A tracked return that crossed the net necessarily followed a player
+        # contact. Use HUD states preceding its terminal event; choosing the
+        # nearest state can incorrectly grab the next machine launch.
+        if event.hit is None and event.return_crossed_net:
+            preceding = [
+                reading for reading in readings
+                if reading.frame_number <= event.frame_number
+            ]
+            if preceding:
+                hit = preceding[-1]
+                machine = preceding[-2] if len(preceding) >= 2 else None
+                event = replace(
+                    event,
+                    hit=hit.to_record(fps),
+                    machine=(
+                        machine.to_record(fps)
+                        if machine else event.machine
+                    ),
+                )
+                attached.append(event)
+                continue
         if event.machine is not None or event.hit is not None or not readings:
             attached.append(event)
             continue
