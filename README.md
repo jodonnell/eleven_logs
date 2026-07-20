@@ -36,10 +36,11 @@ no visible departure still waits for the track to end. Cadence-based `out`
 and `miss` slots have a three-contact warm-up and remain held until a later
 launch settles them, preventing a temporarily occluded return from becoming a
 premature miss. Merely receiving more video does not infer trailing misses
-after the machine stops. Every live record is flushed immediately, so
-`tail -f video_bounces.jsonl` can follow the session. At shutdown the file is
-rewritten using the analyzer's existing canonical batch normalization. It
-never loads the full video into memory. Every camera
+after the machine stops. Every live record is flushed immediately. Use
+`--live-stdout` to see it directly without the roughly one-second update delay
+that `tail -f` can add on macOS. At shutdown the file is rewritten using the
+analyzer's existing canonical batch normalization. It never loads the full
+video into memory. Every camera
 placement requires its own calibration: table corners, coordinate orientation,
 net, and the launcher region are deliberately not inferred from `sample.mp4` or
 reused across setups.
@@ -66,7 +67,8 @@ is the SRT server/listener, connect the analyzer as the caller:
 
 ```sh
 python3 scripts/analyze_video.py \
-  'srt://OBS_IP:9000?mode=caller&latency=120000'
+  'srt://OBS_IP:9000?mode=caller&latency=120000' \
+  --live-stdout
 ```
 
 The inverse arrangement also works: use `mode=listener` in the analyzer URL

@@ -8,6 +8,7 @@ rather than a fabricated table coordinate.
 import argparse
 import json
 import math
+import sys
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
@@ -1776,6 +1777,11 @@ def main() -> None:
     parser.add_argument("--extract-calibration-frame", metavar="PNG", help="write a frame for per-camera corner calibration, then exit")
     parser.add_argument("--output", default="video_bounces.jsonl")
     parser.add_argument(
+        "--live-stdout",
+        action="store_true",
+        help="print each detected event immediately instead of watching the JSONL file",
+    )
+    parser.add_argument(
         "--annotated",
         nargs="?",
         const="video_bounces_annotated.mp4",
@@ -1834,8 +1840,11 @@ def main() -> None:
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)
         with open(args.output, "w", encoding="utf-8") as output:
             def write_event(event: BounceEvent) -> None:
-                output.write(json.dumps(event.to_record()) + "\n")
+                serialized = json.dumps(event.to_record())
+                output.write(serialized + "\n")
                 output.flush()
+                if args.live_stdout:
+                    print(serialized, flush=True)
 
             live_normalizer = LiveAttemptNormalizer(fps, write_event)
             events = process_video(
@@ -1861,7 +1870,7 @@ def main() -> None:
         "events": len(events),
         "output": args.output,
         "annotated": annotated_path,
-    }, indent=2))
+    }, indent=2), file=sys.stderr if args.live_stdout else sys.stdout)
 
 
 if __name__ == "__main__":
