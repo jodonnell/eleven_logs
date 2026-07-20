@@ -33,7 +33,7 @@ verification are complete.
   perspective.
 - Retain small distant balls without accepting single-pixel codec shimmer.
 
-## 5. Require plausible motion — TODO
+## 5. Require plausible motion — DONE
 
 - Require several consistent observations before promoting a candidate to a
   valid track.

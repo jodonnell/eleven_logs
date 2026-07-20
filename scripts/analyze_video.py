@@ -79,7 +79,14 @@ class DetectorSettings:
     max_gap: int = 5
     min_track_points: int = 9
     min_launch_track_points: int = 18
+    min_track_observations: int = 3
     track_match_distance: float = 100
+    min_track_speed: float = 0.5
+    max_track_speed: float = 200
+    max_track_acceleration: float = 200
+    max_prediction_error: float = 100
+    prediction_error_per_gap: float = 10
+    max_direction_change_degrees: float = 170
     launch_min_horizontal_distance: float = 120
     return_min_horizontal_distance: float = 120
     min_shadow_contact_score: float = 28
@@ -176,6 +183,7 @@ class ActiveTrack:
 
     points: Track
     gap: int = 0
+    confirmed: bool = False
 
 
 @dataclass(frozen=True)
@@ -213,7 +221,9 @@ class DetectorDiagnostics:
         self.candidates.append(CandidateDiagnostic(center, kind, reason))
 
     def set_unconfirmed_tracks(self, tracks: Sequence[ActiveTrack]) -> None:
-        self.unconfirmed_tracks = [track.points[-12:] for track in tracks]
+        self.unconfirmed_tracks = [
+            track.points[-12:] for track in tracks if not track.confirmed
+        ]
 
     def completed_track(self, diagnostic: TrackDiagnostic, frame_number: int) -> None:
         expires = frame_number + self.track_lifetime_frames
@@ -393,19 +403,68 @@ class MultiBallTracker:
         self.settings = settings
         self.tracks: List[ActiveTrack] = []
 
+    @staticmethod
+    def velocity(start: TrackPoint, end: TrackPoint) -> Point:
+        elapsed = end[0] - start[0]
+        if elapsed <= 0:
+            return (0.0, 0.0)
+        return ((end[1] - start[1]) / elapsed, (end[2] - start[2]) / elapsed)
+
+    def match_error(
+        self, points: Track, frame_number: int, candidate: Candidate,
+    ) -> Optional[float]:
+        """Return prediction error when a candidate is a plausible next point."""
+        last = points[-1]
+        elapsed = frame_number - last[0]
+        if elapsed <= 0:
+            return None
+        displacement = (candidate[0] - last[1], candidate[1] - last[2])
+        velocity = (displacement[0] / elapsed, displacement[1] / elapsed)
+        speed = math.hypot(*velocity)
+        if not self.settings.min_track_speed <= speed <= self.settings.max_track_speed:
+            return None
+
+        if len(points) < 2:
+            return math.hypot(*displacement)
+
+        previous_velocity = self.velocity(points[-2], last)
+        # Predict one observation ahead. During an occlusion, uncertainty
+        # grows instead of blindly extrapolating through every absent frame;
+        # a bounce or partial shadow handoff can occur inside that gap.
+        previous_elapsed = last[0] - points[-2][0]
+        predicted = (
+            last[1] + previous_velocity[0] * previous_elapsed,
+            last[2] + previous_velocity[1] * previous_elapsed,
+        )
+        error = math.dist(predicted, candidate[:2])
+        allowed_error = (
+            self.settings.max_prediction_error
+            + max(0, elapsed - 1) * self.settings.prediction_error_per_gap
+        )
+        if error > min(self.settings.track_match_distance, allowed_error):
+            return None
+
+        previous_speed = math.hypot(*previous_velocity)
+        acceleration = math.dist(previous_velocity, velocity) / elapsed
+        if acceleration > self.settings.max_track_acceleration:
+            return None
+        if previous_speed > 0 and speed > 0:
+            cosine = sum(a * b for a, b in zip(previous_velocity, velocity)) / (
+                previous_speed * speed
+            )
+            turn = math.degrees(math.acos(min(1.0, max(-1.0, cosine))))
+            if turn > self.settings.max_direction_change_degrees:
+                return None
+        return error
+
     def update(self, frame_number: int, candidates: Sequence[Candidate]) -> List[Track]:
         pairs: List[Tuple[float, int, int]] = []
         for track_index, track in enumerate(self.tracks):
             points = track.points
-            if len(points) >= 2:
-                a, b = points[-2], points[-1]
-                predicted = (b[1] + (b[1] - a[1]), b[2] + (b[2] - a[2]))
-            else:
-                predicted = points[-1][1:3]
             for candidate_index, candidate in enumerate(candidates):
-                distance = math.dist(predicted, candidate[:2])
-                if distance <= self.settings.track_match_distance:
-                    pairs.append((distance, track_index, candidate_index))
+                error = self.match_error(points, frame_number, candidate)
+                if error is not None:
+                    pairs.append((error, track_index, candidate_index))
         pairs.sort()
         used_tracks: Set[int] = set()
         used_candidates: Set[int] = set()
@@ -416,6 +475,8 @@ class MultiBallTracker:
             candidate = candidates[candidate_index]
             track.points.append((frame_number, candidate[0], candidate[1], candidate[2]))
             track.gap = 0
+            if len(track.points) >= self.settings.min_track_observations:
+                track.confirmed = True
             used_tracks.add(track_index)
             used_candidates.add(candidate_index)
         for track_index, track in enumerate(self.tracks):
@@ -425,7 +486,8 @@ class MultiBallTracker:
         active: List[ActiveTrack] = []
         for track in self.tracks:
             if track.gap > self.settings.max_gap:
-                completed.append(track.points)
+                if track.confirmed:
+                    completed.append(track.points)
             else:
                 active.append(track)
         self.tracks = active
@@ -433,12 +495,16 @@ class MultiBallTracker:
             if candidate_index not in used_candidates:
                 self.tracks.append(ActiveTrack([
                     (frame_number, candidate[0], candidate[1], candidate[2]),
-                ]))
+                ], confirmed=self.settings.min_track_observations <= 1))
         return completed
 
     @property
     def visible_points(self) -> List[TrackPoint]:
-        return [point for track in self.tracks for point in track.points[-12:]]
+        return [
+            point
+            for track in self.tracks if track.confirmed
+            for point in track.points[-12:]
+        ]
 
 
 def telemetry_title_bounds(frame: np.ndarray) -> Optional[Tuple[int, int, int, int]]:

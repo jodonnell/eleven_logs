@@ -465,12 +465,62 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertIsNotNone(record["posx"])
 
     def test_tracker_completes_a_path_after_the_allowed_gap(self):
-        tracker = MultiBallTracker(DetectorSettings(max_gap=1))
+        tracker = MultiBallTracker(DetectorSettings(max_gap=1, min_track_observations=1))
 
         self.assertEqual(tracker.update(0, [(10, 20, 0)]), [])
         self.assertEqual(tracker.update(1, []), [])
 
         self.assertEqual(tracker.update(2, []), [[(0, 10, 20, 0)]])
+
+    def test_tracker_requires_consistent_observations_before_completion(self):
+        tracker = MultiBallTracker(DetectorSettings(max_gap=0, min_track_observations=3))
+
+        tracker.update(0, [(10, 20, 0)])
+        tracker.update(1, [(20, 20, 0)])
+
+        self.assertEqual(tracker.update(2, []), [])
+
+        tracker.update(3, [(10, 20, 0)])
+        tracker.update(4, [(20, 20, 0)])
+        tracker.update(5, [(30, 20, 0)])
+        self.assertEqual(
+            tracker.update(6, []),
+            [[(3, 10, 20, 0), (4, 20, 20, 0), (5, 30, 20, 0)]],
+        )
+
+    def test_tracker_allows_prediction_uncertainty_across_a_gap(self):
+        tracker = MultiBallTracker(DetectorSettings(max_gap=2))
+        tracker.update(0, [(10, 20, 0)])
+        tracker.update(1, [(20, 20, 0)])
+        tracker.update(2, [])
+        tracker.update(3, [(40, 20, 0), (30, 20, 0)])
+
+        self.assertEqual(
+            tracker.tracks[0].points[-1],
+            (3, 30, 20, 0),
+        )
+
+    def test_tracker_rejects_implausible_jump_acceleration_and_reversal(self):
+        settings = DetectorSettings(
+            min_track_observations=3,
+            max_track_speed=50,
+            max_track_acceleration=12,
+            max_direction_change_degrees=100,
+        )
+        cases = {
+            "too fast": (80, 20, 0),
+            "excessive acceleration": (45, 20, 0),
+            "direction reversal": (10, 20, 0),
+        }
+        for label, candidate in cases.items():
+            with self.subTest(label):
+                tracker = MultiBallTracker(settings)
+                tracker.update(0, [(10, 20, 0)])
+                tracker.update(1, [(20, 20, 0)])
+                tracker.update(2, [candidate])
+
+                self.assertEqual(len(tracker.tracks[0].points), 2)
+                self.assertFalse(tracker.tracks[0].confirmed)
 
     def test_cadence_fills_an_unseen_launch_with_one_miss(self):
         events = [self.cadence_event(frame) for frame in (70, 190, 250)]

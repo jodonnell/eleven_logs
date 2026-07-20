@@ -135,4 +135,6 @@ the candidate appearance limits; omitted settings retain the tested defaults.
 Candidate filtering checks brightness, saturation, shape compactness, aspect
 ratio, and a size range that grows toward the near end of the calibrated
 flight corridor. Single-pixel shimmer is rejected while compact two-pixel
-distant balls remain eligible for temporal tracking.
+distant balls remain eligible for temporal tracking. Tracks require three
+consistent observations before classification, and candidate links are gated
+by frame-aware position prediction, speed, acceleration, and direction change.
