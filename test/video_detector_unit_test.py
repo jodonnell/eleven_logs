@@ -833,6 +833,26 @@ class VideoDetectorUnitTest(unittest.TestCase):
 
         self.assertEqual([event.outcome for event in reported], ["miss"])
 
+    def test_settlement_snapshot_cannot_undo_the_newly_closed_miss(self):
+        messages = []
+        normalizer = LiveAttemptNormalizer(
+            60,
+            lambda event: messages.append(("shot", event.outcome)),
+            lambda events: messages.append((
+                "snapshot", [event.outcome for event in events],
+            )),
+        )
+        for frame in (70, 130, 190, 250, 310):
+            hit = self.cadence_event(frame)
+            normalizer.observe_confirmed_hit(hit)
+            normalizer.observe(hit)
+            normalizer.settle_attempt()
+        normalizer.observe(self.cadence_event(330, "unknown", .2))
+
+        normalizer.settle_attempt()
+
+        self.assertEqual(messages[-1], ("shot", "miss"))
+
     def test_live_normalizer_flushes_only_the_final_detected_attempt(self):
         reported = []
         normalizer = LiveAttemptNormalizer(60, reported.append)

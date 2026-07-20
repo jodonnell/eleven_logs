@@ -1650,15 +1650,15 @@ class LiveAttemptNormalizer:
         self.events.append(event)
         self.pending_attempt_events.append(event)
 
-    def publish_finished_attempt(self) -> None:
-        """Publish a non-hit as soon as the next launch closes its attempt."""
+    def finished_attempt_event(self) -> Optional[BounceEvent]:
+        """Build the non-hit closed by a new launch, if one is needed."""
         pending = self.pending_attempt_events
         self.pending_attempt_events = []
         if not pending or any(
             event.hit_table and event.outcome == "far_table"
             for event in pending
         ):
-            return
+            return None
         event = max(
             pending,
             key=lambda item: (
@@ -1683,8 +1683,14 @@ class LiveAttemptNormalizer:
                 published = replace(
                     published, attempt_frame_number=matching_anchors[0],
                 )
-        self.on_event(published)
         self.immediate_event_frames.append(event.frame_number)
+        return published
+
+    def publish_finished_attempt(self) -> None:
+        """Publish the final pending attempt outside cadence settlement."""
+        published = self.finished_attempt_event()
+        if published is not None:
+            self.on_event(published)
 
     def observe_confirmed_hit(self, event: BounceEvent) -> None:
         """Publish direct visual evidence without waiting for cadence."""
@@ -1703,8 +1709,13 @@ class LiveAttemptNormalizer:
 
     def settle_attempt(self) -> None:
         """Advance once after a detected launch closes the prior attempt."""
-        self.publish_finished_attempt()
+        # Hold the newly closed attempt until after the cadence snapshot. If
+        # the shot were sent first, a snapshot built without its settled slot
+        # could immediately undo the browser reset at the same launch.
+        published = self.finished_attempt_event()
         if not self.events:
+            if published is not None:
+                self.on_event(published)
             return
         hits = [
             event for event in self.events
@@ -1714,6 +1725,8 @@ class LiveAttemptNormalizer:
             [event.frame_number for event in hits], self.fps,
         )
         if self.period is None:
+            if published is not None:
+                self.on_event(published)
             return
         newest_evidence = max(event.frame_number for event in self.events)
         if self.settlement_frame is None:
@@ -1757,6 +1770,8 @@ class LiveAttemptNormalizer:
                 )
             ]
             self.on_snapshot(settled)
+        if published is not None:
+            self.on_event(published)
 
     def finalize(self, total_frames: int) -> List[BounceEvent]:
         return normalize_attempt_events(self.events, total_frames, self.fps)
