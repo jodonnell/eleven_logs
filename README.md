@@ -26,6 +26,35 @@ npm run lint
 
 ## Ball-machine video analysis
 
+### Live hit counter
+
+Start the analyzer and its local browser counter together by passing a video
+file or live SRT URL:
+
+```sh
+npm run counter -- 'srt://OBS_IP:9000?mode=caller&latency=120000'
+```
+
+Then open <http://127.0.0.1:8000>. The server streams each analyzer shot record
+unchanged to the page, where the session count increases for every confirmed
+`hit` and resets to zero for a `miss` or `out`. A detected new launch closes
+the previous attempt immediately, so an attempt without a confirmed return to
+the opponent's table resets the streak without waiting for cadence warm-up.
+Refreshing the page replays the session's shot records so the browser can
+reconstruct the current streak.
+
+When OBS is available at `192.168.1.197:9000` and the counter should be
+available to a Quest on the same local network, use the shortcut below, then
+open `http://MAC_LAN_IP:8000` in the Quest browser:
+
+```sh
+npm run counter:quest
+```
+
+Press Ctrl-C in the terminal to stop both the server and analyzer. Use
+`--calibration PATH.json`, `--output PATH.jsonl`, `--host`, or `--port` after
+the video argument when needed.
+
 `scripts/analyze_video.py` reads either a fixed spectator-view video file or a
 live OBS SRT stream and writes one finalized `hit`, `out`, or `miss` JSONL
 record for each inferred ball-machine launch. A visually confirmed opponent-

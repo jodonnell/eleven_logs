@@ -7,6 +7,8 @@
   "scripts": {
     "build": "esbuild src/app.js --bundle --outfile=out.js",
     "build:watch": "esbuild src/app.js --bundle --outfile=out.js --servedir=.",
+    "counter": "python3 scripts/live_counter_server.py",
+    "counter:quest": "python3 scripts/live_counter_server.py 'srt://192.168.1.197:9000?mode=caller&latency=120000' --host 0.0.0.0",
     "console": "node src/stats.js",
     "deploy": "./bin/deploy.sh",
     "lint": "eslint src/*.js test/*.js",

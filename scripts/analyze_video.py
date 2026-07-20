@@ -1623,17 +1623,40 @@ class LiveAttemptNormalizer:
         self.events: List[BounceEvent] = []
         self.period: Optional[float] = None
         self.emitted_anchors: List[int] = []
-        self.immediate_hit_frames: List[int] = []
+        self.immediate_event_frames: List[int] = []
+        self.pending_attempt_events: List[BounceEvent] = []
         self.settlement_frame: Optional[float] = None
 
     def observe(self, event: BounceEvent) -> None:
         self.events.append(event)
+        self.pending_attempt_events.append(event)
+
+    def publish_finished_attempt(self) -> None:
+        """Publish a non-hit as soon as the next launch closes its attempt."""
+        pending = self.pending_attempt_events
+        self.pending_attempt_events = []
+        if not pending or any(
+            event.hit_table and event.outcome == "far_table"
+            for event in pending
+        ):
+            return
+        event = max(
+            pending,
+            key=lambda item: (
+                item.outcome == "off_table",
+                item.outcome == "net",
+                item.confidence,
+            ),
+        )
+        outcome = "out" if event.outcome == "off_table" else "miss"
+        self.on_event(replace(event, outcome=outcome))
+        self.immediate_event_frames.append(event.frame_number)
 
     def observe_confirmed_hit(self, event: BounceEvent) -> None:
         """Publish direct visual evidence without waiting for cadence."""
         if any(
             abs(event.frame_number - frame) <= self.fps * .5
-            for frame in self.immediate_hit_frames
+            for frame in self.immediate_event_frames
         ):
             return
         if self.period is not None and any(
@@ -1642,10 +1665,11 @@ class LiveAttemptNormalizer:
         ):
             return
         self.on_event(replace(event, outcome="hit"))
-        self.immediate_hit_frames.append(event.frame_number)
+        self.immediate_event_frames.append(event.frame_number)
 
     def settle_attempt(self) -> None:
         """Advance once after a detected launch closes the prior attempt."""
+        self.publish_finished_attempt()
         if not self.events:
             return
         hits = [
@@ -1669,10 +1693,11 @@ class LiveAttemptNormalizer:
             self.events, round(self.settlement_frame) + 1, self.fps,
         )
         assert self.period is not None
-        for anchor, _ in slots:
+        for anchor, event in slots:
             if any(
                 abs(anchor - frame) <= self.period * .3
-                for frame in self.immediate_hit_frames
+                or abs(event.frame_number - frame) <= self.fps * .5
+                for frame in self.immediate_event_frames
             ) and not any(
                 abs(anchor - emitted) <= self.period * .5
                 for emitted in self.emitted_anchors

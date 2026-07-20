@@ -788,6 +788,47 @@ class VideoDetectorUnitTest(unittest.TestCase):
 
         self.assertEqual([event.outcome for event in reported], ["hit", "hit", "hit", "out"])
 
+    def test_live_normalizer_emits_a_miss_when_next_launch_closes_attempt(self):
+        reported = []
+        normalizer = LiveAttemptNormalizer(60, reported.append)
+        normalizer.observe(self.cadence_event(70, "unknown", .2))
+
+        self.assertEqual(reported, [])
+        normalizer.settle_attempt()
+
+        self.assertEqual([event.outcome for event in reported], ["miss"])
+
+    def test_live_normalizer_does_not_miss_an_attempt_with_a_confirmed_hit(self):
+        reported = []
+        normalizer = LiveAttemptNormalizer(60, reported.append)
+        hit = self.cadence_event(80)
+        normalizer.observe_confirmed_hit(hit)
+        normalizer.observe(self.cadence_event(70, "near_table", .5))
+        normalizer.observe(hit)
+        normalizer.settle_attempt()
+
+        self.assertEqual([event.outcome for event in reported], ["hit"])
+
+    def test_immediate_non_hit_is_not_repeated_when_cadence_warms(self):
+        reported = []
+        normalizer = LiveAttemptNormalizer(60, reported.append)
+        for event in (
+            self.cadence_event(76),
+            self.cadence_event(143),
+            self.cadence_event(136, "off_table", .58),
+            self.cadence_event(244, "off_table", .58),
+            self.cadence_event(289, "unknown", .2),
+            self.cadence_event(368),
+        ):
+            if event.outcome == "far_table":
+                normalizer.observe_confirmed_hit(event)
+            normalizer.observe(event)
+            normalizer.settle_attempt()
+
+        self.assertEqual(
+            [event.frame_number for event in reported].count(136), 1,
+        )
+
     def test_live_normalizer_infers_only_settled_misses(self):
         reported = []
         normalizer = LiveAttemptNormalizer(60, reported.append)

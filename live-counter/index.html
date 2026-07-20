@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hit Counter</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+        background: #07111f;
+        color: #f8fafc;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(circle at 50% 35%, #17345a 0, transparent 42%),
+          #07111f;
+      }
+
+      main {
+        width: min(92vw, 720px);
+        text-align: center;
+      }
+
+      h1 {
+        margin: 0;
+        color: #8da2bd;
+        font-size: clamp(1.1rem, 3vw, 1.6rem);
+        font-weight: 650;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+
+      #count {
+        margin: 0.03em 0 0.08em;
+        font-size: clamp(12rem, 55vw, 30rem);
+        font-variant-numeric: tabular-nums;
+        font-weight: 800;
+        line-height: 0.92;
+        text-shadow: 0 0 70px rgb(56 189 248 / 32%);
+      }
+
+      #status {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.55rem;
+        color: #94a3b8;
+        font-size: 0.95rem;
+      }
+
+      #status::before {
+        width: 0.65rem;
+        height: 0.65rem;
+        border-radius: 50%;
+        background: #f59e0b;
+        content: "";
+      }
+
+      #status.connected::before {
+        background: #22c55e;
+        box-shadow: 0 0 14px #22c55e;
+      }
+
+      #status.error::before {
+        background: #ef4444;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Hits</h1>
+      <div id="count" aria-live="polite">0</div>
+      <div id="status">Connecting</div>
+    </main>
+
+    <script type="module">
+      import { currentHitStreak } from "/counter.js"
+
+      const count = document.querySelector("#count")
+      const status = document.querySelector("#status")
+      const events = new EventSource("/events")
+      const shots = []
+
+      events.onmessage = ({ data }) => {
+        const shot = JSON.parse(data)
+        shots.push(shot)
+        count.textContent = currentHitStreak(shots)
+      }
+
+      events.onopen = () => {
+        status.className = "connected"
+        status.textContent = "Shot stream connected"
+      }
+
+      events.onerror = () => {
+        status.className = "error"
+        status.textContent = "Reconnecting"
+      }
+    </script>
+  </body>
+</html>
