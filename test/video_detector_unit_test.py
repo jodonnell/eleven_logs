@@ -302,6 +302,51 @@ class VideoDetectorUnitTest(unittest.TestCase):
         normalizer.settle_attempt()
         self.assertEqual([event.outcome for event in reported], ["hit"])
 
+    def test_active_return_reports_hit_before_track_completion(self):
+        reported = []
+        classifier = self.classifier()
+        classifier.on_confirmed_hit = reported.append
+        launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        returned = [
+            (30, 20, 70, 0.0),
+            (31, 40, 80, 0.0),
+            (32, 60, 90, 0.0),
+            (33, 80, 100, 0.0),
+            (34, 100, 110, 0.0),
+            (35, 120, 100, 0.0),
+            (36, 140, 90, 0.0),
+            (37, 160, 80, 0.0),
+            (38, 180, 70, 0.0),
+        ]
+
+        classifier.start_attempt(launch, 18)
+        classifier.process_active_tracks([returned], draw_frame=38)
+
+        self.assertEqual(len(reported), 1)
+        self.assertEqual(reported[0].frame_number, 34)
+        self.assertEqual(classifier.events, [])
+
+    def test_active_return_waits_to_confirm_terminal_shadow_peak(self):
+        reported = []
+        classifier = self.classifier()
+        classifier.on_confirmed_hit = reported.append
+        launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        returned = [(30 + frame, 20 + frame * 20, 100, 0.0) for frame in range(9)]
+        returned[-1] = (*returned[-1][:3], 32.0)
+
+        classifier.start_attempt(launch, 18)
+        classifier.process_active_tracks([returned], draw_frame=38)
+
+        self.assertEqual(reported, [])
+
+        returned.append((39, 200, 100, 0.0))
+        classifier.process_active_tracks([returned], draw_frame=39)
+        self.assertEqual(reported, [])
+
+        returned.append((40, 220, 100, 0.0))
+        classifier.process_active_tracks([returned], draw_frame=40)
+        self.assertEqual(len(reported), 1)
+
     def test_classifier_reports_crossed_net_return_that_ends_off_table(self):
         classifier = self.classifier()
         classifier.net_line = np.float32([(150, 0), (150, 500)])

@@ -316,6 +316,7 @@ def find_bounce(
     table_polygon: np.ndarray,
     net_line: Optional[np.ndarray] = None,
     settings: DetectorSettings = DetectorSettings(),
+    allow_terminal_shadow: bool = True,
 ) -> Optional[Bounce]:
     """Find a visible table-plane turn in one completed candidate track."""
     if len(points) < settings.min_track_points:
@@ -341,7 +342,16 @@ def find_bounce(
         # marking after an off-table ball has disappeared.
         local_peak = score >= previous_score and (next_score is None or score > next_score)
         rightward_contact = points[index][1] >= points[index - 1][1]
-        if local_peak and rightward_contact and (not terminal or points[index][1] > points[index - 2][1]):
+        terminal_confirmed = (
+            index < len(points) - settings.terminal_shadow_frames
+            or allow_terminal_shadow
+        )
+        if (
+            local_peak
+            and rightward_contact
+            and terminal_confirmed
+            and (not terminal or points[index][1] > points[index - 2][1])
+        ):
             return points[index], points[index - 2:index], points[index + 1:index + 3]
     # Two post-contact frames are enough for a terminal turn when the ball
     # disappears behind the launcher immediately afterwards.
@@ -506,6 +516,11 @@ class MultiBallTracker:
             for track in self.tracks if track.confirmed
             for point in track.points[-12:]
         ]
+
+    @property
+    def confirmed_tracks(self) -> List[Track]:
+        """Return live paths that have enough observations to classify."""
+        return [track.points for track in self.tracks if track.confirmed]
 
 
 def telemetry_title_bounds(frame: np.ndarray) -> Optional[Tuple[int, int, int, int]]:
@@ -1422,6 +1437,29 @@ class AttemptClassifier:
                         path, terminal, path[-3:-1], [], draw_frame,
                     )
 
+    def process_active_tracks(
+        self, tracks: Sequence[Track], draw_frame: int,
+    ) -> None:
+        """Report a visible bounce without waiting for its track to disappear.
+
+        Completed-track processing remains authoritative for attempts, misses,
+        and diagnostics. Here we only act on a return associated with the
+        current launch and require post-contact evidence for a shadow peak;
+        an apparent contact on the newest frame may still become a plateau.
+        """
+        if self.active_attempt is None:
+            return
+        for path in tracks:
+            returned = self.return_segment(path, self.active_attempt)
+            if returned is None:
+                continue
+            bounce = find_bounce(
+                returned, self.table, self.net_line, self.settings,
+                allow_terminal_shadow=False,
+            )
+            if bounce:
+                self.add_bounce(returned, *bounce, draw_frame)
+
 
 def infer_attempt_period(hit_frames: Sequence[int], fps: float) -> Optional[float]:
     """Infer the repeating ball-machine cycle from confirmed table contacts."""
@@ -1708,7 +1746,9 @@ def process_video(
                 frame, previous_gray, tracking_polygon, settings, diagnostics,
             )
             previous_gray = gray
-            classifier.process_tracks(tracker.update(frame_number, candidates), frame_number)
+            completed_tracks = tracker.update(frame_number, candidates)
+            classifier.process_tracks(completed_tracks, frame_number)
+            classifier.process_active_tracks(tracker.confirmed_tracks, frame_number)
             if diagnostics is not None:
                 diagnostics.set_unconfirmed_tracks(tracker.tracks)
             if writer is not None:

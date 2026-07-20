@@ -29,8 +29,10 @@ npm run lint
 `scripts/analyze_video.py` reads either a fixed spectator-view video file or a
 live OBS SRT stream and writes one finalized `hit`, `out`, or `miss` JSONL
 record for each inferred ball-machine launch. A visually confirmed opponent-
-side contact is emitted as `hit` as soon as its completed track establishes the
-bounce; it does not wait for cadence or the next launch. Cadence-based `out`
+side contact is emitted as `hit` from the live return track once two
+post-contact frames establish the bounce; it does not wait for the track to
+disappear, for cadence, or for the next launch. A terminal shadow contact with
+no visible departure still waits for the track to end. Cadence-based `out`
 and `miss` slots have a three-contact warm-up and remain held until a later
 launch settles them, preventing a temporarily occluded return from becoming a
 premature miss. Merely receiving more video does not infer trailing misses
