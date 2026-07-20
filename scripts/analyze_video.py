@@ -1089,6 +1089,7 @@ class AttemptClassifier:
         on_event: Optional[Callable[[BounceEvent], None]] = None,
         on_attempt_finished: Optional[Callable[[], None]] = None,
         on_confirmed_hit: Optional[Callable[[BounceEvent], None]] = None,
+        on_confirmed_non_hit: Optional[Callable[[BounceEvent], None]] = None,
         on_track_diagnostic: Optional[Callable[[TrackDiagnostic, int], None]] = None,
         on_attempt_started: Optional[Callable[[int], None]] = None,
     ) -> None:
@@ -1103,10 +1104,13 @@ class AttemptClassifier:
         self.on_event = on_event
         self.on_attempt_finished = on_attempt_finished
         self.on_confirmed_hit = on_confirmed_hit
+        self.on_confirmed_non_hit = on_confirmed_non_hit
         self.on_track_diagnostic = on_track_diagnostic
         self.on_attempt_started = on_attempt_started
         self.events: List[BounceEvent] = []
         self.emitted: Set[Tuple[int, int]] = set()
+        self.started_launcher_tracks: Set[Tuple[int, int, int]] = set()
+        self.reported_non_hit_tracks: Set[Tuple[int, int, int]] = set()
         self.active_attempt: Optional[Attempt] = None
         self.latest_telemetry: Optional[TelemetryReading] = None
         self.telemetry_history: List[TelemetryReading] = []
@@ -1439,7 +1443,11 @@ class AttemptClassifier:
                 )
                 continue
             if self.is_launcher_track(path):
+                key = self.track_key(path)
+                if key in self.started_launcher_tracks:
+                    continue
                 self.diagnose_track(path, "launcher", draw_frame)
+                self.started_launcher_tracks.add(key)
                 self.start_attempt(path, draw_frame)
                 continue
             attempt = self.active_attempt
@@ -1462,6 +1470,12 @@ class AttemptClassifier:
             if bounce:
                 self.add_bounce(path, *bounce, draw_frame)
                 continue
+            key = self.track_key(path)
+            if self.on_confirmed_non_hit is not None and key not in self.reported_non_hit_tracks:
+                event = self.no_bounce_event(attempt, draw_frame)
+                if event.outcome in ("off_table", "net"):
+                    self.reported_non_hit_tracks.add(key)
+                    self.on_confirmed_non_hit(event)
             crossed_net, _ = self.return_evidence(path)
             terminal = path[-1]
             terminal_pixel = (terminal[1], terminal[2])
@@ -1489,9 +1503,21 @@ class AttemptClassifier:
         current launch and require post-contact evidence for a shadow peak;
         an apparent contact on the newest frame may still become a plateau.
         """
+        # Close the prior attempt as soon as the next launch has the same
+        # evidence required of a completed launcher path. Waiting for its
+        # tracker gap adds avoidable live latency.
+        for path in tracks:
+            key = self.track_key(path)
+            if key in self.started_launcher_tracks or not self.is_launcher_track(path):
+                continue
+            self.diagnose_track(path, "launcher", draw_frame)
+            self.started_launcher_tracks.add(key)
+            self.start_attempt(path, draw_frame)
         if self.active_attempt is None:
             return
         for path in tracks:
+            if self.track_key(path) in self.started_launcher_tracks:
+                continue
             returned = self.return_segment(path, self.active_attempt)
             if returned is None:
                 continue
@@ -1635,16 +1661,21 @@ class LiveAttemptNormalizer:
         fps: float,
         on_event: Callable[[BounceEvent], None],
         on_snapshot: Optional[Callable[[Sequence[BounceEvent]], None]] = None,
+        on_reset: Optional[Callable[[int], None]] = None,
     ) -> None:
         self.fps = fps
         self.on_event = on_event
         self.on_snapshot = on_snapshot
+        self.on_reset = on_reset
         self.events: List[BounceEvent] = []
         self.period: Optional[float] = None
         self.emitted_anchors: List[int] = []
         self.immediate_event_frames: List[int] = []
+        self.immediate_non_hit_frames: List[int] = []
         self.pending_attempt_events: List[BounceEvent] = []
         self.settlement_frame: Optional[float] = None
+        self.latest_hit_frame: Optional[int] = None
+        self.reset_after_hit_frame: Optional[int] = None
 
     def observe(self, event: BounceEvent) -> None:
         self.events.append(event)
@@ -1667,6 +1698,11 @@ class LiveAttemptNormalizer:
                 item.confidence,
             ),
         )
+        if any(
+            abs(event.frame_number - frame) <= self.fps * .5
+            for frame in self.immediate_non_hit_frames
+        ):
+            return None
         outcome = "out" if event.outcome == "off_table" else "miss"
         published = replace(event, outcome=outcome)
         if self.period is not None:
@@ -1706,6 +1742,39 @@ class LiveAttemptNormalizer:
             return
         self.on_event(replace(event, outcome="hit"))
         self.immediate_event_frames.append(event.frame_number)
+        self.latest_hit_frame = event.frame_number
+        self.reset_after_hit_frame = None
+
+    def observe_confirmed_non_hit(self, event: BounceEvent) -> None:
+        """Publish a completed visible out or net return immediately."""
+        if any(
+            abs(event.frame_number - frame) <= self.fps * .5
+            for frame in self.immediate_event_frames
+        ):
+            return
+        outcome = "out" if event.outcome == "off_table" else "miss"
+        self.on_event(replace(event, outcome=outcome))
+        self.immediate_event_frames.append(event.frame_number)
+        self.immediate_non_hit_frames.append(event.frame_number)
+        self.reset_after_hit_frame = self.latest_hit_frame
+
+    def advance(self, frame_number: int) -> None:
+        """Reset the display shortly after an expected hit fails to arrive.
+
+        This is deliberately a display-only signal, not a fabricated shot.
+        Canonical miss/out records still require visual or next-launch evidence.
+        """
+        if (
+            self.on_reset is None
+            or self.period is None
+            or self.latest_hit_frame is None
+            or self.reset_after_hit_frame == self.latest_hit_frame
+        ):
+            return
+        deadline = self.latest_hit_frame + self.period * 1.15
+        if frame_number >= deadline:
+            self.on_reset(self.latest_hit_frame)
+            self.reset_after_hit_frame = self.latest_hit_frame
 
     def settle_attempt(self) -> None:
         """Advance once after a detected launch closes the prior attempt."""
@@ -1856,6 +1925,7 @@ def process_video(
     on_event: Optional[Callable[[BounceEvent], None]] = None,
     on_attempt_finished: Optional[Callable[[], None]] = None,
     on_confirmed_hit: Optional[Callable[[BounceEvent], None]] = None,
+    on_confirmed_non_hit: Optional[Callable[[BounceEvent], None]] = None,
     on_processing_frame: Optional[Callable[[int], None]] = None,
     clean_writer: Optional[cv2.VideoWriter] = None,
     clean_frame_limit: Optional[int] = None,
@@ -1887,7 +1957,7 @@ def process_video(
     classifier = AttemptClassifier(
         fps, calibration, contact_polygon, net_line, occlusion, homography,
         video_width, video_height, scale, settings, on_event,
-        on_attempt_finished, on_confirmed_hit,
+        on_attempt_finished, on_confirmed_hit, on_confirmed_non_hit,
         diagnostics.completed_track if diagnostics is not None else None,
         mark_clean_recording_started,
     )
@@ -2085,10 +2155,13 @@ def main() -> None:
             live_events_output = open(args.live_events, "a", encoding="utf-8")
         with open(args.output, "w", encoding="utf-8") as output:
             processing_frame = first_frame.number if first_frame is not None else 0
+            live_normalizer: Optional[LiveAttemptNormalizer] = None
 
             def observe_processing_frame(frame_number: int) -> None:
                 nonlocal processing_frame
                 processing_frame = frame_number
+                if live_normalizer is not None:
+                    live_normalizer.advance(frame_number)
 
             def write_live_record(record: Dict[str, Any]) -> None:
                 serialized = json.dumps(record)
@@ -2125,14 +2198,25 @@ def main() -> None:
                     "shots": [event.to_record() for event in events],
                 })
 
+            def write_reset(after_hit_frame: int) -> None:
+                write_live_record({
+                    "type": "reset",
+                    "after_hit_frame_number": after_hit_frame,
+                    "publication_frame_number": processing_frame,
+                    "publication_video_time_seconds": round(
+                        processing_frame / fps, 3,
+                    ),
+                })
+
             live_normalizer = LiveAttemptNormalizer(
-                fps, write_event, write_snapshot,
+                fps, write_event, write_snapshot, write_reset,
             )
             events = process_video(
                 source, scale, calibration, homography, table,
                 args.end_seconds, writer, first_frame,
                 live_normalizer.observe, live_normalizer.settle_attempt,
                 live_normalizer.observe_confirmed_hit,
+                live_normalizer.observe_confirmed_non_hit,
                 observe_processing_frame,
                 clean_writer,
                 round(args.clean_recording_seconds * fps),

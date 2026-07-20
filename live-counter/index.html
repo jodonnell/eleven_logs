@@ -92,6 +92,10 @@
 
       events.onmessage = ({ data }) => {
         const shot = JSON.parse(data)
+        if (shot.type === "reset") {
+          count.textContent = 0
+          return
+        }
         shots = reconcileShotMessage(shots, shot)
         count.textContent = currentHitStreak(shots)
       }

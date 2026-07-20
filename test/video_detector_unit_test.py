@@ -297,6 +297,24 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertEqual(len(settled), 1)
         self.assertEqual(settled[0], classifier.events)
 
+    def test_active_launcher_closes_previous_attempt_before_track_completion(self):
+        settled = []
+        classifier = self.classifier()
+        classifier.on_attempt_finished = lambda: settled.append(list(classifier.events))
+        first_launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        active_next_launch = [
+            (60 + frame, 800 - frame * 10, 100, 0.0) for frame in range(18)
+        ]
+
+        classifier.process_tracks([first_launch], draw_frame=18)
+        classifier.process_active_tracks([active_next_launch], draw_frame=77)
+
+        self.assertEqual(len(settled), 1)
+        self.assertEqual([event.outcome for event in settled[0]], ["unknown"])
+
+        classifier.process_tracks([active_next_launch], draw_frame=82)
+        self.assertEqual(len(settled), 1)
+
     def test_classifier_signals_when_the_first_machine_launch_is_detected(self):
         started = []
         classifier = self.classifier()
@@ -387,6 +405,20 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertTrue(event.return_crossed_net)
         self.assertEqual(event.outcome, "off_table")
         self.assertFalse(event.hit_table)
+
+    def test_completed_visible_out_is_reported_before_next_launch(self):
+        reported = []
+        classifier = self.classifier()
+        classifier.net_line = np.float32([(150, 0), (150, 500)])
+        classifier.on_confirmed_non_hit = reported.append
+        launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        returned = [(30 + frame, 100 + frame * 20, 100, 0.0) for frame in range(9)]
+
+        classifier.process_tracks([launch], draw_frame=18)
+        classifier.process_tracks([returned], draw_frame=39)
+
+        self.assertEqual([event.outcome for event in reported], ["off_table"])
+        self.assertEqual(classifier.events, [])
 
     def test_attempt_emits_a_later_miss_after_an_earlier_bounce(self):
         classifier = self.classifier()
@@ -812,6 +844,24 @@ class VideoDetectorUnitTest(unittest.TestCase):
 
         self.assertEqual([event.outcome for event in reported], ["hit", "hit", "hit"])
 
+    def test_live_normalizer_resets_display_when_expected_hit_does_not_arrive(self):
+        resets = []
+        normalizer = LiveAttemptNormalizer(
+            60, lambda _event: None, on_reset=resets.append,
+        )
+        for frame in (70, 130, 190):
+            hit = self.cadence_event(frame)
+            normalizer.observe_confirmed_hit(hit)
+            normalizer.observe(hit)
+            normalizer.settle_attempt()
+
+        normalizer.advance(258)
+        self.assertEqual(resets, [])
+        normalizer.advance(259)
+        normalizer.advance(300)
+
+        self.assertEqual(resets, [190])
+
     def test_live_normalizer_emits_a_settled_out(self):
         reported = []
         normalizer = LiveAttemptNormalizer(60, reported.append)
@@ -832,6 +882,17 @@ class VideoDetectorUnitTest(unittest.TestCase):
         normalizer.settle_attempt()
 
         self.assertEqual([event.outcome for event in reported], ["miss"])
+
+    def test_live_normalizer_does_not_repeat_an_immediate_visible_out(self):
+        reported = []
+        normalizer = LiveAttemptNormalizer(60, reported.append)
+        event = self.cadence_event(70, "off_table", .58)
+
+        normalizer.observe_confirmed_non_hit(event)
+        normalizer.observe(event)
+        normalizer.settle_attempt()
+
+        self.assertEqual([item.outcome for item in reported], ["out"])
 
     def test_settlement_snapshot_cannot_undo_the_newly_closed_miss(self):
         messages = []

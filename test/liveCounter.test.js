@@ -72,4 +72,15 @@ describe("live hit counter", () => {
     expect(reconciled).toEqual(snapshot.shots)
     expect(currentHitStreak(reconciled)).toBe(2)
   })
+
+  it("keeps display-only reset signals out of canonical shot history", () => {
+    const shots = [{ frame_number: 100, outcome: "hit" }]
+
+    const reconciled = reconcileShotMessage(shots, {
+      type: "reset",
+      after_hit_frame_number: 100,
+    })
+
+    expect(reconciled).toBe(shots)
+  })
 })

@@ -40,6 +40,10 @@ unchanged to the page, where the session count increases for every confirmed
 `hit` and resets to zero for a `miss` or `out`. A detected new launch closes
 the previous attempt immediately, so an attempt without a confirmed return to
 the opponent's table resets the streak without waiting for cadence warm-up.
+After three hits establish the launcher rhythm, the display also resets 15%
+of a cycle after an expected hit fails to appear. This display-only deadline
+keeps an undetected launch from leaving a stale streak on screen; saved shot
+records still require visual or next-launch evidence.
 Refreshing the page replays the session's shot records so the browser can
 reconstruct the current streak.
 

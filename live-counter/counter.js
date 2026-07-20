@@ -16,4 +16,8 @@ export const currentHitStreak = (shots) => {
 }
 
 export const reconcileShotMessage = (shots, message) =>
-  message.type === "snapshot" ? [...message.shots] : [...shots, message]
+  message.type === "snapshot"
+    ? [...message.shots]
+    : message.type === "reset"
+      ? shots
+      : [...shots, message]

@@ -63,6 +63,8 @@ def reconcile_live_messages(
     for message in messages:
         if message.get("type") == "snapshot":
             shots = list(message["shots"])
+        elif message.get("type") == "reset":
+            continue
         else:
             shots.append(message)
     return shots
@@ -139,7 +141,7 @@ def verify_records(
             ))
 
     shot_publications = [
-        record for record in live if record.get("type") != "snapshot"
+        record for record in live if record.get("type") not in ("snapshot", "reset")
     ]
     for index, record in enumerate(shot_publications):
         required = ("frame_number", "publication_frame_number", "publication_delay_seconds")
