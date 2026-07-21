@@ -12,7 +12,7 @@
     {"launch_frame_number": 420, "outcome": "hit"},
     {"launch_frame_number": 480, "outcome": "hit"},
     {"launch_frame_number": 540, "outcome": "hit"},
-    {"launch_frame_number": 600, "outcome": "out"},
+    {"launch_frame_number": 600, "outcome": "miss"},
     {"launch_frame_number": 660, "outcome": "hit"},
     {"launch_frame_number": 720, "outcome": "hit"},
     {"launch_frame_number": 780, "outcome": "hit"}

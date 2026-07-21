@@ -888,6 +888,50 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertTrue(all(len(outcomes) == 1 for outcomes in by_id.values()))
         self.assertEqual(len(finalized), len(by_id))
 
+    def test_live_normalizer_does_not_finalize_a_provisional_out_before_hit(self):
+        reported = []
+        normalizer = LiveAttemptNormalizer(60, reported.append)
+        for frame in (70, 130, 190):
+            event = self.cadence_event(frame)
+            normalizer.observe_confirmed_hit(event)
+            normalizer.observe(event)
+            normalizer.settle_attempt()
+
+        hit = self.cadence_event(250)
+        provisional_out = self.cadence_event(250, "off_table", .58)
+        normalizer.observe_confirmed_non_hit(provisional_out)
+
+        self.assertFalse(any(
+            item.get("sequence") == 4
+            and item["state"] == "finalized"
+            and item.get("outcome") == "out"
+            for item in reported
+        ))
+
+        normalizer.observe_confirmed_hit(hit)
+        normalizer.observe(hit)
+        normalizer.settle_attempt()
+        normalizer.finish_session(310)
+
+        finalized = [
+            item for item in reported if item["state"] == "finalized"
+        ]
+        self.assertEqual(
+            [item["outcome"] for item in finalized],
+            ["hit", "hit", "hit", "hit"],
+        )
+
+    def test_batch_normalizer_ignores_late_provisional_out_evidence(self):
+        events = [self.cadence_event(frame) for frame in (70, 130, 190, 250, 310)]
+        events.append(self.cadence_event(235, "off_table", .58))
+
+        normalized = normalize_attempt_events(events, total_frames=370, fps=60)
+
+        self.assertEqual(
+            [event.outcome for event in normalized],
+            ["hit", "hit", "hit", "hit", "hit"],
+        )
+
     def test_live_normalizer_finalizes_unseen_miss_at_next_credible_slot(self):
         reported = []
         normalizer = LiveAttemptNormalizer(60, reported.append)

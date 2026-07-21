@@ -1604,20 +1604,6 @@ def attempt_event_slots(
             slots[slot] = replace(event, outcome="hit")
         hit_slots[id(event)] = slot
 
-    cursor = -1
-    for event in events:
-        if id(event) in hit_slots:
-            cursor = max(cursor, hit_slots[id(event)])
-            continue
-        if event.outcome != "off_table":
-            continue
-        candidates = [index for index in range(cursor + 1, len(slots)) if slots[index] is None]
-        if not candidates:
-            continue
-        slot = candidates[0]
-        slots[slot] = replace(event, outcome="out")
-        cursor = slot
-
     normalized: List[Tuple[int, BounceEvent]] = []
     for anchor, event in zip(anchors, slots):
         if event is not None:
@@ -1652,36 +1638,24 @@ def normalize_attempt_events(
     """
     period, slots = attempt_event_slots(events, total_frames, fps)
     if period is None:
-        return list(events)
+        return [
+            replace(
+                event,
+                outcome=(
+                    "hit"
+                    if event.hit_table and event.outcome == "far_table"
+                    else "miss"
+                ),
+            )
+            for event in events
+        ]
     normalized = [
         replace(event, attempt_frame_number=anchor) for anchor, event in slots
     ]
-    if (
-        normalized
-        and normalized[-1].outcome == "out"
-        and abs(
-            normalized[-1].frame_number
-            - (normalized[-1].attempt_frame_number or normalized[-1].frame_number)
-        ) > period * .5
-    ):
-        anchor = normalized[-1].attempt_frame_number
-        assert anchor is not None
-        normalized[-1] = BounceEvent(
-            video_time_seconds=round(anchor / fps, 3),
-            video_timestamp=fmt_timestamp(anchor / fps),
-            hit_table=False,
-            is_in=False,
-            outcome="miss",
-            posx=None,
-            posy=None,
-            posz=None,
-            confidence=0.3,
-            frame_number=anchor,
-            pixel=(0, 0),
-            draw_frame=anchor,
-            attempt_frame_number=anchor,
-        )
-    return normalized
+    return [
+        replace(event, outcome="hit" if event.outcome == "hit" else "miss")
+        for event in normalized
+    ]
 
 
 class LiveAttemptNormalizer:
@@ -1728,8 +1702,7 @@ class LiveAttemptNormalizer:
                 item.confidence,
             ),
         )
-        outcome = "out" if event.outcome == "off_table" else "miss"
-        return replace(event, outcome=outcome)
+        return replace(event, outcome="miss")
 
     def candidate_slots(
         self, extra: Optional[BounceEvent] = None, total_frames: Optional[int] = None,
@@ -1784,7 +1757,7 @@ class LiveAttemptNormalizer:
         }
         if event is not None:
             record.update(event.to_record())
-            record["outcome"] = event.outcome
+            record["outcome"] = "hit" if event.outcome == "hit" else "miss"
             record["attempt_frame_number"] = anchor
         return record
 
@@ -1889,9 +1862,16 @@ class LiveAttemptNormalizer:
             self.on_attempt(pending)
 
     def observe_confirmed_non_hit(self, event: BounceEvent) -> None:
-        """Publish a completed visible out or net return immediately."""
-        outcome = "out" if event.outcome == "off_table" else "miss"
-        self.finalize_direct(event, outcome)
+        """Hold non-hit evidence until the current attempt is closed.
+
+        A completed return track can look off-table before another track from
+        the same attempt confirms the bounce. Results are immutable once sent
+        to the counter, so publishing here would let provisional evidence
+        permanently override that later hit. Keep it with the current attempt:
+        ``settle_attempt`` will prefer any confirmed hit, or finalize this as a
+        genuine non-hit when the next launch closes the attempt.
+        """
+        self.pending_attempt_events.append(event)
 
     def advance(self, frame_number: int) -> None:
         """Finalize an overdue unseen slot after a conservative cadence wait."""
@@ -1927,23 +1907,7 @@ class LiveAttemptNormalizer:
 
     def settle_attempt(self, next_launch_frame: Optional[int] = None) -> None:
         """Advance once after a detected launch closes the prior attempt."""
-        finished = self.finished_attempt_event()
-        if (
-            finished is not None
-            and finished.outcome == "out"
-            and finished.return_crossed_net
-            and self.period is not None
-        ):
-            target_frame = finished.frame_number + self.period * .75
-            self.latest_trusted_frame = max(
-                self.latest_trusted_frame or round(target_frame),
-                round(target_frame),
-            )
-            self.trusted_allows_following_slot = False
-            self.finalize_direct(
-                finished, "out", target_frame=target_frame,
-                infer_prior_misses=True,
-            )
+        self.finished_attempt_event()
         total_frames = None
         launch_marker = None
         if next_launch_frame is not None and self.period is not None:
@@ -1995,24 +1959,8 @@ class LiveAttemptNormalizer:
         slots = self.candidate_slots(total_frames=total_frames)
         self.sync_slots(slots, len(slots) - 3)
         if final_event is not None:
-            outcome = "out" if final_event.outcome == "out" else "miss"
-            target_frame = final_event.frame_number
-            infer_prior_misses = False
-            if (
-                outcome == "out"
-                and final_event.return_crossed_net
-                and self.period is not None
-            ):
-                target_frame += self.period * .75
-                infer_prior_misses = True
-                self.latest_trusted_frame = max(
-                    self.latest_trusted_frame or round(target_frame),
-                    round(target_frame),
-                )
-                self.trusted_allows_following_slot = False
             self.finalize_direct(
-                final_event, outcome, target_frame=target_frame,
-                infer_prior_misses=infer_prior_misses,
+                final_event, "miss", target_frame=final_event.frame_number,
             )
 
 

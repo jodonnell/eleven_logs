@@ -40,7 +40,7 @@ def streak_transitions(records: Sequence[Dict[str, Any]]) -> List[int]:
         for item in ordered:
             if item["outcome"] == "hit":
                 streak += 1
-            elif item["outcome"] in ("miss", "out"):
+            elif item["outcome"] == "miss":
                 streak = 0
         transitions.append(streak)
     return transitions
