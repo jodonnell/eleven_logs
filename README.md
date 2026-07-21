@@ -1,10 +1,8 @@
-
 # Download your logs off your device
 For the quest plug you into your computer and click the popup that says allow this pc to connect.
 Then navigate in explorer to `\This PC\Quest 3\Internal shared storage\Android\data\quest.eleven.forfunlabs\logs`
 
 These logs get deleted after some period of time so if you want to keep track of all your data you will need to copy them to a folder on your computer.  Click the upload button.  The logs aren't actually uploaded, they are processed locally in your browser.
-
 
 # run console version
 npm run console
@@ -45,6 +43,8 @@ a stable attempt ID. The newest slot remains pending until direct evidence, the
 next credible launch, or a conservative cadence deadline finalizes it.
 Refreshing the page replays these keyed attempt upserts so the browser can
 reconstruct the same finalized ledger and streak.
+The page also keeps the all-time best streak in that browser's local storage,
+so it survives refreshes and server restarts without requiring a database.
 
 The first three contacts must remain buffered long enough to infer cadence, so
 video-only startup can publish those initial attempts several seconds late.

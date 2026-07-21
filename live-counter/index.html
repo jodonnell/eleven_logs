@@ -49,6 +49,18 @@
         text-shadow: 0 0 70px rgb(56 189 248 / 32%);
       }
 
+      #best {
+        margin-bottom: 1.25rem;
+        color: #cbd5e1;
+        font-size: clamp(1.15rem, 4vw, 1.6rem);
+        font-variant-numeric: tabular-nums;
+      }
+
+      #best-count {
+        color: #fbbf24;
+        font-weight: 750;
+      }
+
       #status {
         display: inline-flex;
         align-items: center;
@@ -79,21 +91,34 @@
     <main>
       <h1>Hits</h1>
       <div id="count" aria-live="polite">0</div>
+      <div id="best">Best: <span id="best-count">0</span></div>
       <div id="status">Connecting</div>
     </main>
 
     <script type="module">
-      import { reduceCounterState } from "/counter.js"
+      import {
+        loadHighScore,
+        reduceCounterState,
+        saveHighScore,
+      } from "/counter.js"
 
       const count = document.querySelector("#count")
+      const bestCount = document.querySelector("#best-count")
       const status = document.querySelector("#status")
       const events = new EventSource("/events")
       let counterState = { attempts: [], streak: 0 }
+      let highScore = loadHighScore(window.localStorage)
+      bestCount.textContent = highScore
 
       events.onmessage = ({ data }) => {
         const shot = JSON.parse(data)
         counterState = reduceCounterState(counterState, shot)
         count.textContent = counterState.streak
+        if (counterState.streak > highScore) {
+          highScore = counterState.streak
+          bestCount.textContent = highScore
+          saveHighScore(window.localStorage, highScore)
+        }
         document.dispatchEvent(
           new CustomEvent("counter-update", {
             detail: { message: shot, streak: counterState.streak },

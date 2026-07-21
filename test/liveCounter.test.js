@@ -1,7 +1,10 @@
 import {
+  HIGH_SCORE_STORAGE_KEY,
   currentHitStreak,
+  loadHighScore,
   reconcileAttemptUpsert,
   reduceCounterState,
+  saveHighScore,
 } from "../live-counter/counter.js"
 
 const attempt = (sequence, state, outcome) => ({
@@ -59,5 +62,53 @@ describe("live hit counter attempt ledger", () => {
 
     expect(visible).toEqual([0, 1, 1, 2, 2, 0, 0, 1])
     expect(state.attempts).toHaveLength(4)
+  })
+})
+
+describe("browser high score", () => {
+  const memoryStorage = (initialValue = null) => {
+    let value = initialValue
+    return {
+      getItem: jest.fn(() => value),
+      setItem: jest.fn((_key, nextValue) => {
+        value = nextValue
+      }),
+    }
+  }
+
+  it("loads a saved non-negative whole number", () => {
+    const storage = memoryStorage("12")
+
+    expect(loadHighScore(storage)).toBe(12)
+    expect(storage.getItem).toHaveBeenCalledWith(HIGH_SCORE_STORAGE_KEY)
+  })
+
+  it.each([null, "", "not-a-number", "-1", "2.5"])(
+    "treats %p as no saved high score",
+    (savedValue) => {
+      expect(loadHighScore(memoryStorage(savedValue))).toBe(0)
+    },
+  )
+
+  it("saves the score under the stable browser key", () => {
+    const storage = memoryStorage()
+
+    saveHighScore(storage, 7)
+
+    expect(storage.setItem).toHaveBeenCalledWith(HIGH_SCORE_STORAGE_KEY, "7")
+  })
+
+  it("keeps working when browser storage is unavailable", () => {
+    const storage = {
+      getItem: () => {
+        throw new Error("storage disabled")
+      },
+      setItem: () => {
+        throw new Error("storage disabled")
+      },
+    }
+
+    expect(loadHighScore(storage)).toBe(0)
+    expect(() => saveHighScore(storage, 3)).not.toThrow()
   })
 })

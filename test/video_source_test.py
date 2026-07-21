@@ -1,7 +1,9 @@
 """Unit tests for file and live-stream video source selection."""
 
+import io
 import sys
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
@@ -71,10 +73,14 @@ class VideoSourceTest(unittest.TestCase):
 
     def test_srt_input_uses_opencv_ffmpeg_backend(self):
         capture = FakeCapture("srt://127.0.0.1:9000")
-        with patch("video_source.cv2.VideoCapture", return_value=capture) as constructor:
-            source = open_video_source("srt://127.0.0.1:9000?mode=listener")
-            frame = source.read()
-            source.close()
+        messages = io.StringIO()
+        with redirect_stderr(messages):
+            with patch(
+                "video_source.cv2.VideoCapture", return_value=capture,
+            ) as constructor:
+                source = open_video_source("srt://127.0.0.1:9000?mode=listener")
+                frame = source.read()
+                source.close()
 
         self.assertIsInstance(source, SrtVideoSource)
         self.assertEqual((source.width, source.height), (16, 12))
@@ -83,6 +89,9 @@ class VideoSourceTest(unittest.TestCase):
         self.assertEqual(frame.image.shape, (12, 16, 3))
         constructor.assert_called_once_with(
             "srt://127.0.0.1:9000?mode=listener", cv2.CAP_FFMPEG,
+        )
+        self.assertEqual(
+            messages.getvalue(), "SRT video connected: 16x12 at 60 FPS\n",
         )
         self.assertTrue(capture.released)
 

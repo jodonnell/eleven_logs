@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union
@@ -107,6 +108,11 @@ class SrtVideoSource(VideoSource):
             self.close()
             raise VideoSourceError("Could not determine the SRT video size")
         self._next_frame = 0
+        print(
+            f"SRT video connected: {self.width}x{self.height} at {self.fps:g} FPS",
+            file=sys.stderr,
+            flush=True,
+        )
 
     def read(self) -> Optional[VideoFrame]:
         ok, image = self._capture.read()

@@ -33,3 +33,22 @@ export const reduceCounterState = (state, message) => {
   const attempts = reconcileAttemptUpsert(state.attempts, message)
   return { attempts, streak: currentHitStreak(attempts) }
 }
+
+export const HIGH_SCORE_STORAGE_KEY = "eleven-practice.high-score"
+
+export const loadHighScore = (storage) => {
+  try {
+    const score = Number(storage.getItem(HIGH_SCORE_STORAGE_KEY))
+    return Number.isInteger(score) && score >= 0 ? score : 0
+  } catch {
+    return 0
+  }
+}
+
+export const saveHighScore = (storage, score) => {
+  try {
+    storage.setItem(HIGH_SCORE_STORAGE_KEY, String(score))
+  } catch {
+    // The live count should keep working when browser storage is unavailable.
+  }
+}
