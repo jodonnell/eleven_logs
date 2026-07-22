@@ -1,0 +1,64 @@
+{
+  "baseline": {
+    "report": "artifacts/evaluation-2026-07-21-200632-post-contact-direction-report.json",
+    "sequence_accuracy": 0.9106382978723404,
+    "correct": 214,
+    "wrong_outcome": 18,
+    "missing": 2,
+    "extra": 1,
+    "false_hits": 14,
+    "false_misses": 5,
+    "hit_precision": 0.9226519337016574,
+    "hit_recall": 0.9709302325581395
+  },
+  "mismatch_review": {
+    "manifest": "artifacts/evaluation-2026-07-21-200632-mismatch-review/mismatch-review.json",
+    "categories": "artifacts/evaluation-2026-07-21-200632-mismatch-review/categories.md",
+    "raw_reel": "artifacts/evaluation-2026-07-21-200632-mismatch-review/raw-mismatches.mp4",
+    "annotated_reel": "artifacts/evaluation-2026-07-21-200632-mismatch-review/annotated-mismatches.mp4",
+    "errors_reviewed": 21
+  },
+  "rejected_experiment": {
+    "description": "Keep the earliest accepted trajectory turn instead of the strongest later turn",
+    "report": "artifacts/evaluation-2026-07-21-200632-first-contact-report.json",
+    "sequence_accuracy": 0.8893617021276595,
+    "correct": 209,
+    "wrong_outcome": 23,
+    "result": "rejected and reverted; fixed two false hits but introduced seven false misses"
+  },
+  "candidate": {
+    "description": "Require forward continuity across the three-frame pre-contact approach",
+    "analyzer_sha256": "ea7f0b5bc420bb124cf12274afcc1773c02c53bc67f1d58ada07373912e9fa78",
+    "detector_test_sha256": "da3498529d061a4eaff116eee4fb6d6cb64fcbee33bf147f92a0c87ccbf37e51",
+    "predictions": {
+      "path": "artifacts/evaluation-2026-07-21-200632-approach-direction.jsonl",
+      "sha256": "845c957e23f083d13e503a274b80ecb6be62663081e59f4c7211fe3a8e18f5ab"
+    },
+    "report": {
+      "path": "artifacts/evaluation-2026-07-21-200632-approach-direction-report.json",
+      "sha256": "98579649ec337a91d627fd062989cc429f157335ba87fabdb24e75e889d16d97",
+      "sequence_accuracy": 0.9148936170212766,
+      "correct": 215,
+      "wrong_outcome": 17,
+      "missing": 2,
+      "extra": 1,
+      "false_hits": 13,
+      "false_misses": 5,
+      "hit_precision": 0.9277777777777778,
+      "hit_recall": 0.9709302325581395
+    },
+    "behavior_difference": [
+      "Predicted attempt #46 changed from hit to miss at 01:05.617 and now matches expected attempt #47",
+      "No other normalized attempt outcome or evidence frame changed"
+    ],
+    "verification": {
+      "sample": "pass",
+      "sample2": "pass",
+      "sample3": "pass",
+      "python_stable_video_tests": 3,
+      "javascript_tests": 52,
+      "lint": "pass",
+      "excluded_stale_quest_fixture": "artifacts/live-counter-clean.mkv and its 11-shot labels do not match"
+    }
+  }
+}

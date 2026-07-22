@@ -22,7 +22,7 @@
     "test": "jest ./test/",
     "test:e2e:counter": "playwright test e2e/live-counter.spec.js",
     "test:e2e:counter:sample": "playwright test e2e/live-counter-sample.spec.js --config playwright.sample.config.js",
-    "test:video": "python3 -m unittest test/video_source_test.py test/auto_calibration_test.py test/video_detector_unit_test.py test/live_counter_replay_test.py test/capture_evaluation_test.py test/label_evaluation_test.py test/evaluate_detector_test.py",
+    "test:video": "python3 -m unittest test/video_source_test.py test/auto_calibration_test.py test/video_detector_unit_test.py test/live_counter_replay_test.py test/capture_evaluation_test.py test/label_evaluation_test.py test/evaluate_detector_test.py test/review_mismatches_test.py",
     "test:watch": "jest --watch ./test/"
   },
   "author": "Jacob",

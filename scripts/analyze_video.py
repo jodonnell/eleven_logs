@@ -388,6 +388,17 @@ def find_bounce(
         # a tracker hand-off to a marking/shadow, not a physical bounce.
         if points[index][1] < points[index - 1][1]:
             continue
+        # The short approach must belong to that same forward-moving ball.
+        # A path that walks backward and then jumps forward at the apparent
+        # turn is a tracker hand-off, even if its post-contact direction looks
+        # plausible in isolation.
+        if any(
+            end[1] <= beginning[1]
+            for beginning, end in zip(
+                points[index - 3:index - 1], points[index - 2:index]
+            )
+        ):
+            continue
         # The same direction must hold across the two frames that confirm the
         # departure. A tracker that reverses overall immediately after the
         # apparent contact has handed off to a different blob; a returned ball

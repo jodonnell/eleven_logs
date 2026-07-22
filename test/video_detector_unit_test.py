@@ -291,6 +291,24 @@ class VideoDetectorUnitTest(unittest.TestCase):
             find_bounce(points, table, net_line=np.float32([(0, 0), (0, 500)]))
         )
 
+    def test_pre_contact_tracker_handoff_is_not_a_trajectory_bounce(self):
+        points = [
+            (0, 100, 80, 0.0),
+            (1, 120, 85, 0.0),
+            (2, 118, 90, 0.0),
+            (3, 116, 95, 0.0),
+            (4, 140, 110, 0.0),
+            (5, 160, 95, 0.0),
+            (6, 180, 90, 0.0),
+            (7, 200, 85, 0.0),
+            (8, 220, 80, 0.0),
+        ]
+        table = np.float32([(0, 0), (500, 0), (500, 500), (0, 500)])
+
+        self.assertIsNone(
+            find_bounce(points, table, net_line=np.float32([(0, 0), (0, 500)]))
+        )
+
     def test_classifier_reports_an_off_table_return(self):
         classifier = self.classifier()
         launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
