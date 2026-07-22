@@ -2,3 +2,7 @@
 node_modules/*
 logs/*
 test-results/
+artifacts/evaluation-*.mkv
+artifacts/evaluation-*.mp4
+artifacts/evaluation-*-events.jsonl
+artifacts/evaluation-*.labels.json

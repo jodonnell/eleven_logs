@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Evaluation labeler</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main>
+      <section class="workspace">
+        <header>
+          <div>
+            <p class="eyebrow">Ground truth</p>
+            <h1>Hit / miss labeler</h1>
+          </div>
+          <div id="save-status" class="save-status">Loading…</div>
+        </header>
+
+        <video id="video" src="/video" controls preload="metadata"></video>
+
+        <div class="readout">
+          <span id="clock">00:00.000</span>
+          <span id="speed">1×</span>
+          <span id="counts">0 labels</span>
+        </div>
+
+        <div class="label-buttons">
+          <button id="hit" class="hit"><kbd>H</kbd> Hit</button>
+          <button id="miss" class="miss"><kbd>M</kbd> Miss</button>
+          <button id="uncertain" class="uncertain"><kbd>U</kbd> Uncertain</button>
+        </div>
+
+        <div class="transport">
+          <button id="back"><kbd>←</kbd> 1 sec</button>
+          <button id="play"><kbd>Space</kbd> Play / pause</button>
+          <button id="forward"><kbd>→</kbd> 1 sec</button>
+          <button id="undo"><kbd>Z</kbd> Undo</button>
+          <button id="audit"><kbd>A</kbd> Next uncertain</button>
+          <button id="export">Export JSON</button>
+        </div>
+
+        <p class="help">
+          Press H or M when the attempt's outcome is clear. Labels are tied to
+          the current video time and saved automatically. Use U when you need
+          to revisit a shot. [ and ] change playback speed. Missing or duplicate
+          launches are checked later against the video rather than inferred from
+          gaps between outcome timestamps.
+        </p>
+      </section>
+
+      <aside>
+        <div class="aside-heading">
+          <div>
+            <p class="eyebrow">Timestamped ledger</p>
+            <h2>Attempts</h2>
+          </div>
+          <span id="audit-count" class="audit-count">0 uncertain</span>
+        </div>
+        <ol id="labels" aria-live="polite"></ol>
+      </aside>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

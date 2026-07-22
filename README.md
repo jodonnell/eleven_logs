@@ -24,6 +24,50 @@ npm run lint
 
 ## Ball-machine video analysis
 
+### Capture evaluation footage
+
+Record long, previously unseen evaluation footage without running the detector
+or losslessly re-encoding frames in the live path:
+
+```sh
+npm run capture:evaluation
+```
+
+This copies the incoming compressed SRT video directly into a timestamped MKV
+under `artifacts/`, stops after 20 minutes as a safety bound, and can be stopped
+earlier with Ctrl-C. Analyze the saved file offline after recording. Do not use
+the live counter's `--clean-recording` option for long evaluation sessions: the
+detector can process more slowly than real time and eventually overflow SRT's
+receive buffer.
+
+Label a saved evaluation recording with timestamped ground truth:
+
+```sh
+npm run label:evaluation -- artifacts/evaluation-session.mkv
+```
+
+Open the printed local URL. Press `H`, `M`, or `U` as each attempt finishes;
+`Z` undoes the last edit, arrow keys seek, and `A` advances through uncertain
+labels. Labels autosave beside the source video as
+`*.labels.json`. The labeler prepares a constant-frame-rate browser proxy so
+isolated damage or irregular timestamps in a captured live stream cannot stall
+browser playback. The original detector input remains untouched. Outcome times
+are not assumed to follow launcher cadence: net clips and other delayed contacts
+can resolve close to a later ball. Missing and duplicate labels must instead be
+checked by matching the ordered ledger to independently located launches.
+
+Compare detector JSONL with a timestamped ground-truth export and preserve both
+machine-readable and review-friendly reports:
+
+```sh
+npm run evaluate:detector -- ground-truth.json detector-output.jsonl \
+  --json-output evaluation-report.json \
+  --markdown-output evaluation-report.md
+```
+
+The report separates wrong hit/miss decisions from missing and extra launches,
+so one dropped launch does not shift every later comparison.
+
 ### Live hit counter
 
 Start the analyzer and its local browser counter together by passing a video
