@@ -15,6 +15,7 @@ from analyze_video import (  # noqa: E402
     Attempt,
     AttemptClassifier,
     BounceEvent,
+    ContactCandidate,
     bounce_signal,
     DetectorDiagnostics,
     DetectorSettings,
@@ -25,6 +26,7 @@ from analyze_video import (  # noqa: E402
     attach_missing_machine_telemetry,
     candidates_for_frame,
     find_bounce,
+    find_bounces,
     map_log_coordinate,
     normalize_attempt_events,
     read_telemetry,
@@ -215,7 +217,10 @@ class VideoDetectorUnitTest(unittest.TestCase):
 
         self.assertEqual(
             [kind for kind, _, _ in reported],
-            ["rejected", "launcher", "return", "confirmed_bounce"],
+            [
+                "rejected", "launcher", "return",
+                "contact_candidate", "confirmed_bounce",
+            ],
         )
         self.assertEqual(reported[0][1], "too short (3/9)")
 
@@ -227,6 +232,168 @@ class VideoDetectorUnitTest(unittest.TestCase):
         hit, _, _ = find_bounce(points, table, net_line=np.float32([(0, 0), (0, 500)]))
 
         self.assertEqual(hit[0], 4)
+
+    def test_find_bounces_returns_all_contacts_in_chronological_order(self):
+        points = [(frame, 100 + frame * 20, 220, 0.0) for frame in range(14)]
+        points[4] = (*points[4][:3], 32.0)
+        points[10] = (*points[10][:3], 38.0)
+        table = np.float32([(0, 0), (500, 0), (500, 500), (0, 500)])
+        net = np.float32([(0, 0), (0, 500)])
+
+        contacts = find_bounces(points, table, net)
+
+        self.assertEqual([contact[0][0] for contact in contacts], [4, 10])
+        self.assertEqual(find_bounce(points, table, net)[0][0], 4)
+
+    def test_attempt_keeps_ordered_contacts_and_deduplicates_track_handoffs(self):
+        classifier = self.classifier()
+        launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        later = [
+            (36 + frame, 100 + frame * 20, 100 - abs(4 - frame) * 10, 0.0)
+            for frame in range(9)
+        ]
+        earlier = [
+            (30 + frame, 100 + frame * 20, 90 - abs(4 - frame) * 10, 0.0)
+            for frame in range(9)
+        ]
+        handoff = [(32 + frame, 140 + frame * 10, 90, 0.0) for frame in range(7)]
+        classifier.start_attempt(launch, 18)
+
+        classifier.add_bounce(later, later[4], later[1:4], later[5:7], 50)
+        classifier.add_bounce(earlier, earlier[4], earlier[1:4], earlier[5:7], 50)
+        classifier.add_bounce(handoff, earlier[4], earlier[1:4], earlier[5:7], 50)
+
+        attempt = classifier.active_attempt
+        self.assertIsNotNone(attempt)
+        self.assertEqual(
+            [candidate.frame_number for candidate in attempt.contact_candidates],
+            [34, 40],
+        )
+        self.assertEqual(len(attempt.bounces), 2)
+        record = attempt.contact_candidates[0].to_record()
+        self.assertEqual(record["table_side"], "opponent")
+        self.assertEqual(record["signal_type"], "vertical_maximum")
+        self.assertEqual(record["source_track_key"], [30, 100, 50])
+
+    def ordered_contact_candidate(
+        self, frame, z, side, signal="vertical_minimum", source=(30, 100, 50),
+    ):
+        y = z + 100
+        approach = (
+            (frame - 3, 100, y + 6, 0.0),
+            (frame - 2, 120, y + 4, 0.0),
+            (frame - 1, 140, y + 2, 0.0),
+        )
+        departure = (
+            (frame + 1, 180, y + 2, 0.0),
+            (frame + 2, 200, y + 4, 0.0),
+        )
+        return ContactCandidate(
+            frame, (160, y), (0.0, 0.7786, z), side, signal,
+            3.0, 0.7, source, approach, departure,
+        )
+
+    def test_player_contact_then_shallower_opponent_contact_is_a_miss(self):
+        reported = []
+        classifier = self.classifier()
+        classifier.on_confirmed_hit = reported.append
+        launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        path = [(30 + frame, 100 + frame * 20, 150, 0.0) for frame in range(13)]
+        classifier.start_attempt(launch, 18)
+        attempt = classifier.active_attempt
+        near = self.ordered_contact_candidate(34, -80, "player")
+        far = self.ordered_contact_candidate(39, 50, "opponent")
+        classifier.record_contact_candidate(near, path, 42)
+        classifier.record_contact_candidate(far, path, 42)
+
+        classifier.add_bounce(path, path[10], path[7:10], path[11:13], 42)
+        classifier.finish_attempt(43)
+
+        self.assertEqual(reported, [])
+        self.assertEqual([event.outcome for event in classifier.events], ["near_table"])
+        self.assertEqual(classifier.events[0].frame_number, 34)
+        self.assertIsNotNone(attempt)
+
+    def test_weak_in_flight_turn_before_far_contact_remains_a_hit(self):
+        classifier = self.classifier()
+        launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        path = [(30 + frame, 100 + frame * 20, 150, 0.0) for frame in range(13)]
+        classifier.start_attempt(launch, 18)
+        near = self.ordered_contact_candidate(34, -20, "player")
+        far = self.ordered_contact_candidate(40, 70, "opponent")
+        classifier.record_contact_candidate(near, path, 42)
+        classifier.record_contact_candidate(far, path, 42)
+
+        classifier.add_bounce(path, path[10], path[7:10], path[11:13], 42)
+        classifier.finish_attempt(43)
+
+        self.assertEqual([event.outcome for event in classifier.events], ["far_table"])
+
+    def test_velocity_flattening_cannot_establish_player_contact(self):
+        attempt = Attempt(0, (0, 0))
+        attempt.contact_candidates = [
+            self.ordered_contact_candidate(
+                34, -80, "player", signal="velocity_flattening",
+            ),
+            self.ordered_contact_candidate(40, 50, "opponent"),
+        ]
+
+        self.assertIsNone(
+            AttemptClassifier.confirmed_player_then_opponent(attempt)
+        )
+
+    def test_contacts_beyond_bounded_evidence_horizon_remain_a_hit(self):
+        classifier = self.classifier()
+        attempt = Attempt(0, (0, 0))
+        attempt.contact_candidates = [
+            self.ordered_contact_candidate(34, -80, "player"),
+            self.ordered_contact_candidate(40, 50, "opponent"),
+        ]
+
+        self.assertIsNone(
+            AttemptClassifier.confirmed_player_then_opponent(attempt)
+        )
+        classifier.record_contact_history_rejections(attempt, 42)
+        self.assertEqual(len(attempt.rejected_contact_candidates), 1)
+        rejected = attempt.rejected_contact_candidates[0]
+        self.assertFalse(rejected.accepted)
+        self.assertEqual(
+            rejected.rejection_reason,
+            "opponent contact is outside bounded approach/departure evidence",
+        )
+
+    def test_net_contact_then_opponent_contact_is_a_hit_history(self):
+        attempt = Attempt(0, (0, 0))
+        net = self.ordered_contact_candidate(
+            34, 0, "net", signal="net",
+        )
+        far = self.ordered_contact_candidate(40, 70, "opponent")
+        attempt.contact_candidates = [net, far]
+
+        self.assertEqual(
+            AttemptClassifier.confirmed_net_then_opponent(attempt),
+            (net, far),
+        )
+        self.assertIsNone(
+            AttemptClassifier.confirmed_player_then_opponent(attempt)
+        )
+
+    def test_net_only_contact_remains_a_miss_when_attempt_settles(self):
+        classifier = self.classifier()
+        classifier.net_line = np.float32([(150, 0), (150, 500)])
+        launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        returned = [(30 + frame, 20 + frame * 15, 100, 0.0) for frame in range(9)]
+        classifier.start_attempt(launch, 18)
+
+        classifier.process_tracks([returned], draw_frame=39)
+        attempt = classifier.active_attempt
+        classifier.finish_attempt(40)
+
+        self.assertEqual([event.outcome for event in classifier.events], ["net"])
+        self.assertEqual(
+            [candidate.signal_type for candidate in attempt.contact_candidates],
+            ["net"],
+        )
 
     def test_net_mesh_darkening_is_not_a_shadow_bounce(self):
         points = [(frame, 45 + frame, 220, 0.0) for frame in range(9)]

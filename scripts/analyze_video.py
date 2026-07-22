@@ -173,6 +173,42 @@ class TelemetryReading:
         }
 
 
+@dataclass(frozen=True)
+class ContactCandidate:
+    """Bounded evidence for one possible physical ball contact."""
+
+    frame_number: int
+    pixel: Point
+    log_position: Optional[Tuple[float, float, float]]
+    table_side: str
+    signal_type: str
+    strength: float
+    confidence: float
+    source_track_key: Tuple[int, int, int]
+    approach: Tuple[TrackPoint, ...] = field(repr=False)
+    departure: Tuple[TrackPoint, ...] = field(repr=False)
+    accepted: bool = True
+    rejection_reason: Optional[str] = None
+
+    def to_record(self) -> Dict[str, Any]:
+        return {
+            "frame_number": self.frame_number,
+            "pixel": list(self.pixel),
+            "log_position": (
+                list(self.log_position) if self.log_position is not None else None
+            ),
+            "table_side": self.table_side,
+            "signal_type": self.signal_type,
+            "strength": self.strength,
+            "confidence": self.confidence,
+            "source_track_key": list(self.source_track_key),
+            "approach": [list(point) for point in self.approach],
+            "departure": [list(point) for point in self.departure],
+            "accepted": self.accepted,
+            "rejection_reason": self.rejection_reason,
+        }
+
+
 @dataclass
 class Attempt:
     """Tracks one ball-machine launch and any possible return paths."""
@@ -183,6 +219,10 @@ class Attempt:
     returns: List[Track] = field(default_factory=list)
     bounces: List[BounceEvent] = field(default_factory=list)
     bounce_track_keys: Set[Tuple[int, int, int]] = field(default_factory=set)
+    contact_candidates: List[ContactCandidate] = field(default_factory=list)
+    rejected_contact_candidates: List[ContactCandidate] = field(default_factory=list)
+    contact_keys: Set[Tuple[int, int, int]] = field(default_factory=set)
+    classified_contact_keys: Set[Tuple[int, int, int]] = field(default_factory=set)
     machine_telemetry: Optional[TelemetryReading] = None
     telemetry_after_launch: List[TelemetryReading] = field(default_factory=list)
 
@@ -320,16 +360,17 @@ def signed_distance_to_line(point: Point, line: np.ndarray) -> float:
     return ((dx * (point[1] - start[1])) - (dy * (point[0] - start[0]))) / length
 
 
-def find_bounce(
+def _qualified_bounces(
     points: Track,
     table_polygon: np.ndarray,
     net_line: Optional[np.ndarray] = None,
     settings: DetectorSettings = DetectorSettings(),
     allow_terminal_shadow: bool = True,
-) -> Optional[Bounce]:
-    """Find a visible table-plane turn in one completed candidate track."""
+) -> List[Tuple[str, float, Bounce]]:
+    """Return every qualified contact and the evidence used to rank it."""
     if len(points) < settings.min_track_points:
-        return None
+        return []
+    qualified: List[Tuple[str, float, Bounce]] = []
     # A rendered ball casts a compact, moving shadow on the green table. At
     # contact the ball/shadow separation collapses, even when perspective
     # makes the bright ball's screen-space path continue in one direction.
@@ -361,10 +402,12 @@ def find_bounce(
             and terminal_confirmed
             and (not terminal or points[index][1] > points[index - 2][1])
         ):
-            return points[index], points[index - 2:index], points[index + 1:index + 3]
+            qualified.append((
+                "shadow", float(score),
+                (points[index], points[index - 2:index], points[index + 1:index + 3]),
+            ))
     # Two post-contact frames are enough for a terminal turn when the ball
     # disappears behind the launcher immediately afterwards.
-    best = None
     for index in range(3, len(points) - 2):
         before = [p[2] for p in points[index - 3:index]]
         after = [p[2] for p in points[index + 1:index + 3]]
@@ -407,9 +450,10 @@ def find_bounce(
             continue
         if maximum or minimum:
             strength = min(abs(y - before_mean), abs(y - after_mean))
-            candidate = (strength, points[index], points[index - 3:index], points[index + 1:index + 3])
-            if best is None or strength > best[0]:
-                best = candidate
+            qualified.append((
+                "trajectory", float(strength),
+                (points[index], points[index - 3:index], points[index + 1:index + 3]),
+            ))
         # A far-side bounce can be partly hidden by the launcher: perspective
         # may preserve the y direction but sharply flatten its velocity. This
         # is accepted only at a visible in-table point with a large slowdown.
@@ -423,10 +467,55 @@ def find_bounce(
                 and after_speed <= before_speed * settings.max_post_bounce_speed_ratio
             ):
                 flattening = (before_speed - after_speed) * settings.flattening_strength_weight
-                candidate = (flattening, points[index], points[index - 3:index], points[index + 1:index + 3])
-                if best is None or flattening > best[0]:
-                    best = candidate
-    return best[1:] if best else None
+                qualified.append((
+                    "trajectory", float(flattening),
+                    (points[index], points[index - 3:index], points[index + 1:index + 3]),
+                ))
+    return qualified
+
+
+def find_bounces(
+    points: Track,
+    table_polygon: np.ndarray,
+    net_line: Optional[np.ndarray] = None,
+    settings: DetectorSettings = DetectorSettings(),
+    allow_terminal_shadow: bool = True,
+) -> List[Bounce]:
+    """Find all qualified physical contacts in chronological order.
+
+    Multiple evidence mechanisms can describe the same contact frame. Prefer
+    the shadow signal (the legacy detector's strongest evidence family), then
+    the stronger bounded trajectory signal, and expose one contact per frame.
+    """
+    by_frame: Dict[int, Tuple[str, float, Bounce]] = {}
+    for candidate in _qualified_bounces(
+        points, table_polygon, net_line, settings, allow_terminal_shadow,
+    ):
+        family, strength, bounce = candidate
+        frame = bounce[0][0]
+        previous = by_frame.get(frame)
+        rank = (family == "shadow", strength)
+        if previous is None or rank > (previous[0] == "shadow", previous[1]):
+            by_frame[frame] = candidate
+    return [by_frame[frame][2] for frame in sorted(by_frame)]
+
+
+def find_bounce(
+    points: Track,
+    table_polygon: np.ndarray,
+    net_line: Optional[np.ndarray] = None,
+    settings: DetectorSettings = DetectorSettings(),
+    allow_terminal_shadow: bool = True,
+) -> Optional[Bounce]:
+    """Preserve the legacy single-contact choice for existing callers."""
+    qualified = _qualified_bounces(
+        points, table_polygon, net_line, settings, allow_terminal_shadow,
+    )
+    shadows = [candidate for candidate in qualified if candidate[0] == "shadow"]
+    if shadows:
+        return shadows[0][2]
+    trajectories = [candidate for candidate in qualified if candidate[0] == "trajectory"]
+    return max(trajectories, key=lambda candidate: candidate[1])[2] if trajectories else None
 
 
 def bounce_signal(
@@ -445,6 +534,31 @@ def bounce_signal(
     if y <= before_mean and y <= after_mean:
         return "vertical_minimum"
     return "velocity_flattening"
+
+
+def bounce_strength(
+    hit: TrackPoint, approach: Track, departure: Track,
+) -> float:
+    """Return a comparable, observation-local magnitude for diagnostics."""
+    signal = bounce_signal(hit, approach, departure)
+    if signal in ("shadow", "terminal"):
+        return round(float(hit[3]), 3)
+    if not approach or not departure:
+        return 0.0
+    y = hit[2]
+    before_mean = sum(point[2] for point in approach) / len(approach)
+    after_mean = sum(point[2] for point in departure) / len(departure)
+    if signal in ("vertical_maximum", "vertical_minimum"):
+        return round(min(abs(y - before_mean), abs(y - after_mean)), 3)
+    before_speed = sum(
+        abs(end[2] - beginning[2])
+        for beginning, end in zip(approach, approach[1:] + [hit])
+    ) / len(approach)
+    after_speed = sum(
+        abs(end[2] - beginning[2])
+        for beginning, end in zip([hit] + departure[:-1], departure)
+    ) / len(departure)
+    return round(max(0.0, before_speed - after_speed), 3)
 
 
 class MultiBallTracker:
@@ -1052,6 +1166,8 @@ def draw_overlay(
             "rejected": (0, 128, 255),
             "launcher": (255, 80, 40),
             "return": (40, 220, 40),
+            "contact_candidate": (255, 120, 255),
+            "rejected_contact_candidate": (0, 128, 255),
             "confirmed_bounce": (0, 0, 255),
         }
         for candidate in diagnostics.candidates:
@@ -1072,7 +1188,16 @@ def draw_overlay(
                 cv2.polylines(view, [points], False, color, 2)
             if len(points):
                 label = completed.kind
-                if completed.reason:
+                if completed.kind in (
+                    "contact_candidate", "rejected_contact_candidate",
+                ) and completed.reason:
+                    record = json.loads(completed.reason)
+                    label = (
+                        f"{'rejected ' if not record['accepted'] else ''}contact "
+                        f"{record['table_side']} "
+                        f"{record['signal_type']} f={record['frame_number']}"
+                    )
+                elif completed.reason:
                     label += f": {completed.reason}"
                 endpoint = completed.points[-1]
                 cv2.putText(
@@ -1099,6 +1224,8 @@ def draw_overlay(
             ("unconfirmed", (255, 255, 0)),
             ("launcher", (255, 80, 40)),
             ("return", (40, 220, 40)),
+            ("contact candidate", (255, 120, 255)),
+            ("rejected contact", (0, 128, 255)),
             ("confirmed bounce", (0, 0, 255)),
         )
         cv2.rectangle(view, (8, 39), (180, 151), (20, 20, 20), -1)
@@ -1184,6 +1311,80 @@ class AttemptClassifier:
     ) -> None:
         if self.on_track_diagnostic is not None:
             self.on_track_diagnostic(TrackDiagnostic(path, kind, reason), draw_frame)
+
+    @staticmethod
+    def physical_contact_key(hit: TrackPoint) -> Tuple[int, int, int]:
+        return hit[0], round(hit[1]), round(hit[2])
+
+    def contact_candidate(
+        self,
+        path: Track,
+        hit: TrackPoint,
+        approach: Track,
+        departure: Track,
+    ) -> ContactCandidate:
+        pixel = (hit[1], hit[2])
+        in_occlusion = (
+            len(self.occlusion) > 2 and point_in_polygon(pixel, self.occlusion)
+        )
+        posx, posy, posz = map_log_coordinate(
+            self.homography, pixel, self.calibration["table_surface_y"],
+        )
+        far = posz > 0.03
+        continuity = min(1.0, len(approach + departure) / 6)
+        confidence = round(
+            (0.82 if far else 0.72)
+            * continuity
+            * (0.45 if in_occlusion else 1.0),
+            2,
+        )
+        return ContactCandidate(
+            frame_number=hit[0],
+            pixel=pixel,
+            log_position=None if in_occlusion else (posx, posy, posz),
+            table_side=(
+                "occluded" if in_occlusion else ("opponent" if far else "player")
+            ),
+            signal_type=bounce_signal(hit, approach, departure),
+            strength=bounce_strength(hit, approach, departure),
+            confidence=confidence,
+            source_track_key=self.track_key(path),
+            approach=tuple(approach),
+            departure=tuple(departure),
+        )
+
+    def record_contact_candidate(
+        self, candidate: ContactCandidate, path: Track, draw_frame: int,
+    ) -> ContactCandidate:
+        """Attach one physical contact once, independent of tracker ownership."""
+        if self.active_attempt is None:
+            return candidate
+        key = (
+            candidate.frame_number,
+            round(candidate.pixel[0]),
+            round(candidate.pixel[1]),
+        )
+        for existing in self.active_attempt.contact_candidates:
+            existing_key = (
+                existing.frame_number,
+                round(existing.pixel[0]),
+                round(existing.pixel[1]),
+            )
+            if existing_key == key:
+                return existing
+        self.active_attempt.contact_candidates.append(candidate)
+        self.active_attempt.contact_candidates.sort(
+            key=lambda item: (item.frame_number, item.pixel)
+        )
+        self.active_attempt.contact_keys.add(key)
+        self.diagnose_track(
+            path, "contact_candidate", draw_frame,
+            json.dumps({
+                **candidate.to_record(),
+                "attempt_frame_number": self.active_attempt.frame,
+            }, separators=(",", ":")),
+        )
+        return candidate
 
     def emit(self, event: BounceEvent) -> None:
         self.events.append(event)
@@ -1445,12 +1646,223 @@ class AttemptClassifier:
             ),
         )
 
+    @staticmethod
+    def player_contact_rejection_reason(
+        near: ContactCandidate, far: ContactCandidate,
+    ) -> Optional[str]:
+        vertical_signals = {"vertical_maximum", "vertical_minimum"}
+        if near.signal_type not in vertical_signals:
+            return "player-side evidence is an in-flight velocity turn"
+        evidence_horizon = len(near.approach) + len(near.departure)
+        if far.frame_number - near.frame_number > evidence_horizon:
+            return "opponent contact is outside bounded approach/departure evidence"
+        if near.log_position is None or far.log_position is None:
+            return "table position is occluded"
+        if abs(near.log_position[2]) <= abs(far.log_position[2]):
+            return "player-side turn is shallower than opponent contact"
+        return None
+
+    @staticmethod
+    def confirmed_player_then_opponent(
+        attempt: Attempt,
+    ) -> Optional[Tuple[ContactCandidate, ContactCandidate]]:
+        """Find a physically supported own-side bounce before a far contact.
+
+        A small in-flight turn commonly appears just before a clean landing.
+        It is not enough that a candidate happens first: the player-side
+        candidate must contain a bounded vertical reversal and lie deeper on
+        the player half than the later contact lies on the opponent half.
+        Velocity flattening alone remains ambiguous and cannot establish the
+        first physical contact.
+        """
+        contacts = [
+            candidate for candidate in attempt.contact_candidates
+            if candidate.accepted and candidate.log_position is not None
+        ]
+        for near in contacts:
+            if near.table_side != "player":
+                continue
+            for far in contacts:
+                if (
+                    far.frame_number <= near.frame_number
+                    or far.table_side != "opponent"
+                    or far.source_track_key != near.source_track_key
+                ):
+                    continue
+                if AttemptClassifier.player_contact_rejection_reason(
+                    near, far,
+                ) is None:
+                    return near, far
+        return None
+
+    def record_contact_history_rejections(
+        self, attempt: Attempt, draw_frame: int,
+    ) -> None:
+        """Keep rejected ordered-history evidence available to diagnostics."""
+        for near in attempt.contact_candidates:
+            if near.table_side != "player":
+                continue
+            later = [
+                far for far in attempt.contact_candidates
+                if (
+                    far.frame_number > near.frame_number
+                    and far.table_side == "opponent"
+                    and far.source_track_key == near.source_track_key
+                )
+            ]
+            if not later or any(
+                self.player_contact_rejection_reason(near, far) is None
+                for far in later
+            ):
+                continue
+            reason = self.player_contact_rejection_reason(near, later[0])
+            rejected = replace(
+                near, accepted=False, rejection_reason=reason,
+            )
+            if rejected in attempt.rejected_contact_candidates:
+                continue
+            attempt.rejected_contact_candidates.append(rejected)
+            path = next(
+                (
+                    item for item in attempt.returns
+                    if self.track_key(item) == near.source_track_key
+                ),
+                list(near.approach) + [(
+                    near.frame_number, near.pixel[0], near.pixel[1], 0.0,
+                )] + list(near.departure),
+            )
+            self.diagnose_track(
+                path, "rejected_contact_candidate", draw_frame,
+                json.dumps({
+                    **rejected.to_record(),
+                    "attempt_frame_number": attempt.frame,
+                }, separators=(",", ":")),
+            )
+
+    @staticmethod
+    def confirmed_net_then_opponent(
+        attempt: Attempt,
+    ) -> Optional[Tuple[ContactCandidate, ContactCandidate]]:
+        """Find a net interaction followed by a visible opponent landing."""
+        contacts = [
+            candidate for candidate in attempt.contact_candidates
+            if candidate.accepted
+        ]
+        for net in contacts:
+            if net.signal_type != "net":
+                continue
+            for far in contacts:
+                if (
+                    far.frame_number > net.frame_number
+                    and far.table_side == "opponent"
+                    and far.log_position is not None
+                ):
+                    return net, far
+        return None
+
+    def record_net_contact(
+        self, path: Track, draw_frame: int,
+    ) -> Optional[ContactCandidate]:
+        """Record a return fragment that visibly terminates at the net."""
+        if self.active_attempt is None or not path:
+            return None
+        crossed_net, _ = self.return_evidence(path)
+        terminal = path[-1]
+        pixel = (terminal[1], terminal[2])
+        net_distance = abs(signed_distance_to_line(pixel, self.net_line))
+        proximity = self.calibration.get("net_proximity_fraction", 0.2) * math.dist(
+            self.net_line[0], self.net_line[1]
+        )
+        if (
+            crossed_net
+            or not point_in_polygon(pixel, self.table)
+            or net_distance > proximity
+        ):
+            return None
+        log_position = map_log_coordinate(
+            self.homography, pixel, self.calibration["table_surface_y"],
+        )
+        candidate = ContactCandidate(
+            frame_number=terminal[0],
+            pixel=pixel,
+            log_position=log_position,
+            table_side="net",
+            signal_type="net",
+            strength=round(float(max(
+                0.0, 1.0 - net_distance / max(proximity, 1e-6)
+            )), 3),
+            confidence=0.55,
+            source_track_key=self.track_key(path),
+            approach=tuple(path[-3:-1]),
+            departure=(),
+        )
+        return self.record_contact_candidate(candidate, path, draw_frame)
+
+    def own_side_miss_event(
+        self,
+        attempt: Attempt,
+        selected: BounceEvent,
+        near: ContactCandidate,
+        far: ContactCandidate,
+    ) -> BounceEvent:
+        """Represent an ordered own-side then far-side history as one miss."""
+        posx, posy, posz = near.log_position or (None, None, None)
+        return replace(
+            selected,
+            video_time_seconds=round(near.frame_number / self.fps, 3),
+            video_timestamp=fmt_timestamp(near.frame_number / self.fps),
+            hit_table=True,
+            is_in=False,
+            outcome="near_table",
+            posx=posx,
+            posy=posy,
+            posz=posz,
+            confidence=round(min(near.confidence, far.confidence), 2),
+            frame_number=near.frame_number,
+            pixel=near.pixel,
+        )
+
     def finish_attempt(self, draw_frame: int) -> None:
         if self.active_attempt is None:
             return
         if self.active_attempt.bounces:
-            for event in sorted(self.active_attempt.bounces, key=lambda item: item.frame_number):
-                self.emit(event)
+            ordered_contact = self.confirmed_player_then_opponent(
+                self.active_attempt
+            )
+            self.record_contact_history_rejections(
+                self.active_attempt, draw_frame,
+            )
+            if ordered_contact is not None:
+                near, far = ordered_contact
+                selected = min(
+                    self.active_attempt.bounces,
+                    key=lambda item: abs(item.frame_number - far.frame_number),
+                )
+                related_far_frames = {
+                    candidate.frame_number
+                    for candidate in self.active_attempt.contact_candidates
+                    if (
+                        candidate.table_side == "opponent"
+                        and candidate.source_track_key == far.source_track_key
+                        and candidate.frame_number > near.frame_number
+                    )
+                }
+                for event in sorted(
+                    self.active_attempt.bounces,
+                    key=lambda item: item.frame_number,
+                ):
+                    if event is selected:
+                        self.emit(self.own_side_miss_event(
+                            self.active_attempt, selected, near, far,
+                        ))
+                    elif event.frame_number not in related_far_frames:
+                        self.emit(event)
+            else:
+                for event in sorted(
+                    self.active_attempt.bounces,
+                    key=lambda item: item.frame_number,
+                ):
+                    self.emit(event)
             last_bounce_frame = max(event.frame_number for event in self.active_attempt.bounces)
             later_misses = [
                 path for path in self.active_attempt.returns
@@ -1484,6 +1896,9 @@ class AttemptClassifier:
     ) -> None:
         if self.active_attempt is None:
             return
+        contact_key = self.physical_contact_key(hit)
+        if contact_key in self.active_attempt.classified_contact_keys:
+            return
         key = (path[0][0], hit[0])
         if key in self.emitted:
             return
@@ -1492,12 +1907,15 @@ class AttemptClassifier:
             path, "confirmed_bounce", draw_frame,
             f"{bounce_signal(hit, approach, departure)} hit_frame={hit[0]}",
         )
-        pixel = (hit[1], hit[2])
-        in_occlusion = len(self.occlusion) > 2 and point_in_polygon(pixel, self.occlusion)
-        posx, posy, posz = map_log_coordinate(self.homography, pixel, self.calibration["table_surface_y"])
-        far = posz > 0.03
-        continuity = min(1.0, len(approach + departure) / 6)
-        confidence = round((0.82 if far else 0.72) * continuity * (0.45 if in_occlusion else 1.0), 2)
+        candidate = self.record_contact_candidate(
+            self.contact_candidate(path, hit, approach, departure),
+            path, draw_frame,
+        )
+        pixel = candidate.pixel
+        in_occlusion = candidate.table_side == "occluded"
+        posx, posy, posz = candidate.log_position or (None, None, None)
+        far = candidate.table_side == "opponent"
+        confidence = candidate.confidence
         outcome = "unknown" if in_occlusion else ("far_table" if far else "near_table")
         hit_telemetry, machine_telemetry = self.telemetry_pair_before(hit[0])
         event = BounceEvent(
@@ -1521,10 +1939,33 @@ class AttemptClassifier:
                 machine_telemetry.to_record(self.fps) if machine_telemetry else None
             ),
         )
+        self.active_attempt.classified_contact_keys.add(contact_key)
         self.active_attempt.bounces.append(event)
         self.active_attempt.bounce_track_keys.add(self.track_key(path))
-        if event.hit_table and event.outcome == "far_table" and self.on_confirmed_hit:
+        ordered_contact = self.confirmed_player_then_opponent(self.active_attempt)
+        if (
+            event.hit_table
+            and event.outcome == "far_table"
+            and ordered_contact is None
+            and self.on_confirmed_hit
+        ):
             self.on_confirmed_hit(event)
+
+    def record_track_contacts(
+        self,
+        path: Track,
+        draw_frame: int,
+        allow_terminal_shadow: bool = True,
+    ) -> None:
+        """Observe every qualified contact without changing event selection."""
+        for hit, approach, departure in find_bounces(
+            path, self.table, self.net_line, self.settings,
+            allow_terminal_shadow=allow_terminal_shadow,
+        ):
+            self.record_contact_candidate(
+                self.contact_candidate(path, hit, approach, departure),
+                path, draw_frame,
+            )
 
     def process_tracks(self, tracks: Sequence[Track], draw_frame: int) -> None:
         for path in tracks:
@@ -1569,14 +2010,19 @@ class AttemptClassifier:
             self.diagnose_track(path, "return", draw_frame)
             if path not in attempt.returns:
                 attempt.returns.append(path)
+            self.record_track_contacts(path, draw_frame)
             bounce = find_bounce(path, self.table, self.net_line, self.settings)
             if bounce:
                 self.add_bounce(path, *bounce, draw_frame)
                 continue
+            self.record_net_contact(path, draw_frame)
             key = self.track_key(path)
             if self.on_confirmed_non_hit is not None and key not in self.reported_non_hit_tracks:
                 event = self.no_bounce_event(attempt, draw_frame)
-                if event.outcome in ("off_table", "net"):
+                # A net interaction can still fall onto the opponent table.
+                # Keep it pending until the attempt settles; an off-table
+                # terminal path is unambiguous and remains immediate.
+                if event.outcome == "off_table":
                     self.reported_non_hit_tracks.add(key)
                     self.on_confirmed_non_hit(event)
             crossed_net, _ = self.return_evidence(path)
@@ -1624,6 +2070,9 @@ class AttemptClassifier:
             returned = self.return_segment(path, self.active_attempt)
             if returned is None:
                 continue
+            self.record_track_contacts(
+                returned, draw_frame, allow_terminal_shadow=False,
+            )
             bounce = find_bounce(
                 returned, self.table, self.net_line, self.settings,
                 allow_terminal_shadow=False,
@@ -1831,15 +2280,18 @@ class LiveAttemptNormalizer:
             horizon = round(
                 max(item.frame_number for item in evidence) + self.period * 1.05
             )
-        self.period, slots = attempt_event_slots(evidence, horizon, self.fps)
+        period, slots = attempt_event_slots(evidence, horizon, self.fps)
+        if period is None:
+            return []
+        self.period = period
         if not self.ledger:
             first_hit = min(item.frame_number for item in hits)
             slots = [
                 item for item in slots
-                if item[0] >= first_hit - self.period * .3
+                if item[0] >= first_hit - period * .3
             ]
         if self.latest_trusted_frame is not None:
-            tail = self.period * (
+            tail = period * (
                 1.05 if self.trusted_allows_following_slot else .3
             )
             slots = [
@@ -2226,7 +2678,7 @@ def process_video(
                 and clean_frames_written == 0
                 and clean_seed_written
             )
-            if wrote_clean_seed:
+            if wrote_clean_seed and clean_writer is not None:
                 clean_writer.write(frame)
                 clean_frames_written += 1
             elif (
@@ -2317,6 +2769,11 @@ def main() -> None:
         metavar="JSONL",
         help="write observation-only confirmed-bounce paths and signal kinds",
     )
+    parser.add_argument(
+        "--contact-diagnostics",
+        metavar="JSONL",
+        help="write ordered contact candidates without changing classification",
+    )
     parser.add_argument("--no-annotated", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--start-seconds", type=float, default=0, help="seek point; useful when reviewing a short interval")
     parser.add_argument("--end-seconds", type=float, help="stop after this video timestamp")
@@ -2357,6 +2814,7 @@ def main() -> None:
     clean_writer = None
     live_events_output = None
     bounce_diagnostics_output = None
+    contact_diagnostics_output = None
     first_frame = None
     try:
         if args.calibration:
@@ -2390,6 +2848,11 @@ def main() -> None:
             reset_output_file(args.bounce_diagnostics)
             bounce_diagnostics_output = open(
                 args.bounce_diagnostics, "a", encoding="utf-8",
+            )
+        if args.contact_diagnostics is not None:
+            reset_output_file(args.contact_diagnostics)
+            contact_diagnostics_output = open(
+                args.contact_diagnostics, "a", encoding="utf-8",
             )
         with open(args.output, "w", encoding="utf-8") as output:
             processing_frame = first_frame.number if first_frame is not None else 0
@@ -2442,10 +2905,19 @@ def main() -> None:
             def write_bounce_diagnostic(
                 diagnostic: TrackDiagnostic, draw_frame: int,
             ) -> None:
-                if (
-                    bounce_diagnostics_output is None
-                    or diagnostic.kind != "confirmed_bounce"
+                if diagnostic.kind in (
+                    "contact_candidate", "rejected_contact_candidate",
                 ):
+                    if contact_diagnostics_output is None:
+                        return
+                    record = json.loads(diagnostic.reason)
+                    record["draw_frame"] = draw_frame
+                    contact_diagnostics_output.write(
+                        json.dumps(record) + "\n"
+                    )
+                    contact_diagnostics_output.flush()
+                    return
+                if bounce_diagnostics_output is None or diagnostic.kind != "confirmed_bounce":
                     return
                 bounce_diagnostics_output.write(json.dumps({
                     "draw_frame": draw_frame,
@@ -2487,6 +2959,8 @@ def main() -> None:
             live_events_output.close()
         if bounce_diagnostics_output is not None:
             bounce_diagnostics_output.close()
+        if contact_diagnostics_output is not None:
+            contact_diagnostics_output.close()
     print(json.dumps({
         "events": len(events),
         "output": args.output,
@@ -2494,6 +2968,7 @@ def main() -> None:
         "clean_recording": args.clean_recording,
         "live_events": args.live_events,
         "bounce_diagnostics": args.bounce_diagnostics,
+        "contact_diagnostics": args.contact_diagnostics,
     }, indent=2), file=sys.stderr if args.live_stdout else sys.stdout)
 
 
