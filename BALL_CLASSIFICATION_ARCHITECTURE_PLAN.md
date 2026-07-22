@@ -78,45 +78,45 @@ launch appears, while preventing one track from belonging to multiple balls.
 
 ### Attempt lifecycle
 
-- [ ] Replace `active_attempt: Optional[Attempt]` with a bounded ordered set of
+- [x] Replace `active_attempt: Optional[Attempt]` with a bounded ordered set of
   active attempts.
-- [ ] Define explicit attempt states such as `launched`, `return_seen`,
+- [x] Define explicit attempt states such as `launched`, `return_seen`,
   `contact_pending`, `settled`, and `expired`.
-- [ ] Keep a previous attempt alive across a later launch when it has credible
+- [x] Keep a previous attempt alive across a later launch when it has credible
   unresolved return, net, or airborne evidence.
-- [ ] Bound active-attempt count and lifetime from observed machine cadence so
+- [x] Bound active-attempt count and lifetime from observed machine cadence so
   streaming memory remains finite.
 
 ### Track ownership
 
-- [ ] Give each accepted launch, return fragment, reconnection, and contact a
+- [x] Give each accepted launch, return fragment, reconnection, and contact a
   stable track/ball identity.
-- [ ] Score track-to-attempt association using temporal order, direction,
+- [x] Score track-to-attempt association using temporal order, direction,
   position continuity, and prior ownership.
-- [ ] Make ownership exclusive unless a tracker fragment is explicitly split.
-- [ ] Preserve return reconnection across short avatar/net occlusions.
-- [ ] Prevent the next launch, a rolling old ball, or a static marking from
+- [x] Make ownership exclusive unless a tracker fragment is explicitly split.
+- [x] Preserve return reconnection across short avatar/net occlusions.
+- [x] Prevent the next launch, a rolling old ball, or a static marking from
   taking over an unresolved return.
-- [ ] Define deterministic tie-breaking and emit association diagnostics.
+- [x] Define deterministic tie-breaking and emit association diagnostics.
 
 ### Settlement and live behavior
 
-- [ ] Settle attempts in launch order even when their visible contacts arrive
+- [x] Settle attempts in launch order even when their visible contacts arrive
   out of order.
-- [ ] Preserve immediate live publication for unambiguous hits.
-- [ ] Prevent a later attempt from permanently publishing over an earlier
+- [x] Preserve immediate live publication for unambiguous hits.
+- [x] Prevent a later attempt from permanently publishing over an earlier
   delayed net ball.
-- [ ] Verify that batch output and the live ledger converge to the same ordered
+- [x] Verify that batch output and the live ledger converge to the same ordered
   outcomes.
 
 ### Tests and evaluation
 
-- [ ] Add unit scenarios with two overlapping airborne balls, delayed net-then-
+- [x] Add unit scenarios with two overlapping airborne balls, delayed net-then-
   table contact, a launch during an unresolved return, and competing fragments.
-- [ ] Review errors #122/#123 and other delayed/overlapping clips using the new
+- [x] Review errors #122/#123 and other delayed/overlapping clips using the new
   ownership diagnostics.
-- [ ] Run the full evaluation and record the Stage 2 before/after scorecard.
-- [ ] Run the three stable video guards and decide keep/revert.
+- [x] Run the full evaluation and record the Stage 2 before/after scorecard.
+- [x] Run the three stable video guards and decide keep/revert.
 
 ## Stage 3: Evidence-aware cadence reconciliation
 

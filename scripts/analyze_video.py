@@ -215,6 +215,10 @@ class Attempt:
 
     frame: int
     pixel: Point
+    state: str = "launched"
+    launch_track_key: Optional[Tuple[int, int, int]] = None
+    owned_track_keys: Set[Tuple[int, int, int]] = field(default_factory=set)
+    last_evidence_frame: Optional[int] = None
     report_no_bounce: bool = True
     returns: List[Track] = field(default_factory=list)
     bounces: List[BounceEvent] = field(default_factory=list)
@@ -1165,6 +1169,7 @@ def draw_overlay(
         colors = {
             "rejected": (0, 128, 255),
             "launcher": (255, 80, 40),
+            "association": (255, 180, 40),
             "return": (40, 220, 40),
             "contact_candidate": (255, 120, 255),
             "rejected_contact_candidate": (0, 128, 255),
@@ -1223,12 +1228,13 @@ def draw_overlay(
             ("rejected", (0, 128, 255)),
             ("unconfirmed", (255, 255, 0)),
             ("launcher", (255, 80, 40)),
+            ("owned return", (255, 180, 40)),
             ("return", (40, 220, 40)),
             ("contact candidate", (255, 120, 255)),
             ("rejected contact", (0, 128, 255)),
             ("confirmed bounce", (0, 0, 255)),
         )
-        cv2.rectangle(view, (8, 39), (180, 151), (20, 20, 20), -1)
+        cv2.rectangle(view, (8, 39), (180, 169), (20, 20, 20), -1)
         for index, (label, color) in enumerate(legend):
             cv2.putText(
                 view, label, (16, 54 + index * 18),
@@ -1253,7 +1259,7 @@ class AttemptClassifier:
         scale: float,
         settings: DetectorSettings,
         on_event: Optional[Callable[[BounceEvent], None]] = None,
-        on_attempt_finished: Optional[Callable[[int], None]] = None,
+        on_attempt_finished: Optional[Callable[[Optional[int]], None]] = None,
         on_confirmed_hit: Optional[Callable[[BounceEvent], None]] = None,
         on_confirmed_non_hit: Optional[Callable[[BounceEvent], None]] = None,
         on_track_diagnostic: Optional[Callable[[TrackDiagnostic, int], None]] = None,
@@ -1277,7 +1283,9 @@ class AttemptClassifier:
         self.emitted: Set[Tuple[int, int]] = set()
         self.started_launcher_tracks: Set[Tuple[int, int, int]] = set()
         self.reported_non_hit_tracks: Set[Tuple[int, int, int]] = set()
-        self.active_attempt: Optional[Attempt] = None
+        self.active_attempts: List[Attempt] = []
+        self.track_owners: Dict[Tuple[int, int, int], int] = {}
+        self.launch_frames: List[int] = []
         self.latest_telemetry: Optional[TelemetryReading] = None
         self.telemetry_history: List[TelemetryReading] = []
         self.launcher_tracks_seen = 0
@@ -1305,6 +1313,26 @@ class AttemptClassifier:
         return_center_x = (self.return_region[0] + self.return_region[2]) / 2
         self.launch_direction = 1 if return_center_x > launcher_center_x else -1
         self.warmup_launcher_tracks = calibration.get("warmup_launcher_tracks", 0)
+
+    @property
+    def active_attempt(self) -> Optional[Attempt]:
+        """Newest open attempt, retained for callers that inspect live state."""
+        return self.active_attempts[-1] if self.active_attempts else None
+
+    def attempt_by_frame(self, frame: int) -> Optional[Attempt]:
+        return next((item for item in self.active_attempts if item.frame == frame), None)
+
+    def observed_launch_period(self) -> float:
+        gaps = [
+            later - earlier
+            for earlier, later in zip(self.launch_frames, self.launch_frames[1:])
+            if later > earlier
+        ]
+        return float(sorted(gaps)[len(gaps) // 2]) if gaps else self.fps * 2.2
+
+    def attempt_lifetime(self) -> int:
+        """Bound overlap from observed machine cadence, with room for occlusion."""
+        return max(round(self.fps * 2.2), round(self.observed_launch_period() * 2.5))
 
     def diagnose_track(
         self, path: Track, kind: str, draw_frame: int, reason: str = "",
@@ -1355,16 +1383,18 @@ class AttemptClassifier:
 
     def record_contact_candidate(
         self, candidate: ContactCandidate, path: Track, draw_frame: int,
+        attempt: Optional[Attempt] = None,
     ) -> ContactCandidate:
         """Attach one physical contact once, independent of tracker ownership."""
-        if self.active_attempt is None:
+        attempt = attempt or self.active_attempt
+        if attempt is None:
             return candidate
         key = (
             candidate.frame_number,
             round(candidate.pixel[0]),
             round(candidate.pixel[1]),
         )
-        for existing in self.active_attempt.contact_candidates:
+        for existing in attempt.contact_candidates:
             existing_key = (
                 existing.frame_number,
                 round(existing.pixel[0]),
@@ -1372,16 +1402,17 @@ class AttemptClassifier:
             )
             if existing_key == key:
                 return existing
-        self.active_attempt.contact_candidates.append(candidate)
-        self.active_attempt.contact_candidates.sort(
+        attempt.contact_candidates.append(candidate)
+        attempt.contact_candidates.sort(
             key=lambda item: (item.frame_number, item.pixel)
         )
-        self.active_attempt.contact_keys.add(key)
+        attempt.contact_keys.add(key)
+        attempt.last_evidence_frame = candidate.frame_number
         self.diagnose_track(
             path, "contact_candidate", draw_frame,
             json.dumps({
                 **candidate.to_record(),
-                "attempt_frame_number": self.active_attempt.frame,
+                "attempt_frame_number": attempt.frame,
             }, separators=(",", ":")),
         )
         return candidate
@@ -1564,21 +1595,150 @@ class AttemptClassifier:
     def track_key(path: Track) -> Tuple[int, int, int]:
         return path[0][0], round(path[0][1]), round(path[0][2])
 
+    def association_score(self, path: Track, attempt: Attempt) -> Optional[Tuple[float, ...]]:
+        """Score one exclusive return owner; tuple ordering is deterministic."""
+        if not path or path[-1][0] <= attempt.frame or attempt.state in {"settled", "expired"}:
+            return None
+        key = self.track_key(path)
+        if self.track_owners.get(key) == attempt.frame:
+            return (1000.0, 0.0, 0.0, float(-attempt.frame))
+        returned = self.return_segment(path, attempt)
+        reconnected = self.reconnected_return(path, attempt)
+        if returned is None and reconnected is None:
+            return None
+        continuity = 0.0
+        gap = path[0][0] - attempt.frame
+        if reconnected is not None:
+            previous = max(
+                attempt.returns,
+                key=lambda item: item[-1][0] if item[-1][0] < path[0][0] else -1,
+            )
+            continuity = 500.0 - max(0, path[0][0] - previous[-1][0])
+        # Prefer an explicit reconnection, then the launch immediately before
+        # a new fragment. The final key makes equal scores choose the older
+        # launch, which preserves durable prior ownership.
+        return (
+            500.0 if reconnected is not None else 100.0,
+            continuity,
+            float(-gap),
+            float(-attempt.frame),
+        )
+
+    def associate_return(self, path: Track, draw_frame: int) -> Tuple[Optional[Attempt], Optional[Track]]:
+        key = self.track_key(path)
+        owner_frame = self.track_owners.get(key)
+        if owner_frame is not None:
+            owner = self.attempt_by_frame(owner_frame)
+            if owner is not None:
+                returned = self.return_segment(path, owner) or self.reconnected_return(path, owner)
+                if returned is not None:
+                    return owner, returned
+        scored = [
+            (score, attempt)
+            for attempt in self.active_attempts
+            if (score := self.association_score(path, attempt)) is not None
+        ]
+        if not scored:
+            return None, None
+        score, owner = max(scored, key=lambda item: item[0])
+        returned = self.reconnected_return(path, owner) or self.return_segment(path, owner)
+        if returned is None:
+            return None, None
+        self.track_owners[key] = owner.frame
+        owner.owned_track_keys.add(key)
+        owner.last_evidence_frame = path[-1][0]
+        self.diagnose_track(
+            path, "association", draw_frame,
+            json.dumps({
+                "attempt_frame_number": owner.frame,
+                "track_key": list(key),
+                "score": list(score),
+                "candidate_scores": [
+                    {
+                        "attempt_frame_number": candidate.frame,
+                        "score": list(candidate_score),
+                    }
+                    for candidate_score, candidate in sorted(
+                        scored, key=lambda item: item[1].frame,
+                    )
+                ],
+            }, separators=(",", ":")),
+        )
+        return owner, returned
+
+    def mark_attempt_state(self, attempt: Attempt) -> None:
+        if attempt.bounces:
+            attempt.state = "contact_pending"
+        elif attempt.returns or attempt.contact_candidates:
+            attempt.state = "return_seen"
+        else:
+            attempt.state = "launched"
+
+    def has_credible_unresolved_evidence(self, attempt: Attempt) -> bool:
+        if attempt.bounces:
+            return False
+        if any(
+            candidate.signal_type == "net"
+            for candidate in attempt.contact_candidates
+        ):
+            return True
+        return any(
+            point_in_polygon((path[-1][1], path[-1][2]), self.table)
+            for path in attempt.returns
+        )
+
+    def drain_settled_attempts(
+        self,
+        draw_frame: int,
+        settlement_frame: Optional[int] = None,
+        notify: bool = True,
+    ) -> None:
+        """Publish only the settled launch-order prefix."""
+        while self.active_attempts and self.active_attempts[0].state in {"settled", "expired"}:
+            attempt = self.active_attempts.pop(0)
+            self.finalize_attempt(attempt, draw_frame)
+            for key in attempt.owned_track_keys:
+                if self.track_owners.get(key) == attempt.frame:
+                    self.track_owners.pop(key)
+            if notify and self.on_attempt_finished is not None:
+                self.on_attempt_finished(settlement_frame)
+
+    def expire_attempts(self, draw_frame: int) -> None:
+        lifetime = self.attempt_lifetime()
+        for attempt in self.active_attempts:
+            if draw_frame - attempt.frame > lifetime:
+                attempt.state = "expired"
+        while len(self.active_attempts) > 3:
+            self.active_attempts[0].state = "expired"
+            self.drain_settled_attempts(draw_frame)
+
     def start_attempt(self, path: Track, draw_frame: int) -> None:
         self.launcher_tracks_seen += 1
         if self.launcher_tracks_seen <= self.warmup_launcher_tracks:
             return
-        finished_previous = self.active_attempt is not None
-        self.finish_attempt(draw_frame)
-        if finished_previous and self.on_attempt_finished is not None:
-            self.on_attempt_finished(path[0][0])
-        self.active_attempt = Attempt(
+        launch_frame = path[0][0]
+        self.launch_frames.append(launch_frame)
+        for attempt in self.active_attempts:
+            self.mark_attempt_state(attempt)
+            # Net/return evidence may still acquire a delayed continuation.
+            # Everything else is complete at the next credible launch.
+            if not self.has_credible_unresolved_evidence(attempt):
+                attempt.state = "settled"
+        self.drain_settled_attempts(draw_frame, launch_frame)
+        launch_key = self.track_key(path)
+        attempt = Attempt(
             path[0][0], (path[0][1], path[0][2]),
+            launch_track_key=launch_key,
+            owned_track_keys={launch_key},
+            last_evidence_frame=path[-1][0],
             report_no_bounce=self.is_reportable_launcher_track(path),
             machine_telemetry=self.telemetry_near(path[0][0]),
         )
+        self.active_attempts.append(attempt)
+        self.track_owners[launch_key] = attempt.frame
+        self.expire_attempts(draw_frame)
         if self.on_attempt_started is not None:
-            self.on_attempt_started(self.active_attempt.frame)
+            self.on_attempt_started(attempt.frame)
 
     def return_evidence(self, path: Track) -> Tuple[bool, bool]:
         start_pixel = (path[0][1], path[0][2])
@@ -1761,10 +1921,11 @@ class AttemptClassifier:
         return None
 
     def record_net_contact(
-        self, path: Track, draw_frame: int,
+        self, path: Track, draw_frame: int, attempt: Optional[Attempt] = None,
     ) -> Optional[ContactCandidate]:
         """Record a return fragment that visibly terminates at the net."""
-        if self.active_attempt is None or not path:
+        attempt = attempt or self.active_attempt
+        if attempt is None or not path:
             return None
         crossed_net, _ = self.return_evidence(path)
         terminal = path[-1]
@@ -1796,7 +1957,7 @@ class AttemptClassifier:
             approach=tuple(path[-3:-1]),
             departure=(),
         )
-        return self.record_contact_candidate(candidate, path, draw_frame)
+        return self.record_contact_candidate(candidate, path, draw_frame, attempt)
 
     def own_side_miss_event(
         self,
@@ -1822,25 +1983,24 @@ class AttemptClassifier:
             pixel=near.pixel,
         )
 
-    def finish_attempt(self, draw_frame: int) -> None:
-        if self.active_attempt is None:
-            return
-        if self.active_attempt.bounces:
+    def finalize_attempt(self, attempt: Attempt, draw_frame: int) -> None:
+        """Emit one settled attempt without changing ownership order."""
+        if attempt.bounces:
             ordered_contact = self.confirmed_player_then_opponent(
-                self.active_attempt
+                attempt
             )
             self.record_contact_history_rejections(
-                self.active_attempt, draw_frame,
+                attempt, draw_frame,
             )
             if ordered_contact is not None:
                 near, far = ordered_contact
                 selected = min(
-                    self.active_attempt.bounces,
+                    attempt.bounces,
                     key=lambda item: abs(item.frame_number - far.frame_number),
                 )
                 related_far_frames = {
                     candidate.frame_number
-                    for candidate in self.active_attempt.contact_candidates
+                    for candidate in attempt.contact_candidates
                     if (
                         candidate.table_side == "opponent"
                         and candidate.source_track_key == far.source_track_key
@@ -1848,25 +2008,25 @@ class AttemptClassifier:
                     )
                 }
                 for event in sorted(
-                    self.active_attempt.bounces,
+                    attempt.bounces,
                     key=lambda item: item.frame_number,
                 ):
                     if event is selected:
                         self.emit(self.own_side_miss_event(
-                            self.active_attempt, selected, near, far,
+                            attempt, selected, near, far,
                         ))
                     elif event.frame_number not in related_far_frames:
                         self.emit(event)
             else:
                 for event in sorted(
-                    self.active_attempt.bounces,
+                    attempt.bounces,
                     key=lambda item: item.frame_number,
                 ):
                     self.emit(event)
-            last_bounce_frame = max(event.frame_number for event in self.active_attempt.bounces)
+            last_bounce_frame = max(event.frame_number for event in attempt.bounces)
             later_misses = [
-                path for path in self.active_attempt.returns
-                if self.track_key(path) not in self.active_attempt.bounce_track_keys
+                path for path in attempt.returns
+                if self.track_key(path) not in attempt.bounce_track_keys
                 and path[0][0] > last_bounce_frame
                 and all(self.return_evidence(path))
             ]
@@ -1880,11 +2040,16 @@ class AttemptClassifier:
                     returns=[returned],
                 )
                 self.emit(self.no_bounce_event(missed_attempt, draw_frame))
-        elif self.active_attempt.report_no_bounce or any(
-            all(self.return_evidence(path)) for path in self.active_attempt.returns
+        elif attempt.report_no_bounce or any(
+            all(self.return_evidence(path)) for path in attempt.returns
         ):
-            self.emit(self.no_bounce_event(self.active_attempt, draw_frame))
-        self.active_attempt = None
+            self.emit(self.no_bounce_event(attempt, draw_frame))
+
+    def finish_attempt(self, draw_frame: int) -> None:
+        """Settle every open attempt at EOF, preserving launch order."""
+        for attempt in self.active_attempts:
+            attempt.state = "settled"
+        self.drain_settled_attempts(draw_frame, notify=False)
 
     def add_bounce(
         self,
@@ -1893,11 +2058,13 @@ class AttemptClassifier:
         approach: Track,
         departure: Track,
         draw_frame: int,
+        attempt: Optional[Attempt] = None,
     ) -> None:
-        if self.active_attempt is None:
+        attempt = attempt or self.active_attempt
+        if attempt is None:
             return
         contact_key = self.physical_contact_key(hit)
-        if contact_key in self.active_attempt.classified_contact_keys:
+        if contact_key in attempt.classified_contact_keys:
             return
         key = (path[0][0], hit[0])
         if key in self.emitted:
@@ -1909,7 +2076,7 @@ class AttemptClassifier:
         )
         candidate = self.record_contact_candidate(
             self.contact_candidate(path, hit, approach, departure),
-            path, draw_frame,
+            path, draw_frame, attempt,
         )
         pixel = candidate.pixel
         in_occlusion = candidate.table_side == "occluded"
@@ -1931,7 +2098,7 @@ class AttemptClassifier:
             frame_number=hit[0],
             pixel=pixel,
             draw_frame=draw_frame,
-            attempt_frame_number=self.active_attempt.frame,
+            attempt_frame_number=attempt.frame,
             hit=(
                 hit_telemetry.to_record(self.fps) if hit_telemetry else None
             ),
@@ -1939,14 +2106,21 @@ class AttemptClassifier:
                 machine_telemetry.to_record(self.fps) if machine_telemetry else None
             ),
         )
-        self.active_attempt.classified_contact_keys.add(contact_key)
-        self.active_attempt.bounces.append(event)
-        self.active_attempt.bounce_track_keys.add(self.track_key(path))
-        ordered_contact = self.confirmed_player_then_opponent(self.active_attempt)
+        attempt.classified_contact_keys.add(contact_key)
+        attempt.bounces.append(event)
+        attempt.bounce_track_keys.add(self.track_key(path))
+        attempt.last_evidence_frame = hit[0]
+        attempt.state = "contact_pending"
+        ordered_contact = self.confirmed_player_then_opponent(attempt)
+        older_unresolved = any(
+            item.frame < attempt.frame and item.state not in {"settled", "expired"}
+            for item in self.active_attempts
+        )
         if (
             event.hit_table
             and event.outcome == "far_table"
             and ordered_contact is None
+            and not older_unresolved
             and self.on_confirmed_hit
         ):
             self.on_confirmed_hit(event)
@@ -1956,6 +2130,7 @@ class AttemptClassifier:
         path: Track,
         draw_frame: int,
         allow_terminal_shadow: bool = True,
+        attempt: Optional[Attempt] = None,
     ) -> None:
         """Observe every qualified contact without changing event selection."""
         for hit, approach, departure in find_bounces(
@@ -1964,18 +2139,14 @@ class AttemptClassifier:
         ):
             self.record_contact_candidate(
                 self.contact_candidate(path, hit, approach, departure),
-                path, draw_frame,
+                path, draw_frame, attempt,
             )
 
     def process_tracks(self, tracks: Sequence[Track], draw_frame: int) -> None:
         for path in tracks:
             if len(path) < self.settings.min_track_points:
-                attempt = self.active_attempt
-                reconnected = (
-                    self.reconnected_return(path, attempt)
-                    if attempt is not None else None
-                )
-                if reconnected is not None:
+                attempt, reconnected = self.associate_return(path, draw_frame)
+                if attempt is not None and reconnected is not None:
                     path = reconnected
                 else:
                     self.diagnose_track(
@@ -1991,14 +2162,11 @@ class AttemptClassifier:
                 self.started_launcher_tracks.add(key)
                 self.start_attempt(path, draw_frame)
                 continue
-            attempt = self.active_attempt
+            attempt, returned = self.associate_return(path, draw_frame)
             if attempt is None:
                 reason = self.launcher_rejection_reason(path) or "no active launch"
                 self.diagnose_track(path, "rejected", draw_frame, reason)
                 continue
-            returned = self.return_segment(path, attempt)
-            if returned is None:
-                returned = self.reconnected_return(path, attempt)
             if returned is None:
                 self.diagnose_track(
                     path, "rejected", draw_frame,
@@ -2010,12 +2178,17 @@ class AttemptClassifier:
             self.diagnose_track(path, "return", draw_frame)
             if path not in attempt.returns:
                 attempt.returns.append(path)
-            self.record_track_contacts(path, draw_frame)
+            attempt.last_evidence_frame = path[-1][0]
+            attempt.state = "return_seen"
+            self.record_track_contacts(path, draw_frame, attempt=attempt)
             bounce = find_bounce(path, self.table, self.net_line, self.settings)
             if bounce:
-                self.add_bounce(path, *bounce, draw_frame)
+                self.add_bounce(path, *bounce, draw_frame, attempt=attempt)
+                if attempt is not self.active_attempt:
+                    attempt.state = "settled"
+                    self.drain_settled_attempts(draw_frame)
                 continue
-            self.record_net_contact(path, draw_frame)
+            net_contact = self.record_net_contact(path, draw_frame, attempt)
             key = self.track_key(path)
             if self.on_confirmed_non_hit is not None and key not in self.reported_non_hit_tracks:
                 event = self.no_bounce_event(attempt, draw_frame)
@@ -2040,7 +2213,11 @@ class AttemptClassifier:
                 if posz > 0.03 and math.dist(path[0][1:3], path[-1][1:3]) >= 300:
                     self.add_bounce(
                         path, terminal, path[-3:-1], [], draw_frame,
+                        attempt=attempt,
                     )
+            if attempt is not self.active_attempt and net_contact is None:
+                attempt.state = "settled"
+                self.drain_settled_attempts(draw_frame)
 
     def process_active_tracks(
         self, tracks: Sequence[Track], draw_frame: int,
@@ -2062,23 +2239,25 @@ class AttemptClassifier:
             self.diagnose_track(path, "launcher", draw_frame)
             self.started_launcher_tracks.add(key)
             self.start_attempt(path, draw_frame)
-        if self.active_attempt is None:
+        if not self.active_attempts:
             return
         for path in tracks:
             if self.track_key(path) in self.started_launcher_tracks:
                 continue
-            returned = self.return_segment(path, self.active_attempt)
-            if returned is None:
+            attempt, returned = self.associate_return(path, draw_frame)
+            if attempt is None or returned is None:
                 continue
             self.record_track_contacts(
                 returned, draw_frame, allow_terminal_shadow=False,
+                attempt=attempt,
             )
             bounce = find_bounce(
                 returned, self.table, self.net_line, self.settings,
                 allow_terminal_shadow=False,
             )
             if bounce:
-                self.add_bounce(returned, *bounce, draw_frame)
+                self.add_bounce(returned, *bounce, draw_frame, attempt=attempt)
+        self.expire_attempts(draw_frame)
 
 
 def infer_attempt_period(hit_frames: Sequence[int], fps: float) -> Optional[float]:
@@ -2590,7 +2769,7 @@ def process_video(
     writer: Optional[cv2.VideoWriter] = None,
     first_frame: Optional[VideoFrame] = None,
     on_event: Optional[Callable[[BounceEvent], None]] = None,
-    on_attempt_finished: Optional[Callable[[int], None]] = None,
+    on_attempt_finished: Optional[Callable[[Optional[int]], None]] = None,
     on_confirmed_hit: Optional[Callable[[BounceEvent], None]] = None,
     on_confirmed_non_hit: Optional[Callable[[BounceEvent], None]] = None,
     on_processing_frame: Optional[Callable[[int], None]] = None,
@@ -2917,7 +3096,9 @@ def main() -> None:
                     )
                     contact_diagnostics_output.flush()
                     return
-                if bounce_diagnostics_output is None or diagnostic.kind != "confirmed_bounce":
+                if bounce_diagnostics_output is None or diagnostic.kind not in (
+                    "confirmed_bounce", "association",
+                ):
                     return
                 bounce_diagnostics_output.write(json.dumps({
                     "draw_frame": draw_frame,

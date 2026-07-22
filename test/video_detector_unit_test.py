@@ -218,7 +218,7 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertEqual(
             [kind for kind, _, _ in reported],
             [
-                "rejected", "launcher", "return",
+                "rejected", "launcher", "association", "return",
                 "contact_candidate", "confirmed_bounce",
             ],
         )
@@ -861,6 +861,113 @@ class VideoDetectorUnitTest(unittest.TestCase):
         attempt.returns.append(first)
 
         self.assertIsNone(classifier.reconnected_return(rolling, attempt))
+
+    def test_launch_during_unresolved_return_keeps_two_bounded_attempts(self):
+        classifier = self.classifier()
+        classifier.table = np.float32([(0, 0), (600, 0), (600, 200), (0, 200)])
+        first_launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        unresolved = [(30 + frame, 100 + frame * 20, 100, 0.0) for frame in range(8)]
+        next_launch = [(60 + frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+
+        classifier.process_tracks([first_launch], 18)
+        classifier.process_tracks([unresolved], 39)
+        classifier.process_tracks([next_launch], 78)
+
+        self.assertEqual([item.frame for item in classifier.active_attempts], [0, 60])
+        self.assertEqual(classifier.active_attempts[0].state, "return_seen")
+        self.assertLessEqual(len(classifier.active_attempts), 3)
+
+    def test_delayed_fragment_retains_old_owner_after_next_launch(self):
+        classifier = self.classifier()
+        classifier.table = np.float32([(0, 0), (600, 0), (600, 200), (0, 200)])
+        first_launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        first = [(30 + frame, 100 + frame * 20, 100, 0.0) for frame in range(8)]
+        next_launch = [(60 + frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        continuation = [(45 + frame, 250 + frame * 20, 100, 0.0) for frame in range(8)]
+
+        classifier.process_tracks([first_launch], 18)
+        classifier.process_tracks([first], 39)
+        classifier.process_tracks([next_launch], 78)
+        owner, combined = classifier.associate_return(continuation, 80)
+
+        self.assertIsNotNone(owner)
+        self.assertEqual(owner.frame, 0)
+        self.assertEqual(combined, first + continuation)
+        self.assertEqual(
+            classifier.track_owners[classifier.track_key(continuation)], 0,
+        )
+
+    def test_track_ownership_is_exclusive_and_ties_are_deterministic(self):
+        classifier = self.classifier()
+        classifier.table = np.float32([(0, 0), (600, 0), (600, 200), (0, 200)])
+        launches = [
+            [(offset + frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+            for offset in (0, 60)
+        ]
+        classifier.process_tracks([launches[0]], 18)
+        classifier.process_tracks([launches[1]], 78)
+        fragment = [(90 + frame, 100 + frame * 20, 100, 0.0) for frame in range(8)]
+
+        owner, _ = classifier.associate_return(fragment, 100)
+        same_owner, _ = classifier.associate_return(fragment, 101)
+
+        self.assertIsNotNone(owner)
+        self.assertIs(owner, same_owner)
+        key = classifier.track_key(fragment)
+        self.assertEqual(
+            sum(key in item.owned_track_keys for item in classifier.active_attempts), 1,
+        )
+
+    def test_delayed_contact_settles_in_launch_order(self):
+        settled = []
+        classifier = self.classifier()
+        classifier.table = np.float32([(0, 0), (600, 0), (600, 200), (0, 200)])
+        classifier.net_line = np.float32([(300, 0), (300, 500)])
+        classifier.on_attempt_finished = settled.append
+        first_launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        first = [(30 + frame, 100 + frame * 20, 100, 0.0) for frame in range(8)]
+        next_launch = [(60 + frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        continuation = [(45 + frame, 250 + frame * 20, 100, 0.0) for frame in range(8)]
+
+        classifier.process_tracks([first_launch], 18)
+        classifier.process_tracks([first], 39)
+        self.assertEqual(
+            classifier.active_attempt.contact_candidates[-1].signal_type, "net",
+        )
+        classifier.process_tracks([next_launch], 78)
+        owner, combined = classifier.associate_return(continuation, 80)
+        assert owner is not None and combined is not None
+        classifier.add_bounce(
+            combined, combined[-4], combined[-6:-4], combined[-3:-1], 80,
+            attempt=owner,
+        )
+        owner.state = "settled"
+        classifier.drain_settled_attempts(80)
+
+        self.assertEqual(settled, [None])
+        self.assertEqual(classifier.events[0].attempt_frame_number, 0)
+        self.assertEqual([item.frame for item in classifier.active_attempts], [60])
+
+    def test_later_hit_is_not_published_over_unresolved_older_return(self):
+        reported = []
+        classifier = self.classifier()
+        classifier.table = np.float32([(0, 0), (600, 0), (600, 200), (0, 200)])
+        classifier.on_confirmed_hit = reported.append
+        first_launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        unresolved = [(30 + frame, 100 + frame * 20, 100, 0.0) for frame in range(8)]
+        next_launch = [(60 + frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        next_return = [(90 + frame, 100 + frame * 20, 100, 0.0) for frame in range(9)]
+
+        classifier.process_tracks([first_launch], 18)
+        classifier.process_tracks([unresolved], 39)
+        classifier.process_tracks([next_launch], 78)
+        newer = classifier.active_attempt
+        classifier.add_bounce(
+            next_return, next_return[4], next_return[1:4], next_return[5:8],
+            99, attempt=newer,
+        )
+
+        self.assertEqual(reported, [])
 
     def test_return_requires_observations_after_its_active_launch(self):
         classifier = self.classifier()

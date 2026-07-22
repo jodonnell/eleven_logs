@@ -1,0 +1,99 @@
+{
+  "stage": "Stage 2: Overlapping attempts and durable ball ownership",
+  "starting_commit": "e786e7f",
+  "baseline": {
+    "report": "artifacts/stage1-ordered-contacts-report.json",
+    "sequence_accuracy": 0.9234042553191489,
+    "correct": 217,
+    "wrong_outcome": 15,
+    "missing": 2,
+    "extra": 1,
+    "hit_precision": 0.9382022471910112,
+    "hit_recall": 0.9709302325581395
+  },
+  "candidate": {
+    "description": "Keep up to three cadence-bounded attempts active, assign every return fragment exclusively using prior ownership, reconnection continuity, direction, and temporal order, and publish settled attempts in launch order",
+    "analyzer_sha256": "9e077baa973e570b4b2b7fd3dd8eef296c1593db8b4dde2335364d17b518eccf",
+    "detector_test_sha256": "0e558fa7708df72286e5df82803bb70547d3b4896f403a97b2e00b69682f1d28",
+    "predictions": {
+      "path": "artifacts/stage2-durable-ownership.jsonl",
+      "sha256": "5c4f83087af8b3b1dd7ae30aa5303c6f4cedd00b86bf16e3034761820d65e68f"
+    },
+    "association_diagnostics": {
+      "path": "artifacts/stage2-durable-ownership-associations.jsonl",
+      "sha256": "6310e49d59219e1ffbd629ab84ebbbbcd94f92f82f2b19866090c812c771bf52",
+      "records": 778,
+      "association_records": 490,
+      "confirmed_bounce_records": 288,
+      "competing_association_records": 4
+    },
+    "contact_diagnostics": {
+      "path": "artifacts/stage2-durable-ownership-contacts.jsonl",
+      "sha256": "c08905a459fa2d37beaa3ea3f9107d2efa7bb214553f35b64fd6e666a1091e9f",
+      "records": 432
+    },
+    "report": {
+      "json_path": "artifacts/stage2-durable-ownership-report.json",
+      "json_sha256": "97c042a89f1ec5d8266dc6f36d7365aadc5d9cc2e9d022f6c3fd6144d99eda3c",
+      "markdown_path": "artifacts/stage2-durable-ownership-report.md",
+      "markdown_sha256": "d142f8e7e377512fa754f0c6d0c1beb41f5b639bd9a1449d39bcb72b205c33e8",
+      "sequence_accuracy": 0.9273504273504274,
+      "correct": 217,
+      "wrong_outcome": 16,
+      "missing": 1,
+      "extra": 0,
+      "hit_precision": 0.9333333333333333,
+      "hit_recall": 0.9767441860465116
+    },
+    "changed_attempts": [
+      "#9 anchor 936 -> 937; outcome remained hit",
+      "#19 anchor/frame 1747 -> 1748; outcome remained miss",
+      "#29 anchor/frame 2558 -> 2559; outcome remained miss",
+      "#39 anchor 3369 -> 3370; outcome remained hit",
+      "#49 anchor 4180 -> 4181; outcome remained hit",
+      "#54 miss at frame 4586 -> hit at frame 4593 on the same anchor",
+      "#59 anchor 4991 -> 4992; outcome remained hit",
+      "#69 anchor 5802 -> 5803; outcome remained hit",
+      "#79 anchor 6613 -> 6614; outcome remained hit",
+      "#89 anchor 7424 -> 7425; outcome remained hit",
+      "#99 anchor/frame 8235 -> 8236; outcome remained miss",
+      "#142 miss at frame 11723 -> hit at frame 11725 on the same anchor",
+      "#160 anchor 13182 -> 13183; outcome remained hit",
+      "#170 anchor 13993 -> 13994; outcome remained hit",
+      "#180 anchor/frame 14804 -> 14805; outcome remained miss",
+      "#190 anchor 15615 -> 15616; outcome remained hit",
+      "#200 anchor 16426 -> 16427; outcome remained hit",
+      "#210 anchor 17237 -> 17238; outcome remained hit",
+      "#220 anchor/frame 18048 -> 18049; outcome remained miss",
+      "#230 anchor 18859 -> 18860; outcome remained hit"
+    ],
+    "overlap_review": {
+      "attempts_122_123": "The delayed fragment beginning at frame 10016 reconnects to launch frame 9974 with the continuity-prioritized score. Their normalized outcomes remain unchanged; the remaining #123 alignment error follows an earlier unseen launch and is deferred to Stage 3 cadence reconciliation.",
+      "other_effect": "Durable ownership changes normalized attempts #54 and #142 from miss to hit, eliminating the extra launch and one missing launch in the evaluator alignment."
+    },
+    "verification": {
+      "detector_unit_tests": 76,
+      "full_python_suite": "102 applicable tests passed; the explicitly excluded local artifacts/live-counter-clean.mkv fixture failed its stale 11-shot expectation as documented in the plan",
+      "sample": {
+        "records": 12,
+        "baseline_sha256": "42b1eb26d47e007ec56be43e22263ec60fe31c3e7048bc0f2d657de645945f28",
+        "candidate_sha256": "42b1eb26d47e007ec56be43e22263ec60fe31c3e7048bc0f2d657de645945f28",
+        "result": "exact match"
+      },
+      "sample2": {
+        "records": 48,
+        "baseline_sha256": "289fb30af811c85c332f284f2f6e38b941bcc443536ce7ff259fe86e52b96309",
+        "candidate_sha256": "764f4abbec87c6eb549aa352185c18e144ed48fbebff961c581163d1dd129547",
+        "result": "same 48 ordered hit/miss outcomes; ownership metadata changed"
+      },
+      "sample3": {
+        "records": 32,
+        "baseline_sha256": "cf878552bd2b916b63a612b18a67e82ac3fe9fbb08288a86bec7231574fae7cd",
+        "candidate_sha256": "cf878552bd2b916b63a612b18a67e82ac3fe9fbb08288a86bec7231574fae7cd",
+        "result": "exact match"
+      },
+      "live_batch_convergence": "The stable sample2 replay passed with all 48 finalized browser outcomes matching canonical batch output"
+    }
+  },
+  "decision": "keep"
+}
