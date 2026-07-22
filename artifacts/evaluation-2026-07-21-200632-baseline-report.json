@@ -1,0 +1,220 @@
+{
+  "expected_attempts": 234,
+  "predicted_attempts": 233,
+  "sequence": {
+    "match": 213,
+    "wrong_outcome": 19,
+    "missing": 2,
+    "extra": 1,
+    "accuracy": 0.9063829787234042
+  },
+  "hit_classification": {
+    "true_hit": 167,
+    "false_hit": 15,
+    "true_miss": 46,
+    "false_miss": 5,
+    "precision": 0.9175824175824175,
+    "recall": 0.9709302325581395,
+    "f1": 0.943502824858757
+  },
+  "errors": [
+    {
+      "kind": "wrong_outcome",
+      "expected_number": 14,
+      "expected_outcome": "miss",
+      "label_time_seconds": 22.719,
+      "predicted_number": 14,
+      "predicted_outcome": "hit",
+      "prediction_time_seconds": 22.366666666666667
+    },
+    {
+      "kind": "wrong_outcome",
+      "expected_number": 15,
+      "expected_outcome": "miss",
+      "label_time_seconds": 23.943,
+      "predicted_number": 15,
+      "predicted_outcome": "hit",
+      "prediction_time_seconds": 23.716666666666665
+    },
+    {
+      "kind": "wrong_outcome",
+      "expected_number": 22,
+      "expected_outcome": "miss",
+      "label_time_seconds": 33.535,
+      "predicted_number": 22,
+      "predicted_outcome": "hit",
+      "prediction_time_seconds": 33.18333333333333
+    },
+    {
+      "kind": "missing",
+      "expected_number": 34,
+      "expected_outcome": "miss",
+      "label_time_seconds": 49.677,
+      "predicted_number": null,
+      "predicted_outcome": null,
+      "prediction_time_seconds": null
+    },
+    {
+      "kind": "wrong_outcome",
+      "expected_number": 39,
+      "expected_outcome": "miss",
+      "label_time_seconds": 55.759,
+      "predicted_number": 38,
+      "predicted_outcome": "hit",
+      "prediction_time_seconds": 54.8
+    },
+    {
+      "kind": "wrong_outcome",
+      "expected_number": 46,
+      "expected_outcome": "miss",
+      "label_time_seconds": 65.232,
+      "predicted_number": 45,
+      "predicted_outcome": "hit",
+      "prediction_time_seconds": 64.26666666666667
+    },
+    {
+      "kind": "wrong_outcome",
+      "expected_number": 47,
+      "expected_outcome": "miss",
+      "label_time_seconds": 66.388,
+      "predicted_number": 46,
+      "predicted_outcome": "hit",
+      "prediction_time_seconds": 65.61666666666666
+    },
+    {
+      "kind": "wrong_outcome",
+      "expected_number": 52,
+      "expected_outcome": "miss",
+      "label_time_seconds": 72.691,
+      "predicted_number": 51,
+      "predicted_outcome": "hit",
+      "prediction_time_seconds": 72.38333333333334
+    },
+    {
+      "kind": "extra",
+      "expected_number": null,
+      "expected_outcome": null,
+      "label_time_seconds": null,
+      "predicted_number": 54,
+      "predicted_outcome": "miss",
+      "prediction_time_seconds": 76.43333333333334
+    },
+    {
+      "kind": "missing",
+      "expected_number": 66,
+      "expected_outcome": "hit",
+      "label_time_seconds": 91.893,
+      "predicted_number": null,
+      "predicted_outcome": null,
+      "prediction_time_seconds": null
+    },
+    {
+      "kind": "wrong_outcome",
+      "expected_number": 77,
+      "expected_outcome": "miss",
+      "label_time_seconds": 107.293,
+      "predicted_number": 76,
+      "predicted_outcome": "hit",
+      "prediction_time_seconds": 106.16666666666667
+    },
+    {
+      "kind": "wrong_outcome",
+      "expected_number": 93,
+      "expected_outcome": "hit",
+      "label_time_seconds": 128.059,
+      "predicted_number": 92,
+      "predicted_outcome": "miss",
+      "prediction_time_seconds": 127.8
+    },
+    {
+      "kind": "wrong_outcome",
+      "expected_number": 122,
+      "expected_outcome": "miss",
+      "label_time_seconds": 167.71,
+      "predicted_number": 121,
+      "predicted_outcome": "hit",
+      "prediction_time_seconds": 167.0
+    },
+    {
+      "kind": "wrong_outcome",
+      "expected_number": 123,
+      "expected_outcome": "hit",
+      "label_time_seconds": 168.876,
+      "predicted_number": 122,
+      "predicted_outcome": "miss",
+      "prediction_time_seconds": 168.35
+    },
+    {
+      "kind": "wrong_outcome",
+      "expected_number": 143,
+      "expected_outcome": "hit",
+      "label_time_seconds": 195.769,
+      "predicted_number": 142,
+      "predicted_outcome": "miss",
+      "prediction_time_seconds": 195.38333333333333
+    },
+    {
+      "kind": "wrong_outcome",
+      "expected_number": 159,
+      "expected_outcome": "miss",
+      "label_time_seconds": 217.718,
+      "predicted_number": 158,
+      "predicted_outcome": "hit",
+      "prediction_time_seconds": 217.0
+    },
+    {
+      "kind": "wrong_outcome",
+      "expected_number": 176,
+      "expected_outcome": "miss",
+      "label_time_seconds": 240.177,
+      "predicted_number": 175,
+      "predicted_outcome": "hit",
+      "prediction_time_seconds": 239.98333333333332
+    },
+    {
+      "kind": "wrong_outcome",
+      "expected_number": 178,
+      "expected_outcome": "miss",
+      "label_time_seconds": 243.309,
+      "predicted_number": 177,
+      "predicted_outcome": "hit",
+      "prediction_time_seconds": 242.68333333333334
+    },
+    {
+      "kind": "wrong_outcome",
+      "expected_number": 189,
+      "expected_outcome": "miss",
+      "label_time_seconds": 257.755,
+      "predicted_number": 188,
+      "predicted_outcome": "hit",
+      "prediction_time_seconds": 257.55
+    },
+    {
+      "kind": "wrong_outcome",
+      "expected_number": 197,
+      "expected_outcome": "hit",
+      "label_time_seconds": 268.687,
+      "predicted_number": 196,
+      "predicted_outcome": "miss",
+      "prediction_time_seconds": 268.3666666666667
+    },
+    {
+      "kind": "wrong_outcome",
+      "expected_number": 219,
+      "expected_outcome": "miss",
+      "label_time_seconds": 298.638,
+      "predicted_number": 218,
+      "predicted_outcome": "hit",
+      "prediction_time_seconds": 298.1
+    },
+    {
+      "kind": "wrong_outcome",
+      "expected_number": 232,
+      "expected_outcome": "miss",
+      "label_time_seconds": 316.314,
+      "predicted_number": 231,
+      "predicted_outcome": "hit",
+      "prediction_time_seconds": 315.68333333333334
+    }
+  ]
+}

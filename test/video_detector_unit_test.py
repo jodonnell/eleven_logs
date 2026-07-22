@@ -15,6 +15,7 @@ from analyze_video import (  # noqa: E402
     Attempt,
     AttemptClassifier,
     BounceEvent,
+    bounce_signal,
     DetectorDiagnostics,
     DetectorSettings,
     LiveAttemptNormalizer,
@@ -80,6 +81,30 @@ class VideoDetectorUnitTest(unittest.TestCase):
         hsv[:, :, :] = (65, 165, 160)
 
         self.assertEqual(shadow_contact_score(hsv, (50, 50)), 0.0)
+
+    def test_bounce_signal_describes_observation_shape(self):
+        hit = (4, 180, 120, 0.0)
+        maximum_approach = [(1, 120, 90, 0.0), (2, 140, 100, 0.0), (3, 160, 110, 0.0)]
+        maximum_departure = [(5, 200, 105, 0.0), (6, 220, 95, 0.0)]
+        minimum_approach = [(1, 120, 150, 0.0), (2, 140, 140, 0.0), (3, 160, 130, 0.0)]
+        minimum_departure = [(5, 200, 135, 0.0), (6, 220, 145, 0.0)]
+
+        self.assertEqual(
+            bounce_signal(hit, maximum_approach, maximum_departure),
+            "vertical_maximum",
+        )
+        self.assertEqual(
+            bounce_signal(hit, minimum_approach, minimum_departure),
+            "vertical_minimum",
+        )
+        self.assertEqual(
+            bounce_signal(hit, maximum_approach[-2:], maximum_departure),
+            "shadow",
+        )
+        self.assertEqual(
+            bounce_signal(hit, maximum_approach[-2:], []),
+            "terminal",
+        )
 
     def test_candidate_diagnostics_separate_raw_and_rejected_blobs(self):
         frame = np.zeros((100, 100, 3), dtype=np.uint8)
@@ -247,6 +272,19 @@ class VideoDetectorUnitTest(unittest.TestCase):
         points = [(frame, 100 + frame * 20, 100 + frame * 10, 0.0) for frame in range(9)]
         points[4] = (4, 140, 150, 0.0)
         points[5] = (5, 138, 145, 0.0)
+        table = np.float32([(0, 0), (500, 0), (500, 500), (0, 500)])
+
+        self.assertIsNone(
+            find_bounce(points, table, net_line=np.float32([(0, 0), (0, 500)]))
+        )
+
+    def test_post_contact_tracker_reversal_is_not_a_trajectory_bounce(self):
+        points = [
+            (frame, 100 + frame * 20, 100 + abs(4 - frame) * -10, 0.0)
+            for frame in range(9)
+        ]
+        points[5] = (5, 175, 90, 0.0)
+        points[6] = (6, 172, 80, 0.0)
         table = np.float32([(0, 0), (500, 0), (500, 500), (0, 500)])
 
         self.assertIsNone(
@@ -592,6 +630,52 @@ class VideoDetectorUnitTest(unittest.TestCase):
             classifier.return_rejection_reason(wrong_way),
             "insufficient travel toward opponent",
         )
+
+    def test_slow_rolling_ball_is_not_a_return(self):
+        classifier = self.classifier()
+        rolling = [
+            (30 + frame, 100 + frame * 2, 100, 0.0)
+            for frame in range(70)
+        ]
+
+        self.assertFalse(classifier.is_return_track(rolling))
+        self.assertEqual(
+            classifier.return_rejection_reason(rolling),
+            "return moved too slowly",
+        )
+
+    def test_return_fragments_reconnect_across_a_short_occlusion(self):
+        classifier = self.classifier()
+        attempt = Attempt(10, (800, 100))
+        first = [
+            (30 + frame, 100 + frame * 20, 100, 0.0)
+            for frame in range(8)
+        ]
+        continuation = [
+            (45 + frame, 260 + frame * 20, 100, 0.0)
+            for frame in range(8)
+        ]
+        attempt.returns.append(first)
+
+        reconnected = classifier.reconnected_return(continuation, attempt)
+
+        self.assertIsNotNone(reconnected)
+        self.assertEqual(reconnected, first + continuation)
+
+    def test_return_does_not_reconnect_a_slow_old_ball(self):
+        classifier = self.classifier()
+        attempt = Attempt(10, (800, 100))
+        first = [
+            (30 + frame, 100 + frame * 20, 100, 0.0)
+            for frame in range(8)
+        ]
+        rolling = [
+            (45 + frame, 260 + frame * 2, 100, 0.0)
+            for frame in range(8)
+        ]
+        attempt.returns.append(first)
+
+        self.assertIsNone(classifier.reconnected_return(rolling, attempt))
 
     def test_return_requires_observations_after_its_active_launch(self):
         classifier = self.classifier()

@@ -92,6 +92,10 @@ class DetectorSettings:
     launch_min_horizontal_distance: float = 120
     launch_min_directional_ratio: float = 0.8
     return_min_horizontal_distance: float = 120
+    return_min_horizontal_speed: float = 4
+    return_reconnect_max_gap: int = 24
+    return_reconnect_max_forward_distance: float = 320
+    return_reconnect_backtrack_tolerance: float = 20
     min_shadow_contact_score: float = 28
     net_shadow_exclusion_distance: float = 70
     motion_threshold: int = 18
@@ -384,6 +388,12 @@ def find_bounce(
         # a tracker hand-off to a marking/shadow, not a physical bounce.
         if points[index][1] < points[index - 1][1]:
             continue
+        # The same direction must hold across the two frames that confirm the
+        # departure. A tracker that reverses overall immediately after the
+        # apparent contact has handed off to a different blob; a returned ball
+        # continues toward the opponent even while its vertical direction turns.
+        if points[index + 2][1] <= points[index][1]:
+            continue
         if maximum or minimum:
             strength = min(abs(y - before_mean), abs(y - after_mean))
             candidate = (strength, points[index], points[index - 3:index], points[index + 1:index + 3])
@@ -406,6 +416,24 @@ def find_bounce(
                 if best is None or flattening > best[0]:
                     best = candidate
     return best[1:] if best else None
+
+
+def bounce_signal(
+    hit: TrackPoint, approach: Track, departure: Track,
+) -> str:
+    """Describe which bounded evidence shape produced a bounce decision."""
+    if len(approach) == 2:
+        return "terminal" if not departure else "shadow"
+    if len(approach) != 3 or len(departure) != 2:
+        return "other"
+    y = hit[2]
+    before_mean = sum(point[2] for point in approach) / len(approach)
+    after_mean = sum(point[2] for point in departure) / len(departure)
+    if y >= before_mean and y >= after_mean:
+        return "vertical_maximum"
+    if y <= before_mean and y <= after_mean:
+        return "vertical_minimum"
+    return "velocity_flattening"
 
 
 class MultiBallTracker:
@@ -1245,6 +1273,16 @@ class AttemptClassifier:
         returned = self.return_candidate_segment(path)
         if returned is None:
             return "insufficient travel toward opponent"
+        elapsed = returned[-1][0] - returned[0][0]
+        directed_distance = (
+            (returned[-1][1] - returned[0][1]) * -self.launch_direction
+        )
+        if (
+            elapsed <= 0
+            or directed_distance / elapsed
+            < self.settings.return_min_horizontal_speed
+        ):
+            return "return moved too slowly"
         if attempt is not None:
             post_launch_observations = sum(
                 point[0] > attempt.frame for point in returned
@@ -1256,6 +1294,46 @@ class AttemptClassifier:
                     f"{self.settings.min_track_observations})"
                 )
         return None
+
+    def reconnected_return(
+        self, path: Track, attempt: Attempt,
+    ) -> Optional[Track]:
+        """Join a return after a short player/avatar or net occlusion.
+
+        Completed fragments remain owned by the current attempt. A later
+        fragment may extend one only when time and camera-relative motion are
+        consistent with the same outbound ball. Slow rolling balls and the
+        next machine launch therefore cannot take over the return identity.
+        """
+        if not path or path[0][0] <= attempt.frame:
+            return None
+        return_direction = -self.launch_direction
+        candidates: List[Tuple[int, float, Track]] = []
+        for previous in attempt.returns:
+            gap = path[0][0] - previous[-1][0]
+            if not 0 < gap <= self.settings.return_reconnect_max_gap:
+                continue
+            forward_gap = (path[0][1] - previous[-1][1]) * return_direction
+            if not (
+                -self.settings.return_reconnect_backtrack_tolerance
+                <= forward_gap
+                <= self.settings.return_reconnect_max_forward_distance
+            ):
+                continue
+            fragment_elapsed = path[-1][0] - path[0][0]
+            fragment_progress = (path[-1][1] - path[0][1]) * return_direction
+            if (
+                fragment_elapsed <= 0
+                or fragment_progress / fragment_elapsed
+                < self.settings.return_min_horizontal_speed
+            ):
+                continue
+            combined = previous + path
+            if self.return_rejection_reason(combined, attempt) is None:
+                candidates.append((gap, -forward_gap, combined))
+        if not candidates:
+            return None
+        return min(candidates, key=lambda item: item[:2])[2]
 
     def return_segment(
         self, path: Track, attempt: Optional[Attempt] = None,
@@ -1399,7 +1477,10 @@ class AttemptClassifier:
         if key in self.emitted:
             return
         self.emitted.add(key)
-        self.diagnose_track(path, "confirmed_bounce", draw_frame)
+        self.diagnose_track(
+            path, "confirmed_bounce", draw_frame,
+            f"{bounce_signal(hit, approach, departure)} hit_frame={hit[0]}",
+        )
         pixel = (hit[1], hit[2])
         in_occlusion = len(self.occlusion) > 2 and point_in_polygon(pixel, self.occlusion)
         posx, posy, posz = map_log_coordinate(self.homography, pixel, self.calibration["table_surface_y"])
@@ -1437,11 +1518,19 @@ class AttemptClassifier:
     def process_tracks(self, tracks: Sequence[Track], draw_frame: int) -> None:
         for path in tracks:
             if len(path) < self.settings.min_track_points:
-                self.diagnose_track(
-                    path, "rejected", draw_frame,
-                    f"too short ({len(path)}/{self.settings.min_track_points})",
+                attempt = self.active_attempt
+                reconnected = (
+                    self.reconnected_return(path, attempt)
+                    if attempt is not None else None
                 )
-                continue
+                if reconnected is not None:
+                    path = reconnected
+                else:
+                    self.diagnose_track(
+                        path, "rejected", draw_frame,
+                        f"too short ({len(path)}/{self.settings.min_track_points})",
+                    )
+                    continue
             if self.is_launcher_track(path):
                 key = self.track_key(path)
                 if key in self.started_launcher_tracks:
@@ -1457,6 +1546,8 @@ class AttemptClassifier:
                 continue
             returned = self.return_segment(path, attempt)
             if returned is None:
+                returned = self.reconnected_return(path, attempt)
+            if returned is None:
                 self.diagnose_track(
                     path, "rejected", draw_frame,
                     self.return_rejection_reason(path, attempt)
@@ -1465,7 +1556,8 @@ class AttemptClassifier:
                 continue
             path = returned
             self.diagnose_track(path, "return", draw_frame)
-            attempt.returns.append(path)
+            if path not in attempt.returns:
+                attempt.returns.append(path)
             bounce = find_bounce(path, self.table, self.net_line, self.settings)
             if bounce:
                 self.add_bounce(path, *bounce, draw_frame)
@@ -2043,6 +2135,9 @@ def process_video(
     clean_frame_limit: Optional[int] = None,
     clean_start_on_launch: bool = False,
     on_attempt_started: Optional[Callable[[int], None]] = None,
+    on_track_diagnostic: Optional[
+        Callable[[TrackDiagnostic, int], None]
+    ] = None,
 ) -> List[BounceEvent]:
     """Process an already-open source and return its detected bounce events."""
     fps = source.fps
@@ -2069,11 +2164,17 @@ def process_video(
         if on_attempt_started is not None:
             on_attempt_started(frame_number)
 
+    def report_track(diagnostic: TrackDiagnostic, frame_number: int) -> None:
+        if diagnostics is not None:
+            diagnostics.completed_track(diagnostic, frame_number)
+        if on_track_diagnostic is not None:
+            on_track_diagnostic(diagnostic, frame_number)
+
     classifier = AttemptClassifier(
         fps, calibration, contact_polygon, net_line, occlusion, homography,
         video_width, video_height, scale, settings, on_event,
         on_attempt_finished, on_confirmed_hit, on_confirmed_non_hit,
-        diagnostics.completed_track if diagnostics is not None else None,
+        report_track if diagnostics is not None or on_track_diagnostic is not None else None,
         mark_clean_recording_started,
     )
     previous_gray = None
@@ -2200,6 +2301,11 @@ def main() -> None:
         metavar="JSONL",
         help="append-only live publication log with shot and publication frames",
     )
+    parser.add_argument(
+        "--bounce-diagnostics",
+        metavar="JSONL",
+        help="write observation-only confirmed-bounce paths and signal kinds",
+    )
     parser.add_argument("--no-annotated", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--start-seconds", type=float, default=0, help="seek point; useful when reviewing a short interval")
     parser.add_argument("--end-seconds", type=float, help="stop after this video timestamp")
@@ -2239,6 +2345,7 @@ def main() -> None:
     writer = None
     clean_writer = None
     live_events_output = None
+    bounce_diagnostics_output = None
     first_frame = None
     try:
         if args.calibration:
@@ -2268,6 +2375,11 @@ def main() -> None:
             )
         if args.live_events is not None:
             live_events_output = open(args.live_events, "a", encoding="utf-8")
+        if args.bounce_diagnostics is not None:
+            reset_output_file(args.bounce_diagnostics)
+            bounce_diagnostics_output = open(
+                args.bounce_diagnostics, "a", encoding="utf-8",
+            )
         with open(args.output, "w", encoding="utf-8") as output:
             processing_frame = first_frame.number if first_frame is not None else 0
             live_normalizer: Optional[LiveAttemptNormalizer] = None
@@ -2315,6 +2427,23 @@ def main() -> None:
                 write_live_record(record)
 
             live_normalizer = LiveAttemptNormalizer(fps, write_attempt)
+
+            def write_bounce_diagnostic(
+                diagnostic: TrackDiagnostic, draw_frame: int,
+            ) -> None:
+                if (
+                    bounce_diagnostics_output is None
+                    or diagnostic.kind != "confirmed_bounce"
+                ):
+                    return
+                bounce_diagnostics_output.write(json.dumps({
+                    "draw_frame": draw_frame,
+                    "kind": diagnostic.kind,
+                    "reason": diagnostic.reason,
+                    "points": diagnostic.points,
+                }) + "\n")
+                bounce_diagnostics_output.flush()
+
             events = process_video(
                 source, scale, calibration, homography, table,
                 args.end_seconds, writer, first_frame,
@@ -2325,6 +2454,7 @@ def main() -> None:
                 clean_writer,
                 round(args.clean_recording_seconds * fps),
                 args.clean_recording_start == "launch",
+                on_track_diagnostic=write_bounce_diagnostic,
             )
             live_normalizer.finish_session(processing_frame)
 
@@ -2344,12 +2474,15 @@ def main() -> None:
             clean_writer.release()
         if live_events_output is not None:
             live_events_output.close()
+        if bounce_diagnostics_output is not None:
+            bounce_diagnostics_output.close()
     print(json.dumps({
         "events": len(events),
         "output": args.output,
         "annotated": annotated_path,
         "clean_recording": args.clean_recording,
         "live_events": args.live_events,
+        "bounce_diagnostics": args.bounce_diagnostics,
     }, indent=2), file=sys.stderr if args.live_stdout else sys.stdout)
 
 

@@ -1,0 +1,56 @@
+{
+  "baseline": {
+    "report": "artifacts/evaluation-2026-07-21-200632-baseline-report.json",
+    "sequence_accuracy": 0.9063829787234042,
+    "correct": 213,
+    "wrong_outcome": 19,
+    "missing": 2,
+    "extra": 1,
+    "hit_precision": 0.9175824175824175,
+    "hit_recall": 0.9709302325581395
+  },
+  "no_reconnect_ab": {
+    "report": "artifacts/evaluation-2026-07-21-200632-no-reconnect-report.json",
+    "sequence_accuracy": 0.902127659574468,
+    "correct": 212,
+    "wrong_outcome": 20,
+    "result": "rejected; reconnect preserves one additional correctly classified miss"
+  },
+  "candidate": {
+    "description": "Require overall forward progress across two post-contact frames",
+    "analyzer_test_diff_sha256": "d4127b0da4fc14ca5e8ea13f89d97a35963e09bff1573f823e80e5b922fa6591",
+    "predictions": {
+      "path": "artifacts/evaluation-2026-07-21-200632-post-contact-direction.jsonl",
+      "sha256": "334ed8f9c2f2c447a7a653d7afa27ca228f3a2ee8e33cd65ba8d6923715ae5c1"
+    },
+    "report": {
+      "path": "artifacts/evaluation-2026-07-21-200632-post-contact-direction-report.json",
+      "sha256": "d588c1ec32c95c2f7f54ca595b6302953ea600adb141afbbd1783b0aa8956498",
+      "sequence_accuracy": 0.9106382978723404,
+      "correct": 214,
+      "wrong_outcome": 18,
+      "missing": 2,
+      "extra": 1,
+      "hit_precision": 0.9226519337016574,
+      "hit_recall": 0.9709302325581395
+    },
+    "behavior_difference": [
+      "Attempt 14 changed from hit to miss at 00:22.367 and now matches ground truth",
+      "Attempt 45 remains a hit but its selected evidence frame moved from 3853 to 3852"
+    ],
+    "verification": {
+      "sample": "pass",
+      "sample2": "pass",
+      "sample3": "pass",
+      "python_unit_tests": 69,
+      "javascript_tests": 52,
+      "lint": "pass"
+    }
+  },
+  "excluded_stale_fixture": {
+    "labels": "test/fixtures/quest-2026-07-20-live-counter.json",
+    "video": "artifacts/live-counter-clean.mkv",
+    "video_sha256": "5f832407014441a9ce4f4c77e09b4fcbfa2f0e433c2620b7674626b3c739b778",
+    "reason": "The mutable video was written at 20:28 after its 11-shot label file was written at 20:01; the current video produces 20 attempts and is not the labeled fixture."
+  }
+}

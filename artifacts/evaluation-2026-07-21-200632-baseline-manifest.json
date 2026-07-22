@@ -1,0 +1,35 @@
+{
+  "video": {
+    "path": "artifacts/evaluation-2026-07-21-200632-evaluation.mkv",
+    "sha256": "da217afe355796511b8e5f42f11d61934439617ffb6ea85a2548c9df782d8771",
+    "duration_seconds": 320.033,
+    "width": 1920,
+    "height": 1080,
+    "frames_per_second": 60
+  },
+  "ground_truth": {
+    "path": "artifacts/evaluation-2026-07-21-200632-evaluation-ground-truth-export.json",
+    "sha256": "4e0fd2ba6a44d738e3dc3d93c65d53f6da518a60c7135de874abf2f3da5e6c90",
+    "attempts": 234,
+    "hits": 172,
+    "misses": 62
+  },
+  "detector": {
+    "git_commit": "2018917671187d940f53b480101d2380c4362db1",
+    "analyzer_test_diff_sha256": "d8d0856d07430899a1f0ae2a8eefaa7613d88e18ab2a797a33de15008e5073a7"
+  },
+  "predictions": {
+    "path": "artifacts/evaluation-2026-07-21-200632-baseline.jsonl",
+    "sha256": "9c9eebb347bb55bcc0ab0ea61a4d7ffe0aa4560bbf9914aa281546da38d151ee",
+    "attempts": 233
+  },
+  "report": {
+    "path": "artifacts/evaluation-2026-07-21-200632-baseline-report.json",
+    "sha256": "95d286937dfb235ab269f35ec4c3cc784be332d14e58ce14d93bce90c147d29f",
+    "sequence_accuracy": 0.9063829787234042,
+    "correct": 213,
+    "wrong_outcome": 19,
+    "missing": 2,
+    "extra": 1
+  }
+}
