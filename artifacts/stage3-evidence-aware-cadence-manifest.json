@@ -1,0 +1,71 @@
+{
+  "stage": "Stage 3: Evidence-aware cadence reconciliation",
+  "starting_commit": "235683b",
+  "baseline": {
+    "report": "artifacts/stage2-durable-ownership-report.json",
+    "sequence_accuracy": 0.9273504273504274,
+    "correct": 217,
+    "wrong_outcome": 16,
+    "missing": 1,
+    "extra": 0,
+    "hit_precision": 0.9333333333333333,
+    "hit_recall": 0.9767441860465116
+  },
+  "candidate": {
+    "description": "Prefer visual attempt_frame_number launch anchors, collapse sub-half-period visual duplicates by cadence support, insert only one cadence slot bracketed by compatible visual launches, and use the same slots for batch and live output",
+    "predictions": {
+      "path": "artifacts/stage3-evidence-aware-cadence.jsonl",
+      "sha256": "2faf69eb00e0af64da80718baa1fbb53b16616c6fb6330af7d824e10a05680ee"
+    },
+    "association_diagnostics": {
+      "path": "artifacts/stage3-evidence-aware-cadence-associations.jsonl",
+      "sha256": "6310e49d59219e1ffbd629ab84ebbbbcd94f92f82f2b19866090c812c771bf52",
+      "records": 778
+    },
+    "contact_diagnostics": {
+      "path": "artifacts/stage3-evidence-aware-cadence-contacts.jsonl",
+      "sha256": "c08905a459fa2d37beaa3ea3f9107d2efa7bb214553f35b64fd6e666a1091e9f",
+      "records": 432
+    },
+    "report": {
+      "json_path": "artifacts/stage3-evidence-aware-cadence-report.json",
+      "json_sha256": "b6a601470e74d062a01a95b12459b82f4f8ca38af8c419f25c4d70eb2d4e9aa0",
+      "markdown_path": "artifacts/stage3-evidence-aware-cadence-report.md",
+      "markdown_sha256": "e5af4e346b75b646513e616e53468a11b98a66c255e60aeb7004f51b09688995",
+      "sequence_accuracy": 0.9106382978723404,
+      "correct": 214,
+      "wrong_outcome": 18,
+      "missing": 2,
+      "extra": 1,
+      "hit_precision": 0.9273743016759777,
+      "hit_recall": 0.9651162790697675
+    },
+    "anchor_review": {
+      "visual_anchors": 230,
+      "cadence_inferred_anchors": 3,
+      "inferred_anchor_frames": [3004, 11191, 17763],
+      "floating_ball_glitch": "The incompatible frame-4642 visual anchor was suppressed in favor of cadence-supported frame 4624, but reassigning finalized histories by raw launch anchor introduced new sequence errors.",
+      "baseline_missing_and_extra": "The retained Stage 2 output had already removed the baseline extra launch and one missing launch through durable ownership. The remaining missing #34 was not separated by additional credible visual launch evidence, so Stage 3 could not infer it without contradicting its evidence rule."
+    },
+    "verification": {
+      "candidate_unit_tests": "81 focused detector tests passed, including missed visual launch, false visual launch, pause, startup/shutdown, floating-ball glitch, and delayed-contact scenarios",
+      "sample": {
+        "records": 12,
+        "sha256": "3637beeb691aef018e16dff74e5bd59a17d2dfb89285943cb25987e21faaee2a",
+        "result": "same 12 ordered hit/miss outcomes"
+      },
+      "sample2": {
+        "records": 47,
+        "sha256": "300818f237247a6997922083d05f0d6e64a9f8101823a20d2640aae222f63bbc",
+        "result": "regression: 47 attempts instead of the guarded 48"
+      },
+      "sample3": {
+        "records": 32,
+        "sha256": "d6e331ef9935ee3dd9e2d6290cfe108641136a33b7b46947370cadb29d199604",
+        "result": "same 32 ordered hit/miss outcomes"
+      }
+    }
+  },
+  "decision": "revert",
+  "decision_reason": "The candidate reduced evaluation accuracy from 92.7% to 91.1% and regressed the sample2 stable guard from 48 attempts to 47. Its implementation and candidate-only tests were reverted; commit 235683b remains the retained detector behavior."
+}

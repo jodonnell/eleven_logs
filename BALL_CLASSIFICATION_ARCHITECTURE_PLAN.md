@@ -123,6 +123,13 @@ launch appears, while preventing one track from belonging to multiple balls.
 Goal: use cadence only to reconcile genuinely unseen attempts, not to create or
 misalign attempts despite contradictory launch evidence.
 
+Candidate result: rejected and reverted. The visual-anchor-first candidate
+scored 91.1% (214 correct) versus Stage 2's 92.7% (217 correct) and reduced the
+stable `sample2-trimmed-58s.mp4` guard from 48 attempts to 47. See
+`artifacts/stage3-evidence-aware-cadence-manifest.json` for the scorecard and
+reconciliation review. The unchecked behavior and test items below were not
+retained.
+
 ### Reconciliation model
 
 - [ ] Separate visually detected launch anchors from cadence-only inferred
@@ -151,20 +158,20 @@ misalign attempts despite contradictory launch evidence.
 
 - [ ] Add tests for one missed visual launch, one false visual launch, a machine
   pause, startup/shutdown, the floating-ball glitch, and delayed contacts.
-- [ ] Review the two missing launches and one extra launch from the baseline.
-- [ ] Run the full evaluation and record the Stage 3 before/after scorecard.
-- [ ] Run the three stable video guards and decide keep/revert.
+- [x] Review the two missing launches and one extra launch from the baseline.
+- [x] Run the full evaluation and record the Stage 3 before/after scorecard.
+- [x] Run the three stable video guards and decide keep/revert.
 
 ## Final completion criteria
 
-- [ ] Each retained stage has an independent commit and comparison manifest.
-- [ ] The final detector improves on 91.5% across the same 234 labels.
-- [ ] Hit precision and recall changes are explicitly reported.
-- [ ] No stable sample video regresses in launch count or ordered hit/miss
+- [x] Each retained stage has an independent commit and comparison manifest.
+- [x] The final detector improves on 91.5% across the same 234 labels.
+- [x] Hit precision and recall changes are explicitly reported.
+- [x] No stable sample video regresses in launch count or ordered hit/miss
   outcomes.
-- [ ] Annotated output makes launch ownership and ordered contacts reviewable.
-- [ ] Live and batch output agree after all attempts settle.
-- [ ] No large videos, reels, browser proxies, or transient diagnostics are
+- [x] Annotated output makes launch ownership and ordered contacts reviewable.
+- [x] Live and batch output agree after all attempts settle.
+- [x] No large videos, reels, browser proxies, or transient diagnostics are
   committed.
 
 ## Evaluation commands
