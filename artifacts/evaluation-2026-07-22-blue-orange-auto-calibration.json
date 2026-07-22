@@ -1,0 +1,149 @@
+{
+  "description": "Automatically detected in memory from the first usable frame.",
+  "image_size": [
+    1920,
+    1080
+  ],
+  "table_surface_y": 0.7786086,
+  "control_points": [
+    {
+      "name": "x0_player_edge",
+      "image": [
+        699.375,
+        816.5625
+      ],
+      "log": [
+        0.0,
+        -1.37
+      ]
+    },
+    {
+      "name": "x0_opponent_edge",
+      "image": [
+        957.1875,
+        548.4375
+      ],
+      "log": [
+        0.0,
+        1.37
+      ]
+    },
+    {
+      "name": "net_base_left",
+      "image": [
+        749.0625,
+        589.6875
+      ],
+      "log": [
+        -0.7625,
+        0.0
+      ]
+    },
+    {
+      "name": "net_base_right",
+      "image": [
+        1056.5625,
+        618.75
+      ],
+      "log": [
+        0.7625,
+        0.0
+      ]
+    }
+  ],
+  "table_polygon": [
+    [
+      828.75,
+      538.125
+    ],
+    [
+      1085.625,
+      558.75
+    ],
+    [
+      943.125,
+      858.75
+    ],
+    [
+      455.625,
+      774.375
+    ]
+  ],
+  "net_line": [
+    [
+      749.0625,
+      589.6875
+    ],
+    [
+      1056.5625,
+      618.75
+    ]
+  ],
+  "auto_calibrated": true,
+  "calibration_frame": 0,
+  "camera_geometry": "elevated_end_view",
+  "table_color": {
+    "hue_center": 120.0,
+    "hue_tolerance": 14.0,
+    "min_saturation": 105.0,
+    "min_value": 79.0
+  },
+  "launcher_region": [
+    726.7875,
+    0.0,
+    1302.7875,
+    1079.0
+  ],
+  "return_region": [
+    353.77500000000003,
+    0.0,
+    929.775,
+    1079.0
+  ],
+  "tracking_polygon": [
+    [
+      0.0,
+      57.1875
+    ],
+    [
+      1919.0,
+      57.1875
+    ],
+    [
+      1919.0,
+      1019.0625
+    ],
+    [
+      0.0,
+      1019.0625
+    ]
+  ],
+  "table_contact_polygon": [
+    [
+      828.75,
+      538.125
+    ],
+    [
+      1085.625,
+      558.75
+    ],
+    [
+      943.125,
+      858.75
+    ],
+    [
+      455.625,
+      774.375
+    ]
+  ],
+  "diagnostic": "artifacts/evaluation-2026-07-22-blue-orange-auto-calibration.png",
+  "ball_color": {
+    "hue_center": 15.0,
+    "hue_tolerance": 9.0,
+    "min_saturation": 152.0,
+    "min_value": 170.0,
+    "confidence": 1.0,
+    "evidence_score": 325571.5,
+    "white_evidence_score": 0.0
+  }
+}

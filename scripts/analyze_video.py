@@ -11,7 +11,7 @@ import math
 import sys
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 try:
     import cv2
@@ -19,7 +19,7 @@ try:
 except ImportError as exc:
     raise SystemExit("Install dependencies first: python3 -m pip install --user opencv-python-headless numpy") from exc
 
-from auto_calibrate import calibration_from_frame
+from auto_calibrate import calibration_from_frame, hue_distance, infer_ball_color
 from video_source import VideoFrame, VideoSource, VideoSourceError, open_video_source
 
 
@@ -109,6 +109,15 @@ class DetectorSettings:
     min_candidate_compactness: float = 0.45
     min_candidate_brightness: float = 210
     max_candidate_saturation: float = 145
+    ball_hue_center: Optional[float] = None
+    ball_hue_tolerance: float = 9
+    ball_min_saturation: float = 70
+    ball_min_value: float = 70
+    table_hue_center: float = 65
+    table_hue_tolerance: float = 23
+    table_min_saturation: float = 80
+    return_direction_x: float = 1.0
+    return_direction_y: float = 0.0
     min_vertical_turn: float = 1
     min_pre_bounce_speed: float = 12
     max_post_bounce_speed_ratio: float = 0.35
@@ -120,7 +129,42 @@ class DetectorSettings:
     def from_calibration(cls, calibration: Calibration) -> "DetectorSettings":
         configured = calibration.get("detector_settings", {})
         valid = {item.name for item in fields(cls)}
-        return cls(**{name: value for name, value in configured.items() if name in valid})
+        values = {name: value for name, value in configured.items() if name in valid}
+        if table_color := calibration.get("table_color"):
+            values.update({
+                "table_hue_center": table_color["hue_center"],
+                "table_hue_tolerance": table_color["hue_tolerance"],
+                "table_min_saturation": table_color["min_saturation"],
+            })
+        if ball_color := calibration.get("ball_color"):
+            values.update({
+                "ball_hue_center": ball_color["hue_center"],
+                "ball_hue_tolerance": ball_color["hue_tolerance"],
+                "ball_min_saturation": ball_color["min_saturation"],
+                "ball_min_value": ball_color["min_value"],
+                "min_candidate_brightness": ball_color["min_value"],
+                "max_candidate_saturation": 255,
+            })
+        if calibration.get("camera_geometry") == "elevated_end_view":
+            controls = {
+                item["name"]: item["image"]
+                for item in calibration.get("control_points", [])
+            }
+            player = controls.get("x0_player_edge")
+            opponent = controls.get("x0_opponent_edge")
+            if player is not None and opponent is not None:
+                dx, dy = opponent[0] - player[0], opponent[1] - player[1]
+                length = math.hypot(dx, dy)
+                if length:
+                    values.update({
+                        "return_direction_x": dx / length,
+                        "return_direction_y": dy / length,
+                        "net_shadow_exclusion_distance": 5,
+                        "min_track_points": 4,
+                        "return_min_horizontal_distance": 60,
+                        "return_min_horizontal_speed": 2,
+                    })
+        return cls(**values)
 
 
 @dataclass
@@ -375,6 +419,12 @@ def _qualified_bounces(
     if len(points) < settings.min_track_points:
         return []
     qualified: List[Tuple[str, float, Bounce]] = []
+
+    def return_progress(beginning: TrackPoint, end: TrackPoint) -> float:
+        return (
+            (end[1] - beginning[1]) * settings.return_direction_x
+            + (end[2] - beginning[2]) * settings.return_direction_y
+        )
     # A rendered ball casts a compact, moving shadow on the green table. At
     # contact the ball/shadow separation collapses, even when perspective
     # makes the bright ball's screen-space path continue in one direction.
@@ -395,16 +445,16 @@ def _qualified_bounces(
         # dark plateau is usually the tracker attaching to a static table
         # marking after an off-table ball has disappeared.
         local_peak = score >= previous_score and (next_score is None or score > next_score)
-        rightward_contact = points[index][1] >= points[index - 1][1]
+        forward_contact = return_progress(points[index - 1], points[index]) >= 0
         terminal_confirmed = (
             index < len(points) - settings.terminal_shadow_frames
             or allow_terminal_shadow
         )
         if (
             local_peak
-            and rightward_contact
+            and forward_contact
             and terminal_confirmed
-            and (not terminal or points[index][1] > points[index - 2][1])
+            and (not terminal or return_progress(points[index - 2], points[index]) > 0)
         ):
             qualified.append((
                 "shadow", float(score),
@@ -430,17 +480,16 @@ def _qualified_bounces(
             settings.table_contact_margin,
         ):
             continue
-        # Player returns travel toward increasing screen x in the supported
-        # spectator views. A sudden backward x jump at the apparent turn is
-        # a tracker hand-off to a marking/shadow, not a physical bounce.
-        if points[index][1] < points[index - 1][1]:
+        # A sudden backward jump along the calibrated player-to-opponent axis
+        # is a tracker hand-off to a marking/shadow, not a physical bounce.
+        if return_progress(points[index - 1], points[index]) < 0:
             continue
         # The short approach must belong to that same forward-moving ball.
         # A path that walks backward and then jumps forward at the apparent
         # turn is a tracker hand-off, even if its post-contact direction looks
         # plausible in isolation.
         if any(
-            end[1] <= beginning[1]
+            return_progress(beginning, end) <= 0
             for beginning, end in zip(
                 points[index - 3:index - 1], points[index - 2:index]
             )
@@ -450,7 +499,7 @@ def _qualified_bounces(
         # departure. A tracker that reverses overall immediately after the
         # apparent contact has handed off to a different blob; a returned ball
         # continues toward the opponent even while its vertical direction turns.
-        if points[index + 2][1] <= points[index][1]:
+        if return_progress(points[index], points[index + 2]) <= 0:
             continue
         if maximum or minimum:
             strength = min(abs(y - before_mean), abs(y - after_mean))
@@ -1020,18 +1069,24 @@ class TelemetryReader:
         self.latest = reading
         return reading
 
-def shadow_contact_score(hsv: np.ndarray, center: Point) -> float:
-    """Local green-table darkening directly below a bright-ball candidate."""
+def shadow_contact_score(
+    hsv: np.ndarray, center: Point, settings: DetectorSettings = DetectorSettings(),
+) -> float:
+    """Local calibrated-table darkening directly below a ball candidate."""
     x, y = map(round, center)
     height, width = hsv.shape[:2]
     local = hsv[max(0, y + 5):min(height, y + 28), max(0, x - 18):min(width, x + 19)]
     surrounding = hsv[max(0, y - 35):min(height, y + 36), max(0, x - 35):min(width, x + 36)]
-    def green_values(region: np.ndarray) -> np.ndarray:
+    def table_values(region: np.ndarray) -> np.ndarray:
         if region.size == 0:
             return np.array([])
-        mask = (region[:, :, 0] >= 42) & (region[:, :, 0] <= 88) & (region[:, :, 1] >= 80)
+        mask = (
+            (hue_distance(region[:, :, 0], settings.table_hue_center)
+             <= settings.table_hue_tolerance)
+            & (region[:, :, 1] >= settings.table_min_saturation)
+        )
         return region[:, :, 2][mask]
-    dark, baseline = green_values(local), green_values(surrounding)
+    dark, baseline = table_values(local), table_values(surrounding)
     if len(dark) < 8 or len(baseline) < 20:
         return 0.0
     return max(0.0, float(np.median(baseline) - np.percentile(dark, 5)))
@@ -1046,9 +1101,20 @@ def candidates_for_frame(
 ) -> Tuple[np.ndarray, List[Candidate]]:
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    # White ball: very bright and low saturation. Difference rejects static
-    # white markings/text/net edges without retaining a background frame.
-    bright = cv2.inRange(hsv, settings.bright_ball_lower, settings.bright_ball_upper)
+    # Difference rejects static markings/text/net edges without retaining a
+    # background frame. Legacy calibrations use a bright white range; automatic
+    # color calibration supplies a circular saturated-ball hue instead.
+    if settings.ball_hue_center is None:
+        bright = cv2.inRange(
+            hsv, settings.bright_ball_lower, settings.bright_ball_upper,
+        )
+    else:
+        bright = np.uint8(
+            (hue_distance(hsv[:, :, 0], settings.ball_hue_center)
+             <= settings.ball_hue_tolerance)
+            & (hsv[:, :, 1] >= settings.ball_min_saturation)
+            & (hsv[:, :, 2] >= settings.ball_min_value)
+        ) * 255
     if previous_gray is None:
         return gray, []
     moving = cv2.threshold(cv2.absdiff(gray, previous_gray), settings.motion_threshold, 255, cv2.THRESH_BINARY)[1]
@@ -1118,7 +1184,7 @@ def candidates_for_frame(
             continue
         if diagnostics is not None:
             diagnostics.candidate(center, "raw")
-        choices.append((area, center, shadow_contact_score(hsv, center)))
+        choices.append((area, center, shadow_contact_score(hsv, center, settings)))
     # At track start, prefer the compact moving ball over single-pixel codec
     # shimmer; once a track exists, motion prediction chooses continuity.
     choices.sort(key=lambda item: item[0], reverse=True)
@@ -1311,8 +1377,24 @@ class AttemptClassifier:
         )
         launcher_center_x = (self.launcher_region[0] + self.launcher_region[2]) / 2
         return_center_x = (self.return_region[0] + self.return_region[2]) / 2
-        self.launch_direction = 1 if return_center_x > launcher_center_x else -1
+        legacy_launch_direction = 1 if return_center_x > launcher_center_x else -1
+        self.return_direction = (
+            settings.return_direction_x * -legacy_launch_direction,
+            settings.return_direction_y * -legacy_launch_direction,
+        ) if calibration.get("camera_geometry") != "elevated_end_view" else (
+            settings.return_direction_x, settings.return_direction_y,
+        )
+        self.launch_vector = (-self.return_direction[0], -self.return_direction[1])
         self.warmup_launcher_tracks = calibration.get("warmup_launcher_tracks", 0)
+
+    @staticmethod
+    def projected_travel(
+        beginning: TrackPoint, end: TrackPoint, direction: Point,
+    ) -> float:
+        return (
+            (end[1] - beginning[1]) * direction[0]
+            + (end[2] - beginning[2]) * direction[1]
+        )
 
     @property
     def active_attempt(self) -> Optional[Attempt]:
@@ -1460,10 +1542,12 @@ class AttemptClassifier:
             return f"launch too short ({len(path)}/{self.settings.min_launch_track_points})"
 
         directed_steps = [
-            (end[1] - beginning[1]) * self.launch_direction
+            self.projected_travel(beginning, end, self.launch_vector)
             for beginning, end in zip(path, path[1:])
         ]
-        directed_distance = (path[-1][1] - path[0][1]) * self.launch_direction
+        directed_distance = self.projected_travel(
+            path[0], path[-1], self.launch_vector,
+        )
         if directed_distance < self.settings.launch_min_horizontal_distance:
             return "insufficient travel toward player"
 
@@ -1491,12 +1575,10 @@ class AttemptClassifier:
         travel toward the opponent instead of requiring the track to have
         been clean from birth.
         """
-        terminal_x = path[-1][1]
-        return_direction = -self.launch_direction
         for index, point in enumerate(path):
             if (
                 point_in_rectangle((point[1], point[2]), self.return_region, self.scale)
-                and (terminal_x - point[1]) * return_direction
+                and self.projected_travel(point, path[-1], self.return_direction)
                 >= self.settings.return_min_horizontal_distance
             ):
                 return path[index:]
@@ -1517,8 +1599,8 @@ class AttemptClassifier:
         if returned is None:
             return "insufficient travel toward opponent"
         elapsed = returned[-1][0] - returned[0][0]
-        directed_distance = (
-            (returned[-1][1] - returned[0][1]) * -self.launch_direction
+        directed_distance = self.projected_travel(
+            returned[0], returned[-1], self.return_direction,
         )
         if (
             elapsed <= 0
@@ -1550,13 +1632,14 @@ class AttemptClassifier:
         """
         if not path or path[0][0] <= attempt.frame:
             return None
-        return_direction = -self.launch_direction
         candidates: List[Tuple[int, float, Track]] = []
         for previous in attempt.returns:
             gap = path[0][0] - previous[-1][0]
             if not 0 < gap <= self.settings.return_reconnect_max_gap:
                 continue
-            forward_gap = (path[0][1] - previous[-1][1]) * return_direction
+            forward_gap = self.projected_travel(
+                previous[-1], path[0], self.return_direction,
+            )
             if not (
                 -self.settings.return_reconnect_backtrack_tolerance
                 <= forward_gap
@@ -1564,7 +1647,9 @@ class AttemptClassifier:
             ):
                 continue
             fragment_elapsed = path[-1][0] - path[0][0]
-            fragment_progress = (path[-1][1] - path[0][1]) * return_direction
+            fragment_progress = self.projected_travel(
+                path[0], path[-1], self.return_direction,
+            )
             if (
                 fragment_elapsed <= 0
                 or fragment_progress / fragment_elapsed
@@ -2953,6 +3038,11 @@ def main() -> None:
         metavar="JSONL",
         help="write ordered contact candidates without changing classification",
     )
+    parser.add_argument(
+        "--track-diagnostics",
+        metavar="JSONL",
+        help="write every completed track decision and rejection reason",
+    )
     parser.add_argument("--no-annotated", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--start-seconds", type=float, default=0, help="seek point; useful when reviewing a short interval")
     parser.add_argument("--end-seconds", type=float, help="stop after this video timestamp")
@@ -2994,6 +3084,7 @@ def main() -> None:
     live_events_output = None
     bounce_diagnostics_output = None
     contact_diagnostics_output = None
+    track_diagnostics_output = None
     first_frame = None
     try:
         if args.calibration:
@@ -3010,6 +3101,31 @@ def main() -> None:
                 )
             except ValueError as exc:
                 raise SystemExit(f"Automatic calibration failed: {exc}.") from exc
+            calibration_start_frame = first_frame.number
+            calibration_frame_image = first_frame.image
+
+            def color_calibration_frames() -> Iterable[np.ndarray]:
+                yield calibration_frame_image
+                for _ in range(max(0, round(fps * 8) - 1)):
+                    sampled = source.read()
+                    if sampled is None:
+                        break
+                    yield sampled.image
+
+            # Ball hue needs motion evidence and therefore cannot come from the
+            # single setup frame used for table geometry. Saved files rewind
+            # after this prefix; a live stream intentionally treats it as a
+            # short color-calibration warm-up.
+            ball_color = infer_ball_color(color_calibration_frames(), detected)
+            if ball_color is not None:
+                detected["ball_color"] = ball_color
+            if source.seekable:
+                source.seek_frame(calibration_start_frame)
+                first_frame = source.read()
+                if first_frame is None:
+                    raise SystemExit("Could not rewind after automatic color calibration")
+            else:
+                first_frame = None
             calibration, homography, table = calibration_geometry(
                 detected, video_width, video_height, scale,
             )
@@ -3032,6 +3148,11 @@ def main() -> None:
             reset_output_file(args.contact_diagnostics)
             contact_diagnostics_output = open(
                 args.contact_diagnostics, "a", encoding="utf-8",
+            )
+        if args.track_diagnostics is not None:
+            reset_output_file(args.track_diagnostics)
+            track_diagnostics_output = open(
+                args.track_diagnostics, "a", encoding="utf-8",
             )
         with open(args.output, "w", encoding="utf-8") as output:
             processing_frame = first_frame.number if first_frame is not None else 0
@@ -3084,6 +3205,14 @@ def main() -> None:
             def write_bounce_diagnostic(
                 diagnostic: TrackDiagnostic, draw_frame: int,
             ) -> None:
+                if track_diagnostics_output is not None:
+                    track_diagnostics_output.write(json.dumps({
+                        "draw_frame": draw_frame,
+                        "kind": diagnostic.kind,
+                        "reason": diagnostic.reason,
+                        "points": diagnostic.points,
+                    }) + "\n")
+                    track_diagnostics_output.flush()
                 if diagnostic.kind in (
                     "contact_candidate", "rejected_contact_candidate",
                 ):
@@ -3142,6 +3271,8 @@ def main() -> None:
             bounce_diagnostics_output.close()
         if contact_diagnostics_output is not None:
             contact_diagnostics_output.close()
+        if track_diagnostics_output is not None:
+            track_diagnostics_output.close()
     print(json.dumps({
         "events": len(events),
         "output": args.output,

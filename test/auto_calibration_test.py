@@ -18,7 +18,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from auto_calibrate import (  # noqa: E402
     calibrated_tracking_regions,
     calibration_from_frame,
+    colored_table_extent,
     detect_geometry,
+    infer_ball_color,
+    perspective_table_geometry,
 )
 
 
@@ -43,6 +46,74 @@ def assert_points_close(test, actual, expected, delta=.01):
 
 
 class WideViewCalibrationTest(unittest.TestCase):
+    def test_colored_table_extent_finds_blue_table_among_warm_backgrounds(self):
+        frame = np.full((300, 500, 3), (35, 75, 130), dtype=np.uint8)
+        blue = cv2.cvtColor(
+            np.uint8([[[120, 190, 190]]]), cv2.COLOR_HSV2BGR,
+        )[0, 0]
+        table = np.int32([[210, 80], [310, 90], [390, 245], [80, 225]])
+        cv2.fillConvexPoly(frame, table, blue.tolist())
+
+        top, bottom, mask, profile = colored_table_extent(frame)
+
+        self.assertAlmostEqual(profile["hue_center"], 120, delta=2)
+        self.assertLessEqual(top, 90)
+        self.assertGreaterEqual(bottom, 220)
+        self.assertTrue(mask[160, 250])
+
+    def test_perspective_geometry_recovers_elevated_end_view(self):
+        mask = np.zeros((300, 500), dtype=np.uint8)
+        cv2.fillConvexPoly(
+            mask, np.int32([[220, 50], [300, 60], [290, 120], [190, 110]]), 255,
+        )
+        cv2.fillConvexPoly(
+            mask, np.int32([[188, 114], [292, 124], [350, 250], [100, 230]]), 255,
+        )
+
+        geometry = perspective_table_geometry(mask)
+
+        self.assertIsNotNone(geometry)
+        polygon, player, opponent, net = geometry
+        self.assertEqual(len(polygon), 4)
+        self.assertGreater(player[1], opponent[1])
+        self.assertAlmostEqual((net[1] + net[3]) / 2, 117, delta=8)
+
+    def test_ball_color_comes_from_directed_moving_track(self):
+        blue = cv2.cvtColor(
+            np.uint8([[[120, 190, 180]]]), cv2.COLOR_HSV2BGR,
+        )[0, 0]
+        orange = cv2.cvtColor(
+            np.uint8([[[15, 235, 245]]]), cv2.COLOR_HSV2BGR,
+        )[0, 0]
+        frames = []
+        for index in range(20):
+            frame = np.zeros((120, 200, 3), dtype=np.uint8)
+            cv2.fillConvexPoly(
+                frame, np.int32([[80, 35], [160, 35], [180, 110], [20, 110]]),
+                blue.tolist(),
+            )
+            cv2.circle(frame, (155 - index * 5, 25 + index * 3), 3, orange.tolist(), -1)
+            frames.append(frame)
+        calibration = {
+            "image_size": [200, 120],
+            "tracking_polygon": [[0, 0], [199, 0], [199, 119], [0, 119]],
+            "table_polygon": [[80, 35], [160, 35], [180, 110], [20, 110]],
+            "table_color": {
+                "hue_center": 120, "hue_tolerance": 14,
+                "min_saturation": 100, "min_value": 60,
+            },
+            "control_points": [
+                {"name": "x0_player_edge", "image": [60, 90]},
+                {"name": "x0_opponent_edge", "image": [155, 25]},
+            ],
+        }
+
+        profile = infer_ball_color(frames, calibration)
+
+        self.assertIsNotNone(profile)
+        self.assertAlmostEqual(profile["hue_center"], 15, delta=2)
+        self.assertGreater(profile["min_saturation"], 150)
+
     def test_tracking_regions_follow_camera_orientation_and_exclude_room_edges(self):
         regions = calibrated_tracking_regions(
             [1000, 500],
