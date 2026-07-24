@@ -42,6 +42,16 @@ describe("live hit counter attempt ledger", () => {
     expect(reconcileAttemptUpsert([hit], contradiction)).toEqual([hit])
   })
 
+  it("accepts an explicit higher-revision hit correction", () => {
+    const miss = attempt(1, "finalized", "miss")
+    const correction = {
+      ...attempt(1, "finalized", "hit"),
+      revision: 1,
+    }
+
+    expect(reconcileAttemptUpsert([miss], correction)).toEqual([correction])
+  })
+
   it("derives every visible transition from the finalized ledger", () => {
     const messages = [
       attempt(1, "pending"),

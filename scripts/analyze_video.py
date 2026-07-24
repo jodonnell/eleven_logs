@@ -1349,6 +1349,7 @@ class AttemptClassifier:
         self.on_attempt_started = on_attempt_started
         self.events: List[BounceEvent] = []
         self.emitted: Set[Tuple[int, int]] = set()
+        self.confirmed_hit_notifications: Set[Tuple[int, int, int]] = set()
         self.started_launcher_tracks: Set[Tuple[int, int, int]] = set()
         self.reported_non_hit_tracks: Set[Tuple[int, int, int]] = set()
         self.active_attempts: List[Attempt] = []
@@ -1544,7 +1545,30 @@ class AttemptClassifier:
         )
         return candidate
 
+    def notify_confirmed_hit(self, event: BounceEvent) -> None:
+        """Publish a direct or delayed hit to the live ledger exactly once."""
+        if (
+            not event.hit_table
+            or event.outcome != "far_table"
+            or self.on_confirmed_hit is None
+        ):
+            return
+        key = (
+            event.frame_number,
+            round(event.pixel[0]),
+            round(event.pixel[1]),
+        )
+        if key in self.confirmed_hit_notifications:
+            return
+        self.confirmed_hit_notifications.add(key)
+        self.on_confirmed_hit(event)
+
     def emit(self, event: BounceEvent) -> None:
+        # A contact can be discovered while a newer attempt is open. It was
+        # deliberately withheld from the live ledger until launch-order
+        # settlement; publish it as a hit before cadence fills that slot with
+        # an immutable miss.
+        self.notify_confirmed_hit(event)
         self.events.append(event)
         if self.on_event is not None:
             self.on_event(event)
@@ -1628,6 +1652,76 @@ class AttemptClassifier:
             ):
                 return path[index:]
         return None
+
+    def perspective_round_trip_return(self, path: Track) -> Optional[Track]:
+        """Split an end-view machine-delivery track at the player turnaround.
+
+        In an elevated view the colored ball can remain continuously visible
+        through the machine delivery, racket contact, and outbound return.  A
+        prefix of that path has already established the launch; ignoring the
+        same tracker identity afterwards discards the clearest contact
+        evidence.  Locate the deepest playerward point on the calibrated
+        player-to-opponent axis and retain only a fully qualified return
+        suffix.
+        """
+        if self.calibration.get("camera_geometry") != "elevated_end_view":
+            return None
+        if len(path) < self.settings.min_launch_track_points + 3:
+            return None
+        start = (path[0][1], path[0][2])
+        if not point_in_rectangle(start, self.launcher_region, self.scale):
+            return None
+        projected = [
+            point[1] * self.return_direction[0]
+            + point[2] * self.return_direction[1]
+            for point in path
+        ]
+        turn_index = min(range(len(path)), key=projected.__getitem__)
+        if turn_index < self.settings.min_launch_track_points - 1:
+            return None
+        prefix = path[:turn_index + 1]
+        returned = path[turn_index:]
+        if self.launcher_rejection_reason(prefix) is not None:
+            return None
+        if len(returned) < self.settings.min_track_observations:
+            return None
+        progress = self.projected_travel(
+            returned[0], returned[-1], self.return_direction,
+        )
+        elapsed = returned[-1][0] - returned[0][0]
+        if (
+            progress < self.settings.return_min_horizontal_distance
+            or elapsed <= 0
+            or progress / elapsed < self.settings.return_min_horizontal_speed
+        ):
+            return None
+        return returned
+
+    def perspective_round_trip_bounce(
+        self, returned: Track, allow_terminal_shadow: bool,
+    ) -> Optional[Bounce]:
+        """Choose a contact beyond the net-adjacent perspective ambiguity.
+
+        Immediately past the net, the ball overlaps its ordinary table shadow
+        even while still in flight.  Require a round-trip-only contact to be
+        at least one fifth of the opponent half's regulation depth, and prefer
+        the deepest bounded signal when several shadow peaks describe the
+        same outbound path.
+        """
+        minimum_depth = 1.37 * .2
+        candidates = []
+        for bounce in find_bounces(
+            returned, self.table, self.net_line, self.settings,
+            allow_terminal_shadow=allow_terminal_shadow,
+        ):
+            hit = bounce[0]
+            _, _, depth = map_log_coordinate(
+                self.homography, (hit[1], hit[2]),
+                self.calibration["table_surface_y"],
+            )
+            if depth >= minimum_depth:
+                candidates.append((depth, bounce))
+        return max(candidates, key=lambda item: item[0])[1] if candidates else None
 
     def return_rejection_reason(
         self, path: Track, attempt: Optional[Attempt] = None,
@@ -2334,18 +2428,12 @@ class AttemptClassifier:
         attempt.last_evidence_frame = hit[0]
         attempt.state = "contact_pending"
         ordered_contact = self.confirmed_player_then_opponent(attempt)
-        older_unresolved = any(
-            item.frame < attempt.frame and item.state not in {"settled", "expired"}
-            for item in self.active_attempts
-        )
         if (
             event.hit_table
             and event.outcome == "far_table"
             and ordered_contact is None
-            and not older_unresolved
-            and self.on_confirmed_hit
         ):
-            self.on_confirmed_hit(event)
+            self.notify_confirmed_hit(event)
 
     def record_track_contacts(
         self,
@@ -2464,7 +2552,30 @@ class AttemptClassifier:
         if not self.active_attempts:
             return
         for path in tracks:
-            if self.track_key(path) in self.started_launcher_tracks:
+            key = self.track_key(path)
+            if key in self.started_launcher_tracks:
+                owner_frame = self.track_owners.get(key)
+                attempt = (
+                    self.attempt_by_frame(owner_frame)
+                    if owner_frame is not None else None
+                )
+                returned = self.perspective_round_trip_return(path)
+                if attempt is not None and returned is not None:
+                    if returned not in attempt.returns:
+                        attempt.returns.append(returned)
+                    attempt.last_evidence_frame = returned[-1][0]
+                    attempt.state = "return_seen"
+                    self.record_track_contacts(
+                        returned, draw_frame, allow_terminal_shadow=False,
+                        attempt=attempt,
+                    )
+                    bounce = self.perspective_round_trip_bounce(
+                        returned, allow_terminal_shadow=False,
+                    )
+                    if bounce:
+                        self.add_bounce(
+                            returned, *bounce, draw_frame, attempt=attempt,
+                        )
                 continue
             attempt, returned = self.associate_return(path, draw_frame)
             if attempt is None or returned is None:
@@ -2643,8 +2754,17 @@ class LiveAttemptNormalizer:
         self.latest_trusted_frame: Optional[int] = None
         self.trusted_allows_following_slot = True
 
+    def remember_event(self, event: BounceEvent) -> None:
+        if not any(
+            item.frame_number == event.frame_number
+            and item.outcome == event.outcome
+            and item.pixel == event.pixel
+            for item in self.events
+        ):
+            self.events.append(event)
+
     def observe(self, event: BounceEvent) -> None:
-        self.events.append(event)
+        self.remember_event(event)
         self.pending_attempt_events.append(event)
 
     def finished_attempt_event(self) -> Optional[BounceEvent]:
@@ -2756,15 +2876,9 @@ class LiveAttemptNormalizer:
         if not slots or self.period is None:
             return
         self.sync_slots(slots, -1)
-        pending = [
-            index for index, item in enumerate(self.ledger)
-            if item["state"] == "pending"
-        ]
-        if not pending:
-            return
         logical_frame = event.frame_number if target_frame is None else target_frame
         target = min(
-            pending,
+            range(len(self.ledger)),
             key=lambda index: abs(
                 self.ledger[index]["anchor_frame_number"] - logical_frame
             ),
@@ -2773,6 +2887,24 @@ class LiveAttemptNormalizer:
             abs(self.ledger[target]["anchor_frame_number"] - logical_frame)
             > self.period * .5
         ):
+            return
+        existing = self.ledger[target]
+        if existing["state"] == "finalized":
+            if outcome != "hit" or existing.get("outcome") == "hit":
+                return
+            anchor = existing["anchor_frame_number"]
+            corrected = self.attempt_record(
+                target, anchor, "finalized", direct,
+            )
+            corrected["revision"] = existing.get("revision", 0) + 1
+            self.ledger[target] = corrected
+            self.on_attempt(corrected)
+            return
+        pending = [
+            index for index, item in enumerate(self.ledger)
+            if item["state"] == "pending"
+        ]
+        if not pending:
             return
         if infer_prior_misses:
             for index in pending:
@@ -2810,6 +2942,7 @@ class LiveAttemptNormalizer:
 
     def observe_confirmed_hit(self, event: BounceEvent) -> None:
         """Publish direct visual evidence without waiting for cadence."""
+        self.remember_event(event)
         self.latest_trusted_frame = max(
             self.latest_trusted_frame or event.frame_number,
             event.frame_number,
@@ -2830,11 +2963,10 @@ class LiveAttemptNormalizer:
         """Hold non-hit evidence until the current attempt is closed.
 
         A completed return track can look off-table before another track from
-        the same attempt confirms the bounce. Results are immutable once sent
-        to the counter, so publishing here would let provisional evidence
-        permanently override that later hit. Keep it with the current attempt:
+        the same attempt confirms the bounce. Keep it with the current attempt:
         ``settle_attempt`` will prefer any confirmed hit, or finalize this as a
-        genuine non-hit when the next launch closes the attempt.
+        genuine non-hit when the next launch closes the attempt. A still-later
+        confirmed hit is allowed to correct that inferred boundary.
         """
         self.pending_attempt_events.append(event)
 
@@ -2927,6 +3059,116 @@ class LiveAttemptNormalizer:
             self.finalize_direct(
                 final_event, "miss", target_frame=final_event.frame_number,
             )
+
+
+class DirectLiveAttemptPublisher:
+    """Publish detector-native launch results without cadence reconstruction."""
+
+    def __init__(
+        self,
+        fps: float,
+        on_attempt: Callable[[Dict[str, Any]], None],
+    ) -> None:
+        self.fps = fps
+        self.on_attempt = on_attempt
+        self.attempts: Dict[int, Dict[str, Any]] = {}
+        self.launch_order: List[int] = []
+
+    def attempt_record(
+        self,
+        anchor: int,
+        state: str,
+        event: Optional[BounceEvent] = None,
+    ) -> Dict[str, Any]:
+        record: Dict[str, Any] = {
+            "attempt_id": f"launch-{anchor}",
+            "sequence": self.launch_order.index(anchor) + 1,
+            "anchor_frame_number": anchor,
+            "state": state,
+        }
+        if event is not None:
+            record.update(event.to_record())
+            record["outcome"] = (
+                "hit"
+                if event.hit_table and event.outcome == "far_table"
+                else "miss"
+            )
+            record["attempt_frame_number"] = anchor
+        return record
+
+    def observe_attempt_started(self, anchor: int) -> None:
+        if anchor in self.attempts:
+            return
+        # A newly detected machine launch closes any older launch that still
+        # has no detector result. A delayed confirmed hit can revise it later.
+        for previous_anchor in self.launch_order:
+            previous = self.attempts[previous_anchor]
+            if previous["state"] != "pending":
+                continue
+            missed = BounceEvent(
+                video_time_seconds=round(previous_anchor / self.fps, 3),
+                video_timestamp=fmt_timestamp(previous_anchor / self.fps),
+                hit_table=False,
+                is_in=False,
+                outcome="unknown",
+                posx=None,
+                posy=None,
+                posz=None,
+                confidence=0.3,
+                frame_number=previous_anchor,
+                pixel=(0, 0),
+                draw_frame=anchor,
+                attempt_frame_number=previous_anchor,
+            )
+            finalized = self.attempt_record(
+                previous_anchor, "finalized", missed,
+            )
+            self.attempts[previous_anchor] = finalized
+            self.on_attempt(finalized)
+        self.launch_order.append(anchor)
+        pending = self.attempt_record(anchor, "pending")
+        self.attempts[anchor] = pending
+        self.on_attempt(pending)
+
+    def publish_event(self, event: BounceEvent) -> None:
+        anchor = (
+            event.attempt_frame_number
+            if event.attempt_frame_number is not None
+            else event.frame_number
+        )
+        if anchor not in self.attempts:
+            self.observe_attempt_started(anchor)
+        existing = self.attempts[anchor]
+        finalized = self.attempt_record(anchor, "finalized", event)
+        if existing["state"] == "finalized":
+            if (
+                existing.get("outcome") == finalized["outcome"]
+                or finalized["outcome"] != "hit"
+            ):
+                return
+            finalized["revision"] = existing.get("revision", 0) + 1
+        self.attempts[anchor] = finalized
+        self.on_attempt(finalized)
+
+    def observe(self, event: BounceEvent) -> None:
+        self.publish_event(event)
+
+    def observe_confirmed_hit(self, event: BounceEvent) -> None:
+        self.publish_event(event)
+
+    def observe_confirmed_non_hit(self, _event: BounceEvent) -> None:
+        # Completed detector events arrive through ``observe``. Do not let a
+        # provisional track ending race a subsequently confirmed contact.
+        return
+
+    def settle_attempt(self, _next_launch_frame: Optional[int] = None) -> None:
+        return
+
+    def advance(self, _frame_number: int) -> None:
+        return
+
+    def finish_session(self, _total_frames: Optional[int] = None) -> None:
+        return
 
 
 def attach_missing_machine_telemetry(
@@ -3302,7 +3544,7 @@ def main() -> None:
             )
         with open(args.output, "w", encoding="utf-8") as output:
             processing_frame = first_frame.number if first_frame is not None else 0
-            live_normalizer: Optional[LiveAttemptNormalizer] = None
+            live_normalizer: Optional[Any] = None
             live_stdout_open = args.live_stdout
 
             def observe_processing_frame(frame_number: int) -> None:
@@ -3346,7 +3588,11 @@ def main() -> None:
                     )
                 write_live_record(record)
 
-            live_normalizer = LiveAttemptNormalizer(fps, write_attempt)
+            live_normalizer = (
+                DirectLiveAttemptPublisher(fps, write_attempt)
+                if source.live
+                else LiveAttemptNormalizer(fps, write_attempt)
+            )
 
             def write_bounce_diagnostic(
                 diagnostic: TrackDiagnostic, draw_frame: int,
@@ -3393,6 +3639,9 @@ def main() -> None:
                 clean_writer,
                 round(args.clean_recording_seconds * fps),
                 args.clean_recording_start == "launch",
+                on_attempt_started=getattr(
+                    live_normalizer, "observe_attempt_started", None,
+                ),
                 on_track_diagnostic=write_bounce_diagnostic,
             )
             live_normalizer.finish_session(processing_frame)

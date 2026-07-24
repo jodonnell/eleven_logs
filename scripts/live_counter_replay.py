@@ -58,7 +58,7 @@ def expected_streaks(outcomes: Sequence[str]) -> List[int]:
 def reconcile_live_messages(
     messages: Sequence[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """Apply monotonic attempt upserts exactly as the browser does."""
+    """Apply attempt upserts and explicit revisions exactly as the browser does."""
     attempts: Dict[str, Dict[str, Any]] = {}
     for message in messages:
         if message.get("type") != "attempt_upsert":
@@ -66,7 +66,8 @@ def reconcile_live_messages(
         attempt_id = message["attempt_id"]
         current = attempts.get(attempt_id)
         if current is not None and current["state"] == "finalized":
-            continue
+            if message.get("revision", 0) <= current.get("revision", 0):
+                continue
         attempts[attempt_id] = message
     return sorted(
         (item for item in attempts.values() if item["state"] == "finalized"),
@@ -144,14 +145,7 @@ def verify_records(
                 browser_shots[index],
             ))
 
-    shot_publications = [
-        record for record in live
-        if record.get("type") == "attempt_upsert"
-        and record.get("state") == "finalized"
-    ]
-    ids = [record["attempt_id"] for record in shot_publications]
-    if len(ids) != len(set(ids)):
-        mismatches.append("duplicate-finalized-attempt-ids")
+    shot_publications = browser_shots
     for index, record in enumerate(shot_publications):
         required = (
             "attempt_id", "anchor_frame_number", "frame_number",

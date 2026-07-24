@@ -123,9 +123,10 @@ class StructuredLiveNormalizerTest(unittest.TestCase):
         normalizer.finish_session(processing_frame)
 
         expected = [item["outcome"] for item in fixture["attempts"]]
-        finalized = [
-            item for item in publications if item["state"] == "finalized"
-        ]
+        finalized = reconcile_live_messages([
+            {"type": "attempt_upsert", **item}
+            for item in publications
+        ])
         self.assertEqual(
             [item["outcome"] for item in finalized],
             expected,

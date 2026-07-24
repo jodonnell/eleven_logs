@@ -16,6 +16,7 @@ from analyze_video import (  # noqa: E402
     AttemptClassifier,
     BounceEvent,
     ContactCandidate,
+    DirectLiveAttemptPublisher,
     bounce_signal,
     DetectorDiagnostics,
     DetectorSettings,
@@ -816,6 +817,91 @@ class VideoDetectorUnitTest(unittest.TestCase):
             "insufficient travel toward opponent",
         )
 
+    def test_elevated_view_splits_continuous_delivery_and_return_track(self):
+        classifier = self.classifier({
+            "table_surface_y": 0.7786086,
+            "camera_geometry": "elevated_end_view",
+            "launcher_region": [580, 0, 950, 300],
+            "return_region": [0, 0, 500, 500],
+        })
+        delivery = [
+            (frame, 800 - frame * 20, 100, 0.0)
+            for frame in range(18)
+        ]
+        outbound = [
+            (18, 500, 100, 0.0),
+            (19, 550, 100, 0.0),
+            (20, 620, 100, 0.0),
+        ]
+
+        returned = classifier.perspective_round_trip_return(
+            delivery + outbound,
+        )
+
+        self.assertIsNotNone(returned)
+        self.assertEqual(returned[0][0], 17)
+        self.assertEqual(returned[-1][0], 20)
+
+    def test_side_view_does_not_split_continuous_round_trip_track(self):
+        classifier = self.classifier()
+        path = [
+            (frame, 800 - frame * 20, 100, 0.0)
+            for frame in range(18)
+        ] + [
+            (18, 500, 100, 0.0),
+            (19, 550, 100, 0.0),
+            (20, 620, 100, 0.0),
+        ]
+
+        self.assertIsNone(classifier.perspective_round_trip_return(path))
+
+    def test_profile_view_classifies_turn_side_without_fabricating_position(self):
+        classifier = self.classifier({
+            "table_surface_y": 0.7786086,
+            "camera_geometry": "profile_side_view",
+            "launcher_region": [580, 0, 950, 300],
+            "control_points": [
+                {"name": "x0_player_edge", "image": [100, 100], "log": [0, -1.37]},
+                {"name": "x0_opponent_edge", "image": [900, 100], "log": [0, 1.37]},
+            ],
+        })
+        hit = (4, 600, 120, 0.0)
+        approach = [
+            (1, 540, 90, 0.0), (2, 560, 100, 0.0), (3, 580, 110, 0.0),
+        ]
+        departure = [(5, 620, 105, 0.0), (6, 640, 95, 0.0)]
+
+        candidate = classifier.contact_candidate(
+            approach + [hit] + departure, hit, approach, departure,
+        )
+
+        self.assertEqual(candidate.table_side, "opponent")
+        self.assertIsNone(candidate.log_position)
+        self.assertEqual(candidate.signal_type, "vertical_maximum")
+
+    def test_profile_view_ignores_a_non_upward_turn(self):
+        classifier = self.classifier({
+            "table_surface_y": 0.7786086,
+            "camera_geometry": "profile_side_view",
+            "launcher_region": [580, 0, 950, 300],
+            "control_points": [
+                {"name": "x0_player_edge", "image": [100, 100], "log": [0, -1.37]},
+                {"name": "x0_opponent_edge", "image": [900, 100], "log": [0, 1.37]},
+            ],
+        })
+        attempt = Attempt(0, (800, 100))
+        classifier.active_attempts.append(attempt)
+        hit = (4, 600, 90, 0.0)
+        approach = [
+            (1, 540, 120, 0.0), (2, 560, 110, 0.0), (3, 580, 100, 0.0),
+        ]
+        departure = [(5, 620, 105, 0.0), (6, 640, 115, 0.0)]
+        path = approach + [hit] + departure
+
+        classifier.add_bounce(path, hit, approach, departure, draw_frame=6)
+
+        self.assertEqual(attempt.bounces, [])
+
     def test_slow_rolling_ball_is_not_a_return(self):
         classifier = self.classifier()
         rolling = [
@@ -1088,7 +1174,7 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertEqual(classifier.events[0].attempt_frame_number, 0)
         self.assertEqual([item.frame for item in classifier.active_attempts], [60])
 
-    def test_later_hit_is_not_published_over_unresolved_older_return(self):
+    def test_later_hit_streams_despite_an_unresolved_older_return(self):
         reported = []
         classifier = self.classifier()
         classifier.table = np.float32([(0, 0), (600, 0), (600, 200), (0, 200)])
@@ -1107,7 +1193,31 @@ class VideoDetectorUnitTest(unittest.TestCase):
             99, attempt=newer,
         )
 
-        self.assertEqual(reported, [])
+        self.assertEqual(len(reported), 1)
+
+    def test_hit_notification_is_not_duplicated_when_launch_order_settles(self):
+        reported = []
+        classifier = self.classifier()
+        classifier.on_confirmed_hit = reported.append
+        older = Attempt(10, (800, 100), state="return_seen")
+        newer = Attempt(70, (800, 100))
+        classifier.active_attempts.extend((older, newer))
+        path = [
+            (90 + frame, 100 + frame * 20, 100, 0.0)
+            for frame in range(9)
+        ]
+
+        classifier.add_bounce(
+            path, path[4], path[1:4], path[5:8], 99, attempt=newer,
+        )
+        self.assertEqual(len(reported), 1)
+
+        older.state = "settled"
+        newer.state = "settled"
+        classifier.drain_settled_attempts(100)
+
+        self.assertEqual(len(reported), 1)
+        self.assertEqual(reported[0].outcome, "far_table")
 
     def test_return_requires_observations_after_its_active_launch(self):
         classifier = self.classifier()
@@ -1382,6 +1492,41 @@ class VideoDetectorUnitTest(unittest.TestCase):
             ["hit", "hit", "hit"],
         )
 
+    def test_direct_live_publisher_streams_detector_hit_once(self):
+        reported = []
+        publisher = DirectLiveAttemptPublisher(60, reported.append)
+        publisher.observe_attempt_started(100)
+        hit = self.cadence_event(130)
+        hit.attempt_frame_number = 100
+
+        publisher.observe_confirmed_hit(hit)
+        publisher.observe(hit)
+
+        self.assertEqual(
+            [(item["state"], item.get("outcome")) for item in reported],
+            [("pending", None), ("finalized", "hit")],
+        )
+
+    def test_direct_live_publisher_corrects_launch_miss_with_delayed_hit(self):
+        reported = []
+        publisher = DirectLiveAttemptPublisher(60, reported.append)
+        publisher.observe_attempt_started(100)
+        publisher.observe_attempt_started(200)
+        hit = self.cadence_event(130)
+        hit.attempt_frame_number = 100
+
+        publisher.observe_confirmed_hit(hit)
+
+        first = [
+            item for item in reported
+            if item["attempt_id"] == "launch-100"
+            and item["state"] == "finalized"
+        ]
+        self.assertEqual(
+            [(item["outcome"], item.get("revision", 0)) for item in first],
+            [("miss", 0), ("hit", 1)],
+        )
+
     def test_live_normalizer_finalized_attempts_are_monotonic(self):
         reported = []
         normalizer = LiveAttemptNormalizer(60, reported.append)
@@ -1435,6 +1580,60 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertEqual(
             [item["outcome"] for item in finalized],
             ["hit", "hit", "hit", "hit"],
+        )
+
+    def test_live_normalizer_accepts_previous_hit_after_newer_hit_arrives(self):
+        reported = []
+        normalizer = LiveAttemptNormalizer(60, reported.append)
+        for frame in (70, 130, 190):
+            event = self.cadence_event(frame)
+            normalizer.observe_confirmed_hit(event)
+            normalizer.observe(event)
+
+        newer = self.cadence_event(310)
+        normalizer.observe_confirmed_hit(newer)
+        normalizer.observe(newer)
+        previous = self.cadence_event(250)
+        normalizer.observe_confirmed_hit(previous)
+        normalizer.observe(previous)
+        normalizer.finish_session(370)
+
+        by_id = {}
+        for item in reported:
+            if item["state"] != "finalized":
+                continue
+            current = by_id.get(item["attempt_id"])
+            if (
+                current is None
+                or item.get("revision", 0) > current.get("revision", 0)
+            ):
+                by_id[item["attempt_id"]] = item
+        finalized = sorted(by_id.values(), key=lambda item: item["sequence"])
+        self.assertEqual(
+            [item["outcome"] for item in finalized],
+            ["hit", "hit", "hit", "hit", "hit"],
+        )
+
+    def test_confirmed_hit_corrects_an_inferred_finalized_miss(self):
+        reported = []
+        normalizer = LiveAttemptNormalizer(60, reported.append)
+        for frame in (70, 130, 190):
+            event = self.cadence_event(frame)
+            normalizer.observe_confirmed_hit(event)
+            normalizer.observe(event)
+        normalizer.advance(382)
+
+        delayed = self.cadence_event(250)
+        normalizer.observe_confirmed_hit(delayed)
+
+        fourth = [
+            item for item in reported
+            if item.get("sequence") == 4
+            and item["state"] == "finalized"
+        ]
+        self.assertEqual(
+            [(item["outcome"], item.get("revision", 0)) for item in fourth],
+            [("miss", 0), ("hit", 1)],
         )
 
     def test_batch_normalizer_ignores_late_provisional_out_evidence(self):

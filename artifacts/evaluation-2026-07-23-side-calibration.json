@@ -1,0 +1,80 @@
+{
+  "description": "Reviewed profile side-view calibration for evaluation-2026-07-23-184555.mkv.",
+  "image_size": [
+    1920,
+    1080
+  ],
+  "table_surface_y": 0.7786086,
+  "camera_geometry": "profile_side_view",
+  "control_points": [
+    {
+      "name": "x0_player_edge",
+      "image": [229.0, 675.0],
+      "log": [0.0, -1.37]
+    },
+    {
+      "name": "x0_opponent_edge",
+      "image": [1501.0, 675.0],
+      "log": [0.0, 1.37]
+    },
+    {
+      "name": "net_base_top",
+      "image": [888.0, 650.0],
+      "log": [-0.7625, 0.0]
+    },
+    {
+      "name": "net_base_bottom",
+      "image": [888.0, 700.0],
+      "log": [0.7625, 0.0]
+    }
+  ],
+  "table_polygon": [
+    [229.0, 650.0],
+    [1501.0, 650.0],
+    [1501.0, 700.0],
+    [229.0, 700.0]
+  ],
+  "net_line": [
+    [888.0, 650.0],
+    [888.0, 700.0]
+  ],
+  "launcher_region": [
+    1050.0, 350.0, 1650.0, 800.0
+  ],
+  "return_region": [
+    0.0, 350.0, 760.0, 800.0
+  ],
+  "tracking_polygon": [
+    [0.0, 350.0],
+    [1800.0, 350.0],
+    [1800.0, 800.0],
+    [0.0, 800.0]
+  ],
+  "table_contact_polygon": [
+    [229.0, 640.0],
+    [1501.0, 640.0],
+    [1501.0, 710.0],
+    [229.0, 710.0]
+  ],
+  "table_color": {
+    "hue_center": 65.0,
+    "hue_tolerance": 23.0,
+    "min_saturation": 80.0
+  },
+  "ball_color": {
+    "hue_center": 15.0,
+    "hue_tolerance": 9.0,
+    "min_saturation": 120.0,
+    "min_value": 120.0
+  },
+  "detector_settings": {
+    "min_track_points": 4,
+    "min_launch_track_points": 8,
+    "launch_min_horizontal_distance": 80,
+    "return_min_horizontal_distance": 60,
+    "return_min_horizontal_speed": 2,
+    "net_shadow_exclusion_distance": 8,
+    "min_candidate_area": 2,
+    "near_min_candidate_area": 2
+  }
+}

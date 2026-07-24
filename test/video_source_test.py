@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from video_source import (  # noqa: E402
     FileVideoSource,
+    RealtimeLagMonitor,
     SrtVideoSource,
     VideoSourceError,
     open_video_source,
@@ -58,6 +59,20 @@ class FakeCapture:
 
 
 class VideoSourceTest(unittest.TestCase):
+    def test_live_lag_monitor_warns_at_two_seconds_and_reports_recovery(self):
+        monitor = RealtimeLagMonitor(1)
+
+        self.assertEqual(
+            monitor.observe_processing_time(3.1),
+            "WARNING: live video processing is 2.1s behind real time",
+        )
+        self.assertIsNone(monitor.observe_processing_time(0.9))
+        self.assertIsNone(monitor.observe_processing_time(0.0))
+        self.assertEqual(
+            monitor.observe_processing_time(0.2),
+            "Live video processing caught up (0.2s behind real time)",
+        )
+
     def test_local_input_uses_seekable_opencv_source(self):
         capture = FakeCapture("sample.mp4")
         with patch("video_source.cv2.VideoCapture", return_value=capture):

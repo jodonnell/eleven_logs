@@ -20,9 +20,11 @@ export const reconcileAttemptUpsert = (attempts, message) => {
 
   const existing = attempts[index]
   if (existing.state === "finalized") {
-    // Delivery retries are harmless, but a finalized visible boundary is
-    // immutable even if later detector evidence disagrees.
-    return attempts
+    // Ignore delivery retries and stale evidence. A higher revision is an
+    // explicit correction backed by later confirmed contact evidence.
+    const existingRevision = existing.revision ?? 0
+    const incomingRevision = message.revision ?? 0
+    if (incomingRevision <= existingRevision) return attempts
   }
   const updated = [...attempts]
   updated[index] = message

@@ -103,20 +103,28 @@ open `http://MAC_LAN_IP:8000` in the Quest browser:
 npm run counter:quest
 ```
 
+This shortcut uses the reviewed 1920x1080 profile-side calibration at
+`artifacts/evaluation-2026-07-23-side-calibration.json`; the live OBS output
+must keep that resolution and camera placement.
+The analyzer prints a warning if its processed-video clock falls at least two
+seconds behind wall-clock time, and reports when that backlog recovers.
+
 For a short detector-diagnostic session, use `npm run counter:quest:debug`.
 It writes two complementary artifacts:
 
 - `artifacts/live-counter-clean.mkv` is lossless FFV1 detector input captured before
-  overlays. Recording begins at the first detected machine launch and is
-  capped at 45 seconds by the Quest debug shortcut, so headset/setup time does
-  not consume the bound. Expect roughly 1.3 GB at the current resolution.
+  overlays. Recording begins immediately and is capped at 120 seconds by the
+  Quest debug shortcut, so it still captures sessions when launch detection is
+  broken. Expect roughly 3--4 GB at the current resolution.
 - `artifacts/live-counter-events.jsonl` preserves every live publication with
   its shot frame, publication frame, and publication delay.
 
 The event stream carries `attempt_upsert` records with a `pending -> finalized`
-lifecycle. Finalized outcomes are immutable; the browser calculates the count
-only from the ordered finalized ledger. Evidence `frame_number` and publication
-latency remain available for diagnostics.
+lifecycle. Live SRT runs publish detector-native launches and results directly;
+they do not reconstruct cadence slots. A later confirmed hit can revise a
+previous launch miss, and the browser accepts only explicitly higher revisions.
+Evidence `frame_number` and publication latency remain available for
+diagnostics.
 
 Stop it with Ctrl-C after the labeled sequence. Change the bound with
 `--clean-recording-seconds`, or force recording from stream startup with
@@ -129,8 +137,8 @@ python3 scripts/analyze_video.py artifacts/live-counter-clean.mkv \
   --output artifacts/live-counter-replay.jsonl
 ```
 
-Run the checked-in clean sample through the detector, live normalizer, and
-browser-order regression with:
+Run the checked-in clean sample through the detector and browser-order
+regression with:
 
 ```sh
 npm run counter:replay
@@ -168,6 +176,18 @@ video into memory. Every camera
 placement requires its own calibration: table corners, coordinate orientation,
 net, and the launcher region are deliberately not inferred from `sample.mp4` or
 reused across setups.
+
+The strict profile view captured in
+`artifacts/evaluation-2026-07-23-184555.mkv` uses the reviewed
+`artifacts/evaluation-2026-07-23-side-calibration.json`. In this mode the
+counter deliberately reports no table coordinate because table width is not
+visible. A hit is the directly observable downward-to-upward ball turn on the
+calibrated opponent/right side of the net:
+
+```sh
+python3 scripts/analyze_video.py VIDEO_OR_SRT_URL \
+  --calibration artifacts/evaluation-2026-07-23-side-calibration.json
+```
 
 Automatic calibration also derives four camera-relative detector regions: a
 launcher-side start zone, a player-side return zone, a vertically bounded

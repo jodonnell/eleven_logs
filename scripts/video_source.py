@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union
@@ -16,6 +17,39 @@ PathLike = Union[str, Path]
 
 class VideoSourceError(ValueError):
     """Raised when a video source cannot be opened or decoded."""
+
+
+class RealtimeLagMonitor:
+    """Report when processing a nominally real-time stream falls behind."""
+
+    def __init__(
+        self,
+        fps: float,
+        threshold_seconds: float = 2.0,
+    ):
+        self.fps = fps
+        self.threshold_seconds = threshold_seconds
+        self.lag_seconds = 0.0
+        self.behind = False
+
+    def observe_processing_time(self, seconds: float) -> Optional[str]:
+        frame_budget = 1 / self.fps
+        self.lag_seconds = max(
+            0.0, self.lag_seconds + seconds - frame_budget,
+        )
+        if not self.behind and self.lag_seconds >= self.threshold_seconds:
+            self.behind = True
+            return (
+                "WARNING: live video processing is "
+                f"{self.lag_seconds:.1f}s behind real time"
+            )
+        if self.behind and self.lag_seconds < self.threshold_seconds / 2:
+            self.behind = False
+            return (
+                "Live video processing caught up "
+                f"({self.lag_seconds:.1f}s behind real time)"
+            )
+        return None
 
 
 @dataclass(frozen=True)
@@ -108,6 +142,8 @@ class SrtVideoSource(VideoSource):
             self.close()
             raise VideoSourceError("Could not determine the SRT video size")
         self._next_frame = 0
+        self._lag_monitor = RealtimeLagMonitor(self.fps)
+        self._last_frame_delivered_at: Optional[float] = None
         print(
             f"SRT video connected: {self.width}x{self.height} at {self.fps:g} FPS",
             file=sys.stderr,
@@ -115,11 +151,19 @@ class SrtVideoSource(VideoSource):
         )
 
     def read(self) -> Optional[VideoFrame]:
+        read_started_at = time.monotonic()
+        if self._last_frame_delivered_at is not None:
+            lag_message = self._lag_monitor.observe_processing_time(
+                read_started_at - self._last_frame_delivered_at,
+            )
+            if lag_message is not None:
+                print(lag_message, file=sys.stderr, flush=True)
         ok, image = self._capture.read()
         if not ok:
             return None
         number = self._next_frame
         self._next_frame += 1
+        self._last_frame_delivered_at = time.monotonic()
         return VideoFrame(number, number / self.fps, image)
 
     def close(self) -> None:
