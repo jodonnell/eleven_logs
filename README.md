@@ -79,10 +79,8 @@ npm run counter -- 'srt://OBS_IP:9000?mode=caller&latency=120000'
 
 Then open <http://127.0.0.1:8000>. The server streams keyed attempt upserts to
 the page, where the session count increases for every finalized `hit` and
-resets to zero for a finalized `miss` or `out`. A detected new launch closes
-the previous attempt immediately, so an attempt without a confirmed return to
-the opponent's table finalizes that launch without waiting for a later batch.
-After three hits establish the launcher rhythm, every inferred launch receives
+resets to zero for a finalized `miss` or `out`. After six distinct contacts
+establish a stable launcher rhythm, every inferred launch receives
 a stable attempt ID. The newest slot remains pending until direct evidence, the
 next credible launch, or a conservative cadence deadline finalizes it.
 Refreshing the page replays these keyed attempt upserts so the browser can
@@ -90,8 +88,9 @@ reconstruct the same finalized ledger and streak.
 The page also keeps the all-time best streak in that browser's local storage,
 so it survives refreshes and server restarts without requiring a database.
 
-The first three contacts must remain buffered long enough to infer cadence, so
-video-only startup can publish those initial attempts several seconds late.
+The first six distinct contacts remain buffered long enough to infer a stable
+cadence, so startup can publish those initial attempts several seconds late.
+The page reports calibration progress during this warm-up.
 After warm-up, confirmed hits publish at detection time; unseen misses still
 wait for a credible following launch or the conservative cadence deadline.
 
@@ -103,28 +102,67 @@ open `http://MAC_LAN_IP:8000` in the Quest browser:
 npm run counter:quest
 ```
 
-This shortcut uses the reviewed 1920x1080 profile-side calibration at
-`artifacts/evaluation-2026-07-23-side-calibration.json`; the live OBS output
-must keep that resolution and camera placement.
+This shortcut uses the current 1920x1080 profile-side calibration at
+`artifacts/live-2026-07-24-side-calibration.json`, fitted to the detector input
+captured from the live Quest/OBS framing. The live OBS output must keep that
+resolution, crop, and camera placement. Configure the SRT sender/OBS
+output for 30 FPS. The labeled 153-second evaluation processes more than four
+times faster than real time at 30 FPS on the development Mac, leaving enough
+headroom to avoid the growing SRT backlog and H.264 corruption seen at 60 FPS.
+Reducing FPS only after frames reach the receiver does not reduce SRT bandwidth
+or decoder load, so make this change at the sender.
 The analyzer prints a warning if its processed-video clock falls at least two
 seconds behind wall-clock time, and reports when that backlog recovers.
+The browser also keeps semantic health warnings visible when detector events
+are not reaching SSE or when eight finalized attempts produce no confirmed
+table contact. These warnings clear automatically after publication or contact
+detection recovers; they do not reset the current score.
+Every normal Quest run also resets and continuously writes
+`artifacts/live-counter-events.jsonl`, plus a bounded 30-second MJPEG detector
+input at `artifacts/live-counter-clean.mkv` beginning with the first detected
+launch. This makes a failed live session directly replayable without imposing
+an unbounded recording workload. In addition to `attempt_upsert` records,
+the file receives one `pipeline_heartbeat` per wall-clock second with the
+processed frame and video time, effective processing FPS, estimated lag,
+candidate and track counts, detector event count, and pending/finalized
+attempt counts. A final `pipeline_end` record distinguishes an orderly stop
+from a process that disappeared or stopped advancing between heartbeats.
+The Quest shortcut uses a 400 ms SRT latency buffer. An individual frame read
+times out after three seconds; the analyzer then reconnects without resetting
+its frame or attempt sequence. The live log records `source_stalled`,
+`source_reconnecting`, and `source_reconnected` transitions, followed by an
+`analyzer_exit` record when the analyzer process ends.
 
 For a short detector-diagnostic session, use `npm run counter:quest:debug`.
 It writes two complementary artifacts:
 
-- `artifacts/live-counter-clean.mkv` is lossless FFV1 detector input captured before
-  overlays. Recording begins immediately and is capped at 120 seconds by the
-  Quest debug shortcut, so it still captures sessions when launch detection is
-  broken. Expect roughly 3--4 GB at the current resolution.
+- `artifacts/live-counter-clean.mkv` is lower-overhead MJPEG detector input
+  captured before overlays. Recording begins immediately and is capped at 120
+  seconds by the Quest debug shortcut, so it still captures sessions when
+  launch detection is broken. Direct analyzer captures remain lossless FFV1 by
+  default when exact pixel replay is required.
 - `artifacts/live-counter-events.jsonl` preserves every live publication with
   its shot frame, publication frame, and publication delay.
 
 The event stream carries `attempt_upsert` records with a `pending -> finalized`
-lifecycle. Live SRT runs publish detector-native launches and results directly;
-they do not reconstruct cadence slots. A later confirmed hit can revise a
-previous launch miss, and the browser accepts only explicitly higher revisions.
-Evidence `frame_number` and publication latency remain available for
-diagnostics.
+lifecycle. Live SRT and prerecorded evaluation use the cadence-aware ledger to
+reject launcher fragments and recover fully occluded launches. Overlapping
+tracks for one physical contact are deduplicated before cadence inference, and
+cadence is locked once established so attempt IDs cannot shift. A later
+confirmed hit can revise a previous launch miss, and the browser accepts only
+explicitly higher revisions. Evidence
+`frame_number` and publication latency remain available for diagnostics.
+
+Compare a captured browser SSE ledger with timestamped human labels using the
+same reconciliation rules as the counter page:
+
+```sh
+python3 scripts/compare_sse_labels.py LABELS.json SSE.jsonl \
+  --canonical CANONICAL.jsonl \
+  --json-output human-vs-sse.json \
+  --markdown-output human-vs-sse.md \
+  --alignment-output human-vs-sse-alignment.jsonl
+```
 
 Stop it with Ctrl-C after the labeled sequence. Change the bound with
 `--clean-recording-seconds`, or force recording from stream startup with
@@ -165,7 +203,7 @@ side contact is emitted as `hit` from the live return track once two
 post-contact frames establish the bounce; it does not wait for the track to
 disappear, for cadence, or for the next launch. A terminal shadow contact with
 no visible departure still waits for the track to end. Cadence-based `out`
-and `miss` slots have a three-contact warm-up and remain held until a later
+and `miss` slots have a six-contact live warm-up and remain held until a later
 launch settles them, preventing a temporarily occluded return from becoming a
 premature miss. Merely receiving more video does not infer trailing misses
 after the machine stops. Every live record is flushed immediately. Use

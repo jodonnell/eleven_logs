@@ -58,6 +58,11 @@ class FakeCapture:
         self.released = True
 
 
+class FailedReadCapture(FakeCapture):
+    def read(self):
+        return False, None
+
+
 class VideoSourceTest(unittest.TestCase):
     def test_live_lag_monitor_warns_at_two_seconds_and_reports_recovery(self):
         monitor = RealtimeLagMonitor(1)
@@ -86,6 +91,24 @@ class VideoSourceTest(unittest.TestCase):
         self.assertEqual(frame.time_seconds, 2)
         self.assertTrue(capture.released)
 
+    def test_realtime_file_input_paces_frames_against_wall_clock(self):
+        capture = FakeCapture("sample.mp4")
+        with (
+            patch("video_source.cv2.VideoCapture", return_value=capture),
+            patch(
+                "video_source.time.monotonic",
+                side_effect=[100.0, 100.005],
+            ),
+            patch("video_source.time.sleep") as sleep,
+        ):
+            source = open_video_source("sample.mp4", realtime=True)
+            source.read()
+            source.read()
+            source.close()
+
+        sleep.assert_called_once()
+        self.assertAlmostEqual(sleep.call_args.args[0], 1 / 60 - .005)
+
     def test_srt_input_uses_opencv_ffmpeg_backend(self):
         capture = FakeCapture("srt://127.0.0.1:9000")
         messages = io.StringIO()
@@ -103,12 +126,53 @@ class VideoSourceTest(unittest.TestCase):
         self.assertEqual(frame.number, 0)
         self.assertEqual(frame.image.shape, (12, 16, 3))
         constructor.assert_called_once_with(
-            "srt://127.0.0.1:9000?mode=listener", cv2.CAP_FFMPEG,
+            "srt://127.0.0.1:9000?mode=listener",
+            cv2.CAP_FFMPEG,
+            [
+                cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000,
+                cv2.CAP_PROP_READ_TIMEOUT_MSEC, 3000,
+            ],
         )
         self.assertEqual(
             messages.getvalue(), "SRT video connected: 16x12 at 60 FPS\n",
         )
         self.assertTrue(capture.released)
+
+    def test_srt_read_timeout_reconnects_and_emits_lifecycle_events(self):
+        failed = FailedReadCapture("srt://127.0.0.1:9000")
+        recovered = FakeCapture("srt://127.0.0.1:9000")
+        events = []
+        messages = io.StringIO()
+        with redirect_stderr(messages):
+            with patch(
+                "video_source.cv2.VideoCapture",
+                side_effect=[failed, recovered],
+            ) as constructor, patch("video_source.time.sleep") as sleep:
+                source = SrtVideoSource(
+                    "srt://127.0.0.1:9000",
+                    reconnect_delay_seconds=0,
+                )
+                source.set_event_callback(events.append)
+                frame = source.read()
+                source.close()
+
+        self.assertEqual(frame.number, 0)
+        self.assertEqual(
+            [event["type"] for event in events],
+            [
+                "source_connected",
+                "source_stalled",
+                "source_reconnecting",
+                "source_reconnected",
+            ],
+        )
+        self.assertEqual(events[-1]["reconnect_count"], 1)
+        self.assertTrue(failed.released)
+        self.assertTrue(recovered.released)
+        self.assertEqual(constructor.call_count, 2)
+        sleep.assert_called_once_with(0)
+        self.assertIn("SRT frame read timed out", messages.getvalue())
+        self.assertIn("SRT video reconnected", messages.getvalue())
 
     def test_live_source_rejects_file_seek(self):
         capture = FakeCapture("srt://127.0.0.1:9000")

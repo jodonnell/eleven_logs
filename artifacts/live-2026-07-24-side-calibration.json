@@ -1,0 +1,152 @@
+{
+  "description": "Profile side-view calibration fitted to the 2026-07-24 live Quest capture.",
+  "image_size": [
+    1920,
+    1080
+  ],
+  "table_surface_y": 0.7786086,
+  "camera_geometry": "profile_side_view",
+  "control_points": [
+    {
+      "name": "x0_player_edge",
+      "image": [
+        527.0,
+        617.0
+      ],
+      "log": [
+        0.0,
+        -1.37
+      ]
+    },
+    {
+      "name": "x0_opponent_edge",
+      "image": [
+        1360.0,
+        617.0
+      ],
+      "log": [
+        0.0,
+        1.37
+      ]
+    },
+    {
+      "name": "net_base_top",
+      "image": [
+        945.0,
+        580.0
+      ],
+      "log": [
+        -0.7625,
+        0.0
+      ]
+    },
+    {
+      "name": "net_base_bottom",
+      "image": [
+        945.0,
+        645.0
+      ],
+      "log": [
+        0.7625,
+        0.0
+      ]
+    }
+  ],
+  "table_polygon": [
+    [
+      527.0,
+      590.0
+    ],
+    [
+      1360.0,
+      590.0
+    ],
+    [
+      1360.0,
+      645.0
+    ],
+    [
+      527.0,
+      645.0
+    ]
+  ],
+  "net_line": [
+    [
+      945.0,
+      570.0
+    ],
+    [
+      945.0,
+      650.0
+    ]
+  ],
+  "launcher_region": [
+    1000.0,
+    300.0,
+    1550.0,
+    750.0
+  ],
+  "return_region": [
+    250.0,
+    300.0,
+    1000.0,
+    750.0
+  ],
+  "tracking_polygon": [
+    [
+      100.0,
+      300.0
+    ],
+    [
+      1650.0,
+      300.0
+    ],
+    [
+      1650.0,
+      750.0
+    ],
+    [
+      100.0,
+      750.0
+    ]
+  ],
+  "table_contact_polygon": [
+    [
+      510.0,
+      565.0
+    ],
+    [
+      1375.0,
+      565.0
+    ],
+    [
+      1375.0,
+      650.0
+    ],
+    [
+      510.0,
+      650.0
+    ]
+  ],
+  "table_color": {
+    "hue_center": 65.0,
+    "hue_tolerance": 23.0,
+    "min_saturation": 80.0
+  },
+  "ball_color": {
+    "hue_center": 15.0,
+    "hue_tolerance": 9.0,
+    "min_saturation": 120.0,
+    "min_value": 120.0
+  },
+  "detector_settings": {
+    "min_track_points": 4,
+    "min_launch_track_points": 8,
+    "launch_min_horizontal_distance": 80,
+    "return_min_horizontal_distance": 60,
+    "return_min_horizontal_speed": 2,
+    "net_shadow_exclusion_distance": 8,
+    "min_candidate_area": 2,
+    "near_min_candidate_area": 2
+  }
+}

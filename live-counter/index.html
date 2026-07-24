@@ -107,6 +107,7 @@
       const status = document.querySelector("#status")
       const events = new EventSource("/events")
       let counterState = { attempts: [], streak: 0 }
+      let healthWarning = null
       let highScore = loadHighScore(window.localStorage)
       bestCount.textContent = highScore
 
@@ -119,6 +120,32 @@
           bestCount.textContent = highScore
           saveHighScore(window.localStorage, highScore)
         }
+        if (shot.type === "counter_health") {
+          if (shot.status === "warning") {
+            healthWarning = shot
+            status.className = "error"
+            status.textContent = `Warning: ${shot.message}`
+          } else if (
+            shot.status === "recovered" &&
+            healthWarning?.code === shot.code
+          ) {
+            healthWarning = null
+            status.className = "connected"
+            status.textContent = shot.message
+          }
+        } else if (shot.type === "counter_status" && !healthWarning) {
+          status.className = "connected"
+          status.textContent = shot.message
+        } else if (shot.type === "attempt_upsert" && !healthWarning) {
+          status.className = "connected"
+          if (shot.state === "pending") {
+            status.textContent = `Ball ${shot.sequence} detected`
+          } else if (shot.outcome === "hit") {
+            status.textContent = `Hit — streak ${counterState.streak}`
+          } else {
+            status.textContent = "Miss — streak reset"
+          }
+        }
         document.dispatchEvent(
           new CustomEvent("counter-update", {
             detail: { message: shot, streak: counterState.streak },
@@ -127,8 +154,10 @@
       }
 
       events.onopen = () => {
-        status.className = "connected"
-        status.textContent = "Shot stream connected"
+        if (!healthWarning) {
+          status.className = "connected"
+          status.textContent = "Shot stream connected"
+        }
       }
 
       events.onerror = () => {

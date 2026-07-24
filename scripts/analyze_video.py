@@ -9,6 +9,7 @@ import argparse
 import json
 import math
 import sys
+import time
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
@@ -835,7 +836,10 @@ def split_wide_component(mask: np.ndarray, box: Tuple[int, int, int, int, int]) 
     for piece in range(1, pieces):
         expected = round(width * piece / pieces)
         radius = max(1, round(width / pieces * .25))
-        start, end = max(1, expected - radius), min(width - 1, expected + radius + 1)
+        # ``end`` is exclusive. Allow the search to include the final column;
+        # capping it at ``width - 1`` makes a narrow component's slice empty
+        # (for example, width=2, expected=1).
+        start, end = max(1, expected - radius), min(width, expected + radius + 1)
         cuts.append(start + int(np.argmin(projection[start:end])))
     return [part for part in np.split(glyph, cuts, axis=1) if part.shape[1] > 0]
 
@@ -2056,6 +2060,162 @@ class AttemptClassifier:
         )
         return crossed_net, not point_in_polygon(terminal_pixel, self.table)
 
+    def projected_profile_contact(self, path: Track) -> Optional[TrackPoint]:
+        """Project a long return that disappears behind the center scoreboard.
+
+        The reviewed profile view places an opaque in-game scoreboard above
+        the net. A clean return can vanish immediately before the net and stay
+        hidden through its opponent-table contact. Accept only a well-sampled,
+        low-error ballistic arc whose next descending table intersection is
+        on the calibrated opponent half.
+        """
+        if (
+            self.calibration.get("camera_geometry") != "profile_side_view"
+            or len(path) < 12
+            or self.return_evidence(path)[0]
+        ):
+            return None
+        table_width = float(np.ptp(self.table[:, 0]))
+        table_height = float(np.ptp(self.table[:, 1]))
+        if table_width <= 0 or table_height <= 0:
+            return None
+        progress = self.projected_travel(
+            path[0], path[-1], self.return_direction,
+        )
+        minimum_progress = (
+            self.calibration.get("profile_projection_min_travel_fraction", .35)
+            * table_width
+        )
+        if progress < minimum_progress:
+            return None
+        terminal_pixel = (path[-1][1], path[-1][2])
+        net_distance = abs(signed_distance_to_line(terminal_pixel, self.net_line))
+        maximum_net_distance = (
+            self.calibration.get("profile_projection_net_distance_fraction", .08)
+            * table_width
+        )
+        if net_distance > maximum_net_distance:
+            return None
+
+        xs = np.float64([point[1] for point in path])
+        ys = np.float64([point[2] for point in path])
+        if float(np.ptp(xs)) < minimum_progress:
+            return None
+        coefficients = np.polyfit(xs, ys, 2)
+        predicted = np.polyval(coefficients, xs)
+        fit_error = float(np.sqrt(np.mean(np.square(predicted - ys))))
+        if (
+            coefficients[0] <= 0
+            or fit_error
+            > self.calibration.get("profile_projection_max_fit_error", 5.0)
+        ):
+            return None
+
+        # The visible cyan rail is the top edge of the calibrated table band.
+        table_y = float(min(point[1] for point in self.table))
+        roots = np.roots((
+            coefficients[0], coefficients[1], coefficients[2] - table_y,
+        ))
+        direction_x = self.return_direction[0]
+        if abs(direction_x) < .5:
+            return None
+        frame_steps = [
+            (later[1] - earlier[1]) * direction_x
+            for earlier, later in zip(path[-6:-1], path[-5:])
+            if later[0] > earlier[0]
+        ]
+        forward_speed = float(np.median(frame_steps)) if frame_steps else 0.0
+        if forward_speed < self.settings.return_min_horizontal_speed:
+            return None
+        candidates: List[Tuple[float, float]] = []
+        for value in roots:
+            if abs(float(value.imag)) > 1e-6:
+                continue
+            x = float(value.real)
+            forward_distance = (x - path[-1][1]) * direction_x
+            if forward_distance <= 0:
+                continue
+            frames_ahead = forward_distance / forward_speed
+            if frames_ahead > self.calibration.get(
+                "profile_projection_max_frames", 24,
+            ):
+                continue
+            pixel = (x, table_y)
+            if (
+                self.profile_table_side(pixel) == "opponent"
+                and point_near_polygon(
+                    pixel, self.table, self.settings.table_contact_margin,
+                )
+            ):
+                candidates.append((frames_ahead, x))
+        if not candidates:
+            return None
+        frames_ahead, x = min(candidates)
+        # Anchor the result to the last observed frame. The projected contact
+        # lies in an opaque region, so claiming a future evidence timestamp
+        # would produce negative publication latency.
+        return path[-1][0], x, table_y, round(fit_error, 3)
+
+    def add_projected_profile_bounce(
+        self,
+        path: Track,
+        hit: TrackPoint,
+        draw_frame: int,
+        attempt: Attempt,
+    ) -> None:
+        """Publish a conservative opponent contact inferred through occlusion."""
+        contact_key = self.physical_contact_key(hit)
+        if contact_key in attempt.classified_contact_keys:
+            return
+        key = (path[0][0], hit[0])
+        if key in self.emitted:
+            return
+        self.emitted.add(key)
+        self.diagnose_track(
+            path, "confirmed_bounce", draw_frame,
+            (
+                "profile_projection "
+                f"contact=({hit[1]:.1f},{hit[2]:.1f}) "
+                f"fit_error={hit[3]:.3f}"
+            ),
+        )
+        candidate = ContactCandidate(
+            frame_number=hit[0],
+            pixel=(hit[1], hit[2]),
+            log_position=None,
+            table_side="opponent",
+            signal_type="profile_projection",
+            strength=max(0.0, 5.0 - hit[3]),
+            confidence=self.calibration.get(
+                "profile_projection_confidence", .48,
+            ),
+            source_track_key=self.track_key(path),
+            approach=tuple(path[-6:]),
+            departure=(),
+        )
+        self.record_contact_candidate(candidate, path, draw_frame, attempt)
+        event = BounceEvent(
+            video_time_seconds=round(hit[0] / self.fps, 3),
+            video_timestamp=fmt_timestamp(hit[0] / self.fps),
+            hit_table=True,
+            is_in=True,
+            outcome="far_table",
+            posx=None,
+            posy=None,
+            posz=None,
+            confidence=candidate.confidence,
+            frame_number=hit[0],
+            pixel=candidate.pixel,
+            draw_frame=draw_frame,
+            attempt_frame_number=attempt.frame,
+        )
+        attempt.classified_contact_keys.add(contact_key)
+        attempt.bounces.append(event)
+        attempt.bounce_track_keys.add(self.track_key(path))
+        attempt.last_evidence_frame = hit[0]
+        attempt.state = "contact_pending"
+        self.notify_confirmed_hit(event)
+
     def select_return(self, attempt: Attempt) -> Track:
         return max(
             attempt.returns,
@@ -2498,6 +2658,15 @@ class AttemptClassifier:
                     attempt.state = "settled"
                     self.drain_settled_attempts(draw_frame)
                 continue
+            projected_contact = self.projected_profile_contact(path)
+            if projected_contact is not None:
+                self.add_projected_profile_bounce(
+                    path, projected_contact, draw_frame, attempt,
+                )
+                if attempt is not self.active_attempt:
+                    attempt.state = "settled"
+                    self.drain_settled_attempts(draw_frame)
+                continue
             net_contact = self.record_net_contact(path, draw_frame, attempt)
             key = self.track_key(path)
             if self.on_confirmed_non_hit is not None and key not in self.reported_non_hit_tracks:
@@ -2615,23 +2784,34 @@ def infer_attempt_period(hit_frames: Sequence[int], fps: float) -> Optional[floa
 
 
 def attempt_event_slots(
-    events: Sequence[BounceEvent], total_frames: int, fps: float,
+    events: Sequence[BounceEvent],
+    total_frames: int,
+    fps: float,
+    fixed_period: Optional[float] = None,
+    fixed_phase: Optional[float] = None,
 ) -> Tuple[Optional[float], List[Tuple[int, BounceEvent]]]:
     """Build the canonical cadence slots used by live and final output."""
     hits = [event for event in events if event.hit_table and event.outcome == "far_table"]
-    period = infer_attempt_period([event.frame_number for event in hits], fps)
+    period = fixed_period or infer_attempt_period(
+        [event.frame_number for event in hits], fps,
+    )
     if period is None:
         return None, []
 
-    phase = hits[0].frame_number
-    signed = [
-        (event.frame_number - phase + period / 2) % period - period / 2
-        for event in hits
-    ]
-    phase += sorted(signed)[len(signed) // 2]
-    earliest_evidence = min(event.frame_number for event in events)
-    while phase - period >= earliest_evidence - period * .3:
-        phase -= period
+    if fixed_phase is None:
+        phase = hits[0].frame_number
+        signed = [
+            (event.frame_number - phase + period / 2) % period - period / 2
+            for event in hits
+        ]
+        phase += sorted(signed)[len(signed) // 2]
+        earliest_evidence = min(event.frame_number for event in events)
+        while phase - period >= earliest_evidence - period * .3:
+            phase -= period
+    else:
+        # A live ledger cannot rename attempt IDs when another hit slightly
+        # refines the cadence estimate. Keep the phase that established it.
+        phase = fixed_phase
     # A live source may sit idle for minutes before and after a drill. Cadence
     # can fill gaps *between* observed attempts, but must not manufacture a
     # cycle after the machine disappears. Contact evidence can occur well
@@ -2744,17 +2924,38 @@ class LiveAttemptNormalizer:
         self,
         fps: float,
         on_attempt: Callable[[Dict[str, Any]], None],
+        minimum_cadence_hits: int = 3,
+        on_status: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> None:
         self.fps = fps
         self.on_attempt = on_attempt
+        self.minimum_cadence_hits = minimum_cadence_hits
+        self.on_status = on_status
+        self.launches_seen = 0
         self.events: List[BounceEvent] = []
         self.period: Optional[float] = None
+        self.phase: Optional[float] = None
         self.ledger: List[Dict[str, Any]] = []
         self.pending_attempt_events: List[BounceEvent] = []
         self.latest_trusted_frame: Optional[int] = None
         self.trusted_allows_following_slot = True
 
     def remember_event(self, event: BounceEvent) -> None:
+        # The classifier can confirm the same physical table contact through
+        # two overlapping tracks. Canonical normalization collapses those
+        # into one cadence slot; do that before live cadence inference too.
+        if (
+            event.hit_table
+            and event.outcome == "far_table"
+            and any(
+                item.hit_table
+                and item.outcome == "far_table"
+                and abs(item.frame_number - event.frame_number)
+                <= self.fps * .25
+                for item in self.events
+            )
+        ):
+            return
         if not any(
             item.frame_number == event.frame_number
             and item.outcome == event.outcome
@@ -2766,6 +2967,18 @@ class LiveAttemptNormalizer:
     def observe(self, event: BounceEvent) -> None:
         self.remember_event(event)
         self.pending_attempt_events.append(event)
+
+    def observe_attempt_started(self, _anchor: int) -> None:
+        self.launches_seen += 1
+        if self.period is None and self.on_status is not None:
+            self.on_status({
+                "type": "counter_status",
+                "status": "warming_up",
+                "message": (
+                    f"Calibrating ball cadence "
+                    f"({self.launches_seen} launches observed)"
+                ),
+            })
 
     def finished_attempt_event(self) -> Optional[BounceEvent]:
         """Build the non-hit closed by a new launch, if one is needed."""
@@ -2791,8 +3004,18 @@ class LiveAttemptNormalizer:
     ) -> List[Tuple[int, BounceEvent]]:
         evidence = list(self.events)
         if extra is not None and not any(
-            item.frame_number == extra.frame_number
-            and item.outcome == extra.outcome
+            (
+                item.frame_number == extra.frame_number
+                and item.outcome == extra.outcome
+            )
+            or (
+                item.hit_table
+                and item.outcome == "far_table"
+                and extra.hit_table
+                and extra.outcome == "far_table"
+                and abs(item.frame_number - extra.frame_number)
+                <= self.fps * .25
+            )
             for item in evidence
         ):
             evidence.append(extra)
@@ -2800,26 +3023,33 @@ class LiveAttemptNormalizer:
             item for item in evidence
             if item.hit_table and item.outcome == "far_table"
         ]
-        self.period = infer_attempt_period(
-            [item.frame_number for item in hits], self.fps,
-        )
-        if self.period is None:
+        if self.period is None and len(hits) < self.minimum_cadence_hits:
             return []
         horizon = total_frames
         if horizon is None:
-            horizon = round(
-                max(item.frame_number for item in evidence) + self.period * 1.05
+            if not evidence:
+                return []
+            estimated_period = self.period or infer_attempt_period(
+                [item.frame_number for item in hits], self.fps,
             )
-        period, slots = attempt_event_slots(evidence, horizon, self.fps)
+            if estimated_period is None:
+                return []
+            horizon = round(
+                max(item.frame_number for item in evidence)
+                + estimated_period * 1.05
+            )
+        period, slots = attempt_event_slots(
+            evidence,
+            horizon,
+            self.fps,
+            fixed_period=self.period,
+            fixed_phase=self.phase,
+        )
         if period is None:
             return []
-        self.period = period
-        if not self.ledger:
-            first_hit = min(item.frame_number for item in hits)
-            slots = [
-                item for item in slots
-                if item[0] >= first_hit - period * .3
-            ]
+        if self.period is None:
+            self.period = period
+            self.phase = float(slots[0][0])
         if self.latest_trusted_frame is not None:
             tail = period * (
                 1.05 if self.trusted_allows_following_slot else .3
@@ -3053,12 +3283,90 @@ class LiveAttemptNormalizer:
             self.trusted_allows_following_slot = True
             for event in hits:
                 self.finalize_direct(event, "hit")
+        if final_event is not None:
+            self.latest_trusted_frame = max(
+                self.latest_trusted_frame or final_event.frame_number,
+                final_event.frame_number,
+            )
+            self.trusted_allows_following_slot = False
         slots = self.candidate_slots(total_frames=total_frames)
-        self.sync_slots(slots, len(slots) - 3)
+        self.sync_slots(slots, len(slots) - 1)
         if final_event is not None:
             self.finalize_direct(
                 final_event, "miss", target_frame=final_event.frame_number,
             )
+        if self.period is not None:
+            latest_evidence_anchor = max(
+                (
+                    event.attempt_frame_number
+                    if event.attempt_frame_number is not None
+                    else event.frame_number
+                )
+                for event in self.events
+            ) if self.events else None
+            for index, record in enumerate(self.ledger):
+                if record["state"] != "pending":
+                    continue
+                anchor = record["anchor_frame_number"]
+                nearby_non_hits = [
+                    event for event in self.events
+                    if not (
+                        event.hit_table and event.outcome == "far_table"
+                    )
+                    and abs(
+                        (
+                            event.attempt_frame_number
+                            if event.attempt_frame_number is not None
+                            else event.frame_number
+                        )
+                        - anchor
+                    )
+                    <= self.period * .55
+                ]
+                if (
+                    not nearby_non_hits
+                    and (
+                        latest_evidence_anchor is None
+                        or anchor
+                        > latest_evidence_anchor + self.period * .55
+                    )
+                ):
+                    continue
+                event = (
+                    min(
+                        nearby_non_hits,
+                        key=lambda item: abs(
+                            (
+                                item.attempt_frame_number
+                                if item.attempt_frame_number is not None
+                                else item.frame_number
+                            )
+                            - anchor
+                        ),
+                    )
+                    if nearby_non_hits
+                    else BounceEvent(
+                        video_time_seconds=round(anchor / self.fps, 3),
+                        video_timestamp=fmt_timestamp(anchor / self.fps),
+                        hit_table=False,
+                        is_in=False,
+                        outcome="miss",
+                        posx=None,
+                        posy=None,
+                        posz=None,
+                        confidence=0.3,
+                        frame_number=anchor,
+                        pixel=(0, 0),
+                        draw_frame=total_frames,
+                        attempt_frame_number=anchor,
+                    )
+                )
+                finalized = self.attempt_record(
+                    index, anchor, "finalized",
+                    replace(event, outcome="miss"),
+                )
+                self.ledger[index] = finalized
+                self.on_attempt(finalized)
 
 
 class DirectLiveAttemptPublisher:
@@ -3167,8 +3475,166 @@ class DirectLiveAttemptPublisher:
     def advance(self, _frame_number: int) -> None:
         return
 
-    def finish_session(self, _total_frames: Optional[int] = None) -> None:
-        return
+    def finish_session(self, total_frames: Optional[int] = None) -> None:
+        """Close the final visible launch when the source session ends."""
+        if total_frames is None:
+            return
+        for anchor in self.launch_order:
+            current = self.attempts[anchor]
+            if current["state"] != "pending":
+                continue
+            missed = BounceEvent(
+                video_time_seconds=round(anchor / self.fps, 3),
+                video_timestamp=fmt_timestamp(anchor / self.fps),
+                hit_table=False,
+                is_in=False,
+                outcome="unknown",
+                posx=None,
+                posy=None,
+                posz=None,
+                confidence=0.3,
+                frame_number=anchor,
+                pixel=(0, 0),
+                draw_frame=total_frames,
+                attempt_frame_number=anchor,
+            )
+            finalized = self.attempt_record(anchor, "finalized", missed)
+            self.attempts[anchor] = finalized
+            self.on_attempt(finalized)
+
+
+class LivePipelineLogger:
+    """Emit bounded, continuous evidence that the live detector is advancing."""
+
+    def __init__(
+        self,
+        fps: float,
+        write_record: Callable[[Dict[str, Any]], None],
+        interval_seconds: float = 1.0,
+        monotonic: Callable[[], float] = time.monotonic,
+        wall_time: Callable[[], float] = time.time,
+    ) -> None:
+        self.fps = fps
+        self.write_record = write_record
+        self.interval_seconds = interval_seconds
+        self.monotonic = monotonic
+        self.wall_time = wall_time
+        self.started_at: Optional[float] = None
+        self.started_frame: Optional[int] = None
+        self.last_logged_at: Optional[float] = None
+        self.last_metrics: Dict[str, Any] = {}
+
+    def timing(self, frame_number: int, now: float) -> Dict[str, Any]:
+        if self.started_at is None or self.started_frame is None:
+            self.started_at = now
+            self.started_frame = frame_number
+        wall_elapsed = now - self.started_at
+        source_elapsed = (frame_number - self.started_frame) / self.fps
+        return {
+            "frame_number": frame_number,
+            "video_time_seconds": round(frame_number / self.fps, 3),
+            "wall_elapsed_seconds": round(wall_elapsed, 3),
+            "source_elapsed_seconds": round(source_elapsed, 3),
+            "estimated_lag_seconds": round(
+                max(0.0, wall_elapsed - source_elapsed), 3,
+            ),
+            "processing_fps": round(
+                (frame_number - self.started_frame) / wall_elapsed, 2,
+            ) if wall_elapsed > 0 else None,
+        }
+
+    def observe(
+        self,
+        frame_number: int,
+        metrics: Dict[str, Any],
+    ) -> None:
+        now = self.monotonic()
+        self.last_metrics = metrics
+        if (
+            self.last_logged_at is not None
+            and now - self.last_logged_at < self.interval_seconds
+        ):
+            return
+        self.last_logged_at = now
+        self.write_record({
+            "type": "pipeline_heartbeat",
+            "logged_at_unix_seconds": round(self.wall_time(), 3),
+            **self.timing(frame_number, now),
+            **metrics,
+        })
+
+    def finish(self, frame_number: int, reason: str) -> None:
+        now = self.monotonic()
+        self.write_record({
+            "type": "pipeline_end",
+            "reason": reason,
+            "logged_at_unix_seconds": round(self.wall_time(), 3),
+            **self.timing(frame_number, now),
+            **self.last_metrics,
+        })
+
+
+class LiveCounterHealthMonitor:
+    """Surface live semantic failures that do not crash the pipeline."""
+
+    def __init__(
+        self,
+        write_record: Callable[[Dict[str, Any]], None],
+        publisher_event_threshold: int = 3,
+        no_hit_attempt_threshold: int = 8,
+    ) -> None:
+        self.write_record = write_record
+        self.publisher_event_threshold = publisher_event_threshold
+        self.no_hit_attempt_threshold = no_hit_attempt_threshold
+        self.active: Set[str] = set()
+        self.finalized: Dict[str, str] = {}
+
+    def set_warning(self, code: str, active: bool, message: str) -> None:
+        if active and code not in self.active:
+            self.active.add(code)
+            self.write_record({
+                "type": "counter_health",
+                "status": "warning",
+                "code": code,
+                "message": message,
+            })
+        elif not active and code in self.active:
+            self.active.remove(code)
+            self.write_record({
+                "type": "counter_health",
+                "status": "recovered",
+                "code": code,
+                "message": "Detector health recovered",
+            })
+
+    def observe_pipeline(self, metrics: Dict[str, Any]) -> None:
+        stalled = (
+            metrics.get("detected_event_count", 0)
+            >= self.publisher_event_threshold
+            and metrics.get("attempt_upsert_count", 0) == 0
+        )
+        self.set_warning(
+            "publisher_stalled",
+            stalled,
+            "Detector is active but the counter is not publishing attempts",
+        )
+
+    def observe_attempt(self, attempt: Dict[str, Any]) -> None:
+        if attempt.get("state") != "finalized":
+            return
+        self.finalized[attempt["attempt_id"]] = attempt.get("outcome", "miss")
+        no_hits = (
+            len(self.finalized) >= self.no_hit_attempt_threshold
+            and not any(outcome == "hit" for outcome in self.finalized.values())
+        )
+        self.set_warning(
+            "no_confirmed_contacts",
+            no_hits,
+            (
+                f"No table contacts confirmed after {len(self.finalized)} attempts; "
+                "check camera framing and calibration"
+            ),
+        )
 
 
 def attach_missing_machine_telemetry(
@@ -3252,6 +3718,9 @@ def process_video(
     on_attempt_started: Optional[Callable[[int], None]] = None,
     on_track_diagnostic: Optional[
         Callable[[TrackDiagnostic, int], None]
+    ] = None,
+    on_frame_processed: Optional[
+        Callable[[int, Dict[str, Any]], None]
     ] = None,
 ) -> List[BounceEvent]:
     """Process an already-open source and return its detected bounce events."""
@@ -3362,6 +3831,14 @@ def process_video(
                     homography, calibration["table_surface_y"],
                     diagnostics, frame_number,
                 ))
+            if on_frame_processed is not None:
+                on_frame_processed(frame_number, {
+                    "candidate_count": len(candidates),
+                    "active_track_count": len(tracker.tracks),
+                    "confirmed_track_count": len(tracker.confirmed_tracks),
+                    "completed_track_count": len(completed_tracks),
+                    "detected_event_count": len(classifier.events),
+                })
             frame_number += 1
     except KeyboardInterrupt:
         # A live source normally ends when the user stops it. Preserve and
@@ -3412,6 +3889,12 @@ def main() -> None:
         help="start clean capture at the first detected launch (default) or immediately",
     )
     parser.add_argument(
+        "--clean-recording-codec",
+        choices=("ffv1", "mjpeg"),
+        default="ffv1",
+        help="lossless FFV1 or lower-overhead MJPEG capture (default: ffv1)",
+    )
+    parser.add_argument(
         "--live-events",
         metavar="JSONL",
         help="append-only live publication log with shot and publication frames",
@@ -3434,6 +3917,11 @@ def main() -> None:
     parser.add_argument("--no-annotated", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--start-seconds", type=float, default=0, help="seek point; useful when reviewing a short interval")
     parser.add_argument("--end-seconds", type=float, help="stop after this video timestamp")
+    parser.add_argument(
+        "--realtime",
+        action="store_true",
+        help="pace prerecorded input against wall-clock time",
+    )
     args = parser.parse_args()
     if args.clean_recording_seconds <= 0:
         parser.error("--clean-recording-seconds must be greater than zero")
@@ -3446,7 +3934,7 @@ def main() -> None:
         if args.live_events is not None:
             reset_output_file(args.live_events)
     try:
-        source = open_video_source(args.video)
+        source = open_video_source(args.video, realtime=args.realtime)
         try:
             source.seek_seconds(args.start_seconds)
         except VideoSourceError:
@@ -3521,9 +4009,10 @@ def main() -> None:
             writer = create_video_writer(annotated_path, fps, (width, height))
         if args.clean_recording is not None:
             if Path(args.clean_recording).suffix.lower() != ".mkv":
-                raise SystemExit("--clean-recording must use an .mkv path for lossless FFV1")
+                raise SystemExit("--clean-recording must use an .mkv path")
+            clean_codec = "FFV1" if args.clean_recording_codec == "ffv1" else "MJPG"
             clean_writer = create_video_writer(
-                args.clean_recording, fps, (width, height), codec="FFV1",
+                args.clean_recording, fps, (width, height), codec=clean_codec,
             )
         if args.live_events is not None:
             live_events_output = open(args.live_events, "a", encoding="utf-8")
@@ -3545,7 +4034,10 @@ def main() -> None:
         with open(args.output, "w", encoding="utf-8") as output:
             processing_frame = first_frame.number if first_frame is not None else 0
             live_normalizer: Optional[Any] = None
+            health_monitor: Optional[LiveCounterHealthMonitor] = None
             live_stdout_open = args.live_stdout
+            attempt_states: Dict[str, str] = {}
+            attempt_upsert_count = 0
 
             def observe_processing_frame(frame_number: int) -> None:
                 nonlocal processing_frame
@@ -3566,7 +4058,15 @@ def main() -> None:
                         live_stdout_open = False
                         sys.stdout = open("/dev/null", "w", encoding="utf-8")
 
+            if source.live:
+                source.set_event_callback(write_live_record)
+                health_monitor = LiveCounterHealthMonitor(
+                    write_live_record,
+                    publisher_event_threshold=12,
+                )
+
             def write_attempt(attempt: Dict[str, Any]) -> None:
+                nonlocal attempt_upsert_count
                 record = {"type": "attempt_upsert", **attempt}
                 record["publication_frame_number"] = processing_frame
                 record["publication_video_time_seconds"] = round(
@@ -3586,13 +4086,51 @@ def main() -> None:
                         (processing_frame - attempt["anchor_frame_number"]) / fps,
                         3,
                     )
+                attempt_upsert_count += 1
+                attempt_states[record["attempt_id"]] = record["state"]
                 write_live_record(record)
+                if health_monitor is not None:
+                    health_monitor.observe_attempt(record)
 
-            live_normalizer = (
-                DirectLiveAttemptPublisher(fps, write_attempt)
-                if source.live
-                else LiveAttemptNormalizer(fps, write_attempt)
+            # Detector-native launch fragments create extra misses and omit
+            # fully occluded launches. Establish cadence from several distinct
+            # contacts before publishing a stable live ledger; status messages
+            # keep startup visible while evidence accumulates.
+            live_normalizer = LiveAttemptNormalizer(
+                fps,
+                write_attempt,
+                minimum_cadence_hits=6,
+                on_status=write_live_record if source.live else None,
             )
+            pipeline_logger = None
+            if source.live and live_events_output is not None:
+                def write_pipeline_record(record: Dict[str, Any]) -> None:
+                    live_events_output.write(json.dumps(record) + "\n")
+                    live_events_output.flush()
+
+                pipeline_logger = LivePipelineLogger(
+                    fps, write_pipeline_record,
+                )
+
+            def write_pipeline_heartbeat(
+                frame_number: int,
+                metrics: Dict[str, Any],
+            ) -> None:
+                live_metrics = {
+                    **metrics,
+                    "attempt_upsert_count": attempt_upsert_count,
+                    "attempt_count": len(attempt_states),
+                    "pending_attempt_count": sum(
+                        state == "pending" for state in attempt_states.values()
+                    ),
+                    "finalized_attempt_count": sum(
+                        state == "finalized" for state in attempt_states.values()
+                    ),
+                }
+                if pipeline_logger is not None:
+                    pipeline_logger.observe(frame_number, live_metrics)
+                if health_monitor is not None:
+                    health_monitor.observe_pipeline(live_metrics)
 
             def write_bounce_diagnostic(
                 diagnostic: TrackDiagnostic, draw_frame: int,
@@ -3643,8 +4181,11 @@ def main() -> None:
                     live_normalizer, "observe_attempt_started", None,
                 ),
                 on_track_diagnostic=write_bounce_diagnostic,
+                on_frame_processed=write_pipeline_heartbeat,
             )
             live_normalizer.finish_session(processing_frame)
+            if pipeline_logger is not None:
+                pipeline_logger.finish(processing_frame, "processing_ended")
 
             # Cadence-based normalization can rename events and infer missed
             # launches only after enough of the session is known. Preserve the

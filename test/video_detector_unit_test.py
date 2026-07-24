@@ -17,6 +17,8 @@ from analyze_video import (  # noqa: E402
     BounceEvent,
     ContactCandidate,
     DirectLiveAttemptPublisher,
+    LiveCounterHealthMonitor,
+    LivePipelineLogger,
     bounce_signal,
     DetectorDiagnostics,
     DetectorSettings,
@@ -33,6 +35,7 @@ from analyze_video import (  # noqa: E402
     read_telemetry,
     reset_output_file,
     shadow_contact_score,
+    split_wide_component,
 )
 
 
@@ -71,6 +74,88 @@ class VideoDetectorUnitTest(unittest.TestCase):
             reset_output_file(output)
 
             self.assertEqual(output.read_text(encoding="utf-8"), "")
+
+    def test_live_pipeline_logger_emits_bounded_progress_and_end_records(self):
+        now = [100.0]
+        wall = [1_700_000_000.0]
+        records = []
+        logger = LivePipelineLogger(
+            60,
+            records.append,
+            interval_seconds=1,
+            monotonic=lambda: now[0],
+            wall_time=lambda: wall[0],
+        )
+
+        logger.observe(120, {"candidate_count": 3})
+        now[0] += 0.5
+        wall[0] += 0.5
+        logger.observe(150, {"candidate_count": 4})
+        now[0] += 0.5
+        wall[0] += 0.5
+        logger.observe(180, {"candidate_count": 5})
+        logger.finish(180, "processing_ended")
+
+        self.assertEqual(
+            [record["type"] for record in records],
+            ["pipeline_heartbeat", "pipeline_heartbeat", "pipeline_end"],
+        )
+        self.assertEqual(records[0]["frame_number"], 120)
+        self.assertEqual(records[1]["frame_number"], 180)
+        self.assertEqual(records[1]["processing_fps"], 60)
+        self.assertEqual(records[1]["estimated_lag_seconds"], 0)
+        self.assertEqual(records[1]["candidate_count"], 5)
+        self.assertEqual(records[2]["reason"], "processing_ended")
+
+    def test_live_health_warns_when_detector_events_are_not_published(self):
+        records = []
+        monitor = LiveCounterHealthMonitor(records.append)
+
+        monitor.observe_pipeline({
+            "detected_event_count": 3,
+            "attempt_upsert_count": 0,
+        })
+        monitor.observe_pipeline({
+            "detected_event_count": 4,
+            "attempt_upsert_count": 0,
+        })
+        monitor.observe_pipeline({
+            "detected_event_count": 4,
+            "attempt_upsert_count": 1,
+        })
+
+        self.assertEqual(
+            [(item["status"], item["code"]) for item in records],
+            [
+                ("warning", "publisher_stalled"),
+                ("recovered", "publisher_stalled"),
+            ],
+        )
+
+    def test_live_health_warns_after_repeated_attempts_without_a_hit(self):
+        records = []
+        monitor = LiveCounterHealthMonitor(
+            records.append, no_hit_attempt_threshold=3,
+        )
+        for sequence in range(1, 4):
+            monitor.observe_attempt({
+                "attempt_id": f"launch-{sequence}",
+                "state": "finalized",
+                "outcome": "miss",
+            })
+        monitor.observe_attempt({
+            "attempt_id": "launch-4",
+            "state": "finalized",
+            "outcome": "hit",
+        })
+
+        self.assertEqual(
+            [(item["status"], item["code"]) for item in records],
+            [
+                ("warning", "no_confirmed_contacts"),
+                ("recovered", "no_confirmed_contacts"),
+            ],
+        )
 
     def test_shadow_score_rises_for_dark_table_patch_below_ball(self):
         hsv = np.zeros((100, 100, 3), dtype=np.uint8)
@@ -1276,6 +1361,65 @@ class VideoDetectorUnitTest(unittest.TestCase):
             "too few return observations after launch (2/3)",
         )
 
+    def test_profile_return_projects_contact_hidden_by_center_scoreboard(self):
+        calibration = {
+            "table_surface_y": 0.7786086,
+            "camera_geometry": "profile_side_view",
+            "control_points": [
+                {"name": "x0_opponent_edge", "image": [800, 340]},
+            ],
+            "launcher_region": [600, 0, 900, 500],
+            "return_region": [0, 0, 300, 500],
+        }
+        classifier = self.classifier(calibration)
+        classifier.table = np.float32([
+            (120, 340), (800, 340), (800, 380), (120, 380),
+        ])
+        classifier.net_line = np.float32([(474, 340), (474, 380)])
+        path = [
+            (
+                200 + index,
+                float(x),
+                float(.000978 * x * x - .768 * x + 429.4),
+                0.0,
+            )
+            for index, x in enumerate(np.linspace(165, 456, 24))
+        ]
+
+        hit = classifier.projected_profile_contact(path)
+
+        self.assertIsNotNone(hit)
+        assert hit is not None
+        self.assertAlmostEqual(hit[1], 650, delta=15)
+        self.assertEqual(hit[2], 340)
+
+    def test_short_pre_net_profile_fragment_is_not_projected_as_a_hit(self):
+        calibration = {
+            "table_surface_y": 0.7786086,
+            "camera_geometry": "profile_side_view",
+            "control_points": [
+                {"name": "x0_opponent_edge", "image": [800, 340]},
+            ],
+            "launcher_region": [600, 0, 900, 500],
+            "return_region": [0, 0, 300, 500],
+        }
+        classifier = self.classifier(calibration)
+        classifier.table = np.float32([
+            (120, 340), (800, 340), (800, 380), (120, 380),
+        ])
+        classifier.net_line = np.float32([(474, 340), (474, 380)])
+        path = [
+            (
+                200 + index,
+                float(x),
+                float(.000978 * x * x - .768 * x + 429.4),
+                0.0,
+            )
+            for index, x in enumerate(np.linspace(300, 455, 12))
+        ]
+
+        self.assertIsNone(classifier.projected_profile_contact(path))
+
     def test_identity_homography_maps_pixel_to_table_coordinate(self):
         self.assertEqual(
             map_log_coordinate(np.eye(3, dtype=np.float32), (2.5, 4.0), 0.7786086),
@@ -1326,6 +1470,13 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertEqual(reading.speed_mps, 10.4)
         self.assertEqual(reading.spin_revolutions_per_second, 109)
         self.assertEqual(reading.spin_direction["label"], "up")
+
+    def test_two_pixel_wide_hud_component_can_be_split(self):
+        mask = np.full((1, 2), 255, dtype=np.uint8)
+
+        parts = split_wide_component(mask, (0, 0, 2, 1, 2))
+
+        self.assertEqual([part.shape for part in parts], [(1, 1), (1, 1)])
 
     def test_implausible_low_resolution_spin_ocr_is_rejected(self):
         frame = np.zeros((10, 10, 3), dtype=np.uint8)
@@ -1492,6 +1643,53 @@ class VideoDetectorUnitTest(unittest.TestCase):
             ["hit", "hit", "hit"],
         )
 
+    def test_live_normalizer_deduplicates_adjacent_contact_tracks_before_cadence(self):
+        reported = []
+        normalizer = LiveAttemptNormalizer(30, reported.append)
+        for frame in (180, 225, 226):
+            event = self.cadence_event(frame)
+            normalizer.observe_confirmed_hit(event)
+            normalizer.observe(event)
+
+        self.assertIsNone(normalizer.period)
+        self.assertEqual(reported, [])
+
+        event = self.cadence_event(342)
+        normalizer.observe_confirmed_hit(event)
+        normalizer.observe(event)
+
+        self.assertAlmostEqual(normalizer.period, 40.5)
+        anchors = [
+            item["anchor_frame_number"]
+            for item in reported if item["state"] == "pending"
+        ]
+        self.assertEqual(len(anchors), len(set(anchors)))
+
+    def test_live_normalizer_reports_warmup_until_configured_hit_count(self):
+        reported = []
+        statuses = []
+        normalizer = LiveAttemptNormalizer(
+            30,
+            reported.append,
+            minimum_cadence_hits=6,
+            on_status=statuses.append,
+        )
+        for frame in (100, 140, 180, 220, 260):
+            normalizer.observe_attempt_started(frame - 20)
+            event = self.cadence_event(frame)
+            normalizer.observe_confirmed_hit(event)
+            normalizer.observe(event)
+
+        self.assertEqual(reported, [])
+        self.assertEqual(statuses[-1]["status"], "warming_up")
+
+        event = self.cadence_event(300)
+        normalizer.observe_confirmed_hit(event)
+        normalizer.observe(event)
+
+        self.assertTrue(reported)
+        self.assertAlmostEqual(normalizer.period, 40.0)
+
     def test_direct_live_publisher_streams_detector_hit_once(self):
         reported = []
         publisher = DirectLiveAttemptPublisher(60, reported.append)
@@ -1526,6 +1724,17 @@ class VideoDetectorUnitTest(unittest.TestCase):
             [(item["outcome"], item.get("revision", 0)) for item in first],
             [("miss", 0), ("hit", 1)],
         )
+
+    def test_direct_live_publisher_finalizes_last_pending_launch_at_session_end(self):
+        reported = []
+        publisher = DirectLiveAttemptPublisher(60, reported.append)
+        publisher.observe_attempt_started(100)
+
+        publisher.finish_session(220)
+
+        self.assertEqual(reported[-1]["state"], "finalized")
+        self.assertEqual(reported[-1]["outcome"], "miss")
+        self.assertEqual(reported[-1]["attempt_frame_number"], 100)
 
     def test_live_normalizer_finalized_attempts_are_monotonic(self):
         reported = []

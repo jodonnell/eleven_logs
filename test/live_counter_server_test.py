@@ -1,9 +1,14 @@
 """Tests for live shot event delivery."""
 
+import json
+import signal
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from argparse import Namespace
+from unittest.mock import MagicMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,6 +16,9 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from live_counter_server import (  # pyright: ignore[reportMissingImports]  # noqa: E402
     ShotEventBroker,
     analyzer_command,
+    counter_urls,
+    run_analyzer,
+    stop_analyzer,
 )
 
 
@@ -74,7 +82,9 @@ class ShotEventBrokerTest(unittest.TestCase):
             clean_recording=None,
             clean_recording_seconds=120,
             clean_recording_start="launch",
+            clean_recording_codec="ffv1",
             live_events=None,
+            realtime=False,
         )
 
         command = analyzer_command(args)
@@ -90,17 +100,112 @@ class ShotEventBrokerTest(unittest.TestCase):
             clean_recording="artifacts/live-clean.mkv",
             clean_recording_seconds=90,
             clean_recording_start="launch",
+            clean_recording_codec="mjpeg",
             live_events="artifacts/live-events.jsonl",
+            realtime=False,
         )
 
         command = analyzer_command(args)
 
-        self.assertEqual(command[-8:], [
+        self.assertEqual(command[-10:], [
             "--clean-recording", "artifacts/live-clean.mkv",
             "--clean-recording-seconds", "90",
             "--clean-recording-start", "launch",
+            "--clean-recording-codec", "mjpeg",
             "--live-events", "artifacts/live-events.jsonl",
         ])
+
+    def test_analyzer_command_forwards_realtime_file_pacing(self):
+        args = Namespace(
+            video="recording.mp4",
+            output="shots.jsonl",
+            calibration=None,
+            annotated=None,
+            clean_recording=None,
+            clean_recording_seconds=120,
+            clean_recording_start="launch",
+            clean_recording_codec="ffv1",
+            live_events=None,
+            realtime=True,
+        )
+
+        self.assertEqual(analyzer_command(args)[-1], "--realtime")
+
+    def test_wildcard_bind_advertises_loopback_and_routed_lan_urls(self):
+        with patch("live_counter_server.lan_address_for", return_value="192.168.1.42"):
+            urls = counter_urls(
+                "0.0.0.0", 8000, "srt://192.168.1.197:9000",
+            )
+
+        self.assertEqual(urls, [
+            "http://127.0.0.1:8000",
+            "http://192.168.1.42:8000",
+        ])
+
+    def test_stop_analyzer_interrupts_and_waits_for_clean_exit(self):
+        process = MagicMock()
+        process.poll.return_value = None
+
+        stop_analyzer(process, timeout_seconds=3)
+
+        process.send_signal.assert_called_once_with(signal.SIGINT)
+        process.wait.assert_called_once_with(timeout=3)
+        process.terminate.assert_not_called()
+
+    def test_stop_analyzer_terminates_after_interrupt_timeout(self):
+        process = MagicMock()
+        process.poll.return_value = None
+        process.wait.side_effect = [
+            subprocess.TimeoutExpired("analyzer", 3),
+            0,
+        ]
+
+        stop_analyzer(process, timeout_seconds=3)
+
+        process.send_signal.assert_called_once_with(signal.SIGINT)
+        process.terminate.assert_called_once_with()
+        self.assertEqual(process.wait.call_count, 2)
+
+    def test_analyzer_exit_is_published_and_appended_to_live_log(self):
+        with tempfile.TemporaryDirectory() as directory:
+            live_events = Path(directory) / "events.jsonl"
+            args = Namespace(
+                video="srt://camera:9000",
+                output="shots.jsonl",
+                calibration=None,
+                annotated=None,
+                clean_recording=None,
+                clean_recording_seconds=120,
+                clean_recording_start="launch",
+                clean_recording_codec="ffv1",
+                live_events=str(live_events),
+                wait_for_subscriber=False,
+                realtime=False,
+            )
+            process = MagicMock()
+            process.stdout = [
+                json.dumps({"type": "attempt_upsert", "outcome": "hit"}) + "\n",
+            ]
+            process.wait.return_value = 7
+            events = ShotEventBroker()
+            holder = []
+
+            with patch(
+                "live_counter_server.subprocess.Popen",
+                return_value=process,
+            ):
+                run_analyzer(args, events, holder)
+
+            updates = events.subscribe()
+            self.assertEqual(updates.get_nowait()[1]["type"], "attempt_upsert")
+            exit_event = updates.get_nowait()[1]
+            self.assertEqual(exit_event["type"], "analyzer_exit")
+            self.assertEqual(exit_event["returncode"], 7)
+            self.assertEqual(events.status(), {"done": True, "messages": 2})
+            self.assertEqual(
+                json.loads(live_events.read_text(encoding="utf-8"))["type"],
+                "analyzer_exit",
+            )
 
 
 if __name__ == "__main__":

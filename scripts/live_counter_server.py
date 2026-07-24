@@ -5,6 +5,7 @@ import argparse
 import json
 import queue
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -14,6 +15,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -172,15 +174,45 @@ def analyzer_command(args: argparse.Namespace) -> List[str]:
             "--clean-recording", args.clean_recording,
             "--clean-recording-seconds", str(args.clean_recording_seconds),
             "--clean-recording-start", args.clean_recording_start,
+            "--clean-recording-codec", args.clean_recording_codec,
         ])
     if args.live_events:
         command.extend(["--live-events", args.live_events])
+    if args.realtime:
+        command.append("--realtime")
     return command
+
+
+def lan_address_for(video: Optional[str]) -> Optional[str]:
+    """Return the local address routed toward the video sender."""
+    peer = urlparse(video).hostname if video else None
+    if peer is None:
+        return None
+    connection = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # UDP connect selects a route without sending a packet.
+        connection.connect((peer, 9))
+        address = connection.getsockname()[0]
+        return address if address and address != "0.0.0.0" else None
+    except OSError:
+        return None
+    finally:
+        connection.close()
+
+
+def counter_urls(host: str, port: int, video: Optional[str]) -> List[str]:
+    if host not in ("0.0.0.0", "::", ""):
+        return [f"http://{host}:{port}"]
+    urls = [f"http://127.0.0.1:{port}"]
+    lan_address = lan_address_for(video)
+    if lan_address is not None and lan_address != "127.0.0.1":
+        urls.append(f"http://{lan_address}:{port}")
+    return urls
 
 
 def read_analyzer(
     process: subprocess.Popen[str], events: ShotEventBroker,
-) -> None:
+) -> int:
     assert process.stdout is not None
     for line in process.stdout:
         try:
@@ -190,7 +222,7 @@ def read_analyzer(
             continue
         if isinstance(event, dict):
             events.publish(event)
-    process.wait()
+    return process.wait()
 
 
 def run_analyzer(
@@ -209,10 +241,42 @@ def run_analyzer(
         start_new_session=True,
     )
     process_holder.append(process)
+    returncode: Optional[int] = None
     try:
-        read_analyzer(process, events)
+        returncode = read_analyzer(process, events)
     finally:
+        if returncode is None:
+            returncode = process.poll()
+        exit_record = {
+            "type": "analyzer_exit",
+            "returncode": returncode,
+            "logged_at_unix_seconds": round(time.time(), 3),
+        }
+        if args.live_events:
+            with open(args.live_events, "a", encoding="utf-8") as output:
+                output.write(json.dumps(exit_record) + "\n")
+        events.publish(exit_record)
+        print(
+            f"Analyzer exited with status {returncode}",
+            file=sys.stderr,
+            flush=True,
+        )
         events.mark_source_done()
+
+
+def stop_analyzer(
+    process: Optional[subprocess.Popen[str]],
+    timeout_seconds: float = 10,
+) -> None:
+    """Interrupt the analyzer and escalate only if it misses the deadline."""
+    if process is None or process.poll() is not None:
+        return
+    process.send_signal(signal.SIGINT)
+    try:
+        process.wait(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        process.terminate()
+        process.wait()
 
 
 def replay_events(path: Path, interval_seconds: float, events: ShotEventBroker) -> None:
@@ -257,6 +321,12 @@ def parse_args() -> argparse.Namespace:
         help="when the analyzer starts the clean recording",
     )
     parser.add_argument(
+        "--clean-recording-codec",
+        choices=("ffv1", "mjpeg"),
+        default="ffv1",
+        help="lossless FFV1 or lower-overhead MJPEG capture (default: ffv1)",
+    )
+    parser.add_argument(
         "--live-events",
         help="append-only live publication JSONL forwarded to the analyzer",
     )
@@ -276,6 +346,11 @@ def parse_args() -> argparse.Namespace:
         "--wait-for-subscriber",
         action="store_true",
         help="open the analyzer source only after a browser connects",
+    )
+    parser.add_argument(
+        "--realtime",
+        action="store_true",
+        help="pace prerecorded analysis against wall-clock time",
     )
     args = parser.parse_args()
     if args.video is None and args.replay_events is None:
@@ -303,22 +378,21 @@ def main() -> None:
             daemon=True,
         )
     reader.start()
-    print(f"Hit counter: http://{args.host}:{args.port}")
+    urls = counter_urls(args.host, args.port, args.video)
+    print(f"Hit counter on this Mac: {urls[0]}", flush=True)
+    if len(urls) > 1:
+        print(f"Hit counter on Quest/LAN: {urls[1]}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        server.shutdown()
-        server.server_close()
         process = process_holder[0] if process_holder else None
-        if process is not None and process.poll() is None:
-            process.send_signal(signal.SIGINT)
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.terminate()
-                process.wait()
+        stop_analyzer(process)
+        # serve_forever() ran on this thread and has already returned. Calling
+        # shutdown() here would wait forever for a loop that is no longer
+        # running.
+        server.server_close()
 
 
 if __name__ == "__main__":
