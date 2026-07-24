@@ -96,6 +96,8 @@ class DetectorSettings:
     return_reconnect_max_gap: int = 24
     return_reconnect_max_forward_distance: float = 320
     return_reconnect_backtrack_tolerance: float = 20
+    profile_overlap_max_frames: int = 3
+    profile_overlap_match_distance: float = 12
     min_shadow_contact_score: float = 28
     net_shadow_exclusion_distance: float = 70
     motion_threshold: int = 18
@@ -1426,6 +1428,31 @@ class AttemptClassifier:
     def physical_contact_key(hit: TrackPoint) -> Tuple[int, int, int]:
         return hit[0], round(hit[1]), round(hit[2])
 
+    def profile_table_side(self, pixel: Point) -> str:
+        """Classify a profile-view turn by which side of the net contains it.
+
+        A true side view collapses table width, so a homography cannot recover
+        a landing coordinate.  Depth along the table remains directly visible,
+        however, and the reviewed opponent control tells us which signed side
+        of the net is the successful-return side.
+        """
+        controls = {
+            item["name"]: item["image"]
+            for item in self.calibration.get("control_points", [])
+        }
+        opponent = controls.get("x0_opponent_edge")
+        if opponent is None:
+            return "occluded"
+        opponent_pixel = (
+            float(opponent[0]) * self.scale,
+            float(opponent[1]) * self.scale,
+        )
+        opponent_sign = signed_distance_to_line(opponent_pixel, self.net_line)
+        pixel_sign = signed_distance_to_line(pixel, self.net_line)
+        if abs(pixel_sign) <= 1e-6 or abs(opponent_sign) <= 1e-6:
+            return "occluded"
+        return "opponent" if pixel_sign * opponent_sign > 0 else "player"
+
     def contact_candidate(
         self,
         path: Track,
@@ -1434,6 +1461,24 @@ class AttemptClassifier:
         departure: Track,
     ) -> ContactCandidate:
         pixel = (hit[1], hit[2])
+        if self.calibration.get("camera_geometry") == "profile_side_view":
+            table_side = self.profile_table_side(pixel)
+            continuity = min(1.0, len(approach + departure) / 5)
+            return ContactCandidate(
+                frame_number=hit[0],
+                pixel=pixel,
+                log_position=None,
+                table_side=table_side,
+                signal_type=bounce_signal(hit, approach, departure),
+                strength=bounce_strength(hit, approach, departure),
+                confidence=round(
+                    (0.92 if table_side == "opponent" else 0.72) * continuity,
+                    2,
+                ),
+                source_track_key=self.track_key(path),
+                approach=tuple(approach),
+                departure=tuple(departure),
+            )
         in_occlusion = (
             len(self.occlusion) > 2 and point_in_polygon(pixel, self.occlusion)
         )
@@ -1632,6 +1677,9 @@ class AttemptClassifier:
         """
         if not path or path[0][0] <= attempt.frame:
             return None
+        overlapping = self.profile_overlapping_return(path, attempt)
+        if overlapping is not None:
+            return overlapping
         candidates: List[Tuple[int, float, Track]] = []
         for previous in attempt.returns:
             gap = path[0][0] - previous[-1][0]
@@ -1659,6 +1707,85 @@ class AttemptClassifier:
             combined = previous + path
             if self.return_rejection_reason(combined, attempt) is None:
                 candidates.append((gap, -forward_gap, combined))
+        if not candidates:
+            return None
+        return min(candidates, key=lambda item: item[:2])[2]
+
+    def profile_overlapping_return(
+        self, path: Track, attempt: Attempt,
+    ) -> Optional[Track]:
+        """Join two identities that overlap at a profile-view table contact.
+
+        The tracker can retain the descending identity for a few frames while
+        simultaneously starting a new identity on the rising ball.  Require
+        the identities to observe nearly the same point in an exact shared
+        frame, to keep moving toward the opponent, and for the new identity to
+        reach that side's table surface immediately afterwards. Replacing the
+        old overlap with the new identity leaves one chronological path for
+        the ordinary vertical-turn detector.
+        """
+        if (
+            self.calibration.get("camera_geometry") != "profile_side_view"
+            or not path
+            or path[0][0] <= attempt.frame
+        ):
+            return None
+        fragment_elapsed = path[-1][0] - path[0][0]
+        fragment_progress = self.projected_travel(
+            path[0], path[-1], self.return_direction,
+        )
+        if (
+            fragment_elapsed <= 0
+            or fragment_progress / fragment_elapsed
+            < self.settings.return_min_horizontal_speed
+        ):
+            return None
+
+        candidates: List[Tuple[float, int, Track]] = []
+        path_by_frame = {point[0]: point for point in path}
+        for previous in attempt.returns:
+            overlap = previous[-1][0] - path[0][0]
+            if not 0 <= overlap <= self.settings.profile_overlap_max_frames:
+                continue
+            previous_tail = previous[-min(4, len(previous)):]
+            previous_elapsed = previous_tail[-1][0] - previous_tail[0][0]
+            previous_progress = self.projected_travel(
+                previous_tail[0], previous_tail[-1], self.return_direction,
+            )
+            if (
+                previous_elapsed <= 0
+                or previous_progress / previous_elapsed
+                < self.settings.return_min_horizontal_speed
+            ):
+                continue
+            shared = [
+                (old, path_by_frame[old[0]])
+                for old in previous
+                if old[0] in path_by_frame
+            ]
+            if not shared:
+                continue
+            match_distance = min(
+                math.dist(old[1:3], new[1:3])
+                for old, new in shared
+            )
+            if match_distance > self.settings.profile_overlap_match_distance:
+                continue
+            reaches_opponent_table = any(
+                self.profile_table_side((point[1], point[2])) == "opponent"
+                and point_near_polygon(
+                    (point[1], point[2]), self.table,
+                    self.settings.table_contact_margin,
+                )
+                for point in path[:8]
+            )
+            if not reaches_opponent_table:
+                continue
+            combined = [
+                point for point in previous if point[0] < path[0][0]
+            ] + path
+            if self.return_rejection_reason(combined, attempt) is None:
+                candidates.append((match_distance, -len(combined), combined))
         if not candidates:
             return None
         return min(candidates, key=lambda item: item[:2])[2]
@@ -2148,6 +2275,16 @@ class AttemptClassifier:
         attempt = attempt or self.active_attempt
         if attempt is None:
             return
+        signal = bounce_signal(hit, approach, departure)
+        # In a strict side view, the direct hit signal is the ball descending
+        # and then rising on the opponent side of the net.  Other trajectory
+        # turns and shadow-only peaks are useful in perspective views but add
+        # ambiguity here without adding information.
+        if (
+            self.calibration.get("camera_geometry") == "profile_side_view"
+            and signal != "vertical_maximum"
+        ):
+            return
         contact_key = self.physical_contact_key(hit)
         if contact_key in attempt.classified_contact_keys:
             return
@@ -2157,7 +2294,7 @@ class AttemptClassifier:
         self.emitted.add(key)
         self.diagnose_track(
             path, "confirmed_bounce", draw_frame,
-            f"{bounce_signal(hit, approach, departure)} hit_frame={hit[0]}",
+            f"{signal} hit_frame={hit[0]}",
         )
         candidate = self.record_contact_candidate(
             self.contact_candidate(path, hit, approach, departure),
@@ -2385,13 +2522,22 @@ def attempt_event_slots(
     while phase - period >= earliest_evidence - period * .3:
         phase -= period
     # A live source may sit idle for minutes before and after a drill. Cadence
-    # can fill gaps between observed attempts, but must not manufacture cycles
-    # across those idle regions. One period beyond the last processed piece of
-    # evidence is sufficient to close a final detected launch.
+    # can fill gaps *between* observed attempts, but must not manufacture a
+    # cycle after the machine disappears. Contact evidence can occur well
+    # after a cadence anchor, so bound the tail from the launch/attempt marker
+    # when it is available. Three quarters of a period includes that marker's
+    # own nearest anchor while staying short of the following unobserved one.
     # draw_frame can be the moment Ctrl-C/EOF finally closes an attempt, long
-    # after the shot itself. Only the evidence frame bounds active cadence.
-    latest_evidence = max(event.frame_number for event in events)
-    total_frames = min(total_frames, round(latest_evidence + period))
+    # after the shot itself, and therefore never bounds active cadence.
+    latest_attempt = max(
+        (
+            event.attempt_frame_number
+            if event.attempt_frame_number is not None
+            else event.frame_number
+        )
+        for event in events
+    )
+    total_frames = min(total_frames, round(latest_attempt + period * .75))
     anchors: List[int] = []
     anchor = phase
     while anchor < total_frames:

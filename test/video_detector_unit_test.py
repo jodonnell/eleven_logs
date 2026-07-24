@@ -847,6 +847,146 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertIsNotNone(reconnected)
         self.assertEqual(reconnected, first + continuation)
 
+    def profile_classifier(self) -> AttemptClassifier:
+        classifier = self.classifier({
+            "table_surface_y": 0.7786086,
+            "camera_geometry": "profile_side_view",
+            "launcher_region": [700, 0, 950, 500],
+            "return_region": [0, 0, 300, 500],
+            "control_points": [
+                {"name": "x0_player_edge", "image": [100, 350], "log": [0, -1.37]},
+                {"name": "x0_opponent_edge", "image": [850, 350], "log": [0, 1.37]},
+            ],
+        })
+        classifier.table = np.float32([
+            (400, 330), (850, 330), (850, 360), (400, 360),
+        ])
+        classifier.net_line = np.float32([(400, 300), (400, 400)])
+        return classifier
+
+    def test_profile_return_stitches_overlapping_contact_fragments(self):
+        classifier = self.profile_classifier()
+        attempt = Attempt(10, (800, 100))
+        descent = [
+            (30, 100, 280, 0.0),
+            (31, 180, 290, 0.0),
+            (32, 260, 300, 0.0),
+            (33, 340, 315, 0.0),
+            (34, 420, 310, 0.0),
+            (35, 500, 320, 0.0),
+            (36, 580, 350, 0.0),
+        ]
+        rising = [
+            (34, 421, 311, 0.0),
+            (35, 501, 321, 0.0),
+            (37, 660, 355, 0.0),
+            (38, 740, 340, 0.0),
+            (39, 820, 325, 0.0),
+        ]
+        older_fragment = [
+            (15, 100, 290, 0.0),
+            (16, 150, 295, 0.0),
+            (17, 200, 300, 0.0),
+            (18, 250, 305, 0.0),
+            (19, 300, 310, 0.0),
+            (20, 350, 315, 0.0),
+        ]
+        attempt.returns.extend([older_fragment, descent])
+
+        stitched = classifier.reconnected_return(rising, attempt)
+
+        self.assertIsNotNone(stitched)
+        self.assertEqual(
+            [point[0] for point in stitched],
+            [30, 31, 32, 33, 34, 35, 37, 38, 39],
+        )
+        bounce = find_bounce(
+            stitched, classifier.table, classifier.net_line,
+            classifier.settings,
+        )
+        self.assertIsNotNone(bounce)
+        self.assertEqual(bounce_signal(*bounce), "vertical_maximum")
+
+    def test_profile_return_stitches_same_frame_contact_fragments(self):
+        classifier = self.profile_classifier()
+        attempt = Attempt(10, (800, 100))
+        descent = [
+            (30, 100, 280, 0.0),
+            (31, 200, 295, 0.0),
+            (32, 300, 310, 0.0),
+            (33, 400, 330, 0.0),
+            (34, 500, 350, 0.0),
+        ]
+        rising = [
+            (34, 502, 351, 0.0),
+            (35, 600, 355, 0.0),
+            (36, 700, 340, 0.0),
+            (37, 800, 325, 0.0),
+        ]
+        attempt.returns.append(descent)
+
+        stitched = classifier.reconnected_return(rising, attempt)
+
+        self.assertIsNotNone(stitched)
+        self.assertEqual(
+            [point[0] for point in stitched],
+            [30, 31, 32, 33, 34, 35, 36, 37],
+        )
+
+    def test_profile_return_rejects_spatially_unrelated_overlap(self):
+        classifier = self.profile_classifier()
+        attempt = Attempt(10, (800, 100))
+        descent = [
+            (30 + frame, 100 + frame * 80, 300 + frame * 8, 0.0)
+            for frame in range(6)
+        ]
+        unrelated = [
+            (34 + frame, 700 + frame * 30, 340 - frame * 5, 0.0)
+            for frame in range(5)
+        ]
+        attempt.returns.append(descent)
+
+        self.assertIsNone(
+            classifier.reconnected_return(unrelated, attempt),
+        )
+
+    def test_profile_return_rejects_overlapping_backward_motion(self):
+        classifier = self.profile_classifier()
+        attempt = Attempt(10, (800, 100))
+        descent = [
+            (30 + frame, 100 + frame * 80, 300 + frame * 8, 0.0)
+            for frame in range(6)
+        ]
+        backward = [
+            (34, 421, 333, 0.0),
+            (35, 501, 341, 0.0),
+            (36, 450, 345, 0.0),
+            (37, 400, 335, 0.0),
+            (38, 350, 325, 0.0),
+        ]
+        attempt.returns.append(descent)
+
+        self.assertIsNone(
+            classifier.reconnected_return(backward, attempt),
+        )
+
+    def test_perspective_return_does_not_stitch_overlapping_fragments(self):
+        classifier = self.classifier()
+        attempt = Attempt(10, (800, 100))
+        descent = [
+            (30 + frame, 100 + frame * 20, 100, 0.0)
+            for frame in range(8)
+        ]
+        overlap = [
+            (36 + frame, 220 + frame * 20, 100, 0.0)
+            for frame in range(8)
+        ]
+        attempt.returns.append(descent)
+
+        self.assertIsNone(
+            classifier.reconnected_return(overlap, attempt),
+        )
+
     def test_return_does_not_reconnect_a_slow_old_ball(self):
         classifier = self.classifier()
         attempt = Attempt(10, (800, 100))
@@ -1210,9 +1350,9 @@ class VideoDetectorUnitTest(unittest.TestCase):
 
         normalized = normalize_attempt_events(events, total_frames=12882, fps=60)
 
-        self.assertLessEqual(len(normalized), 4)
+        self.assertEqual(len(normalized), 3)
         self.assertEqual(
-            [event.outcome for event in normalized[:3]],
+            [event.outcome for event in normalized],
             ["hit", "hit", "hit"],
         )
         self.assertGreaterEqual(normalized[0].frame_number, 7300)
