@@ -78,7 +78,8 @@ npm run counter -- 'srt://OBS_IP:9000?mode=caller&latency=120000'
 ```
 
 Then open <http://127.0.0.1:8000>. The server streams keyed attempt upserts to
-the page, where the session count increases for every finalized `hit` and
+the page alongside a live annotated detector view, where the session count
+increases for every finalized `hit` and
 resets to zero for a finalized `miss` or `out`. After six distinct contacts
 establish a stable launcher rhythm, every inferred launch receives
 a stable attempt ID. The newest slot remains pending until direct evidence, the
@@ -195,6 +196,25 @@ no-swings, 3 hits, 1 out, and 3 hits for fast normalizer iteration.
 Press Ctrl-C in the terminal to stop both the server and analyzer. Use
 `--calibration PATH.json`, `--output PATH.jsonl`, `--host`, or `--port` after
 the video argument when needed.
+
+For the quickest lifelike feedback loop with a prerecorded Quest/OBS capture,
+pace the file against its original media clock and wait to start until the
+browser is connected:
+
+```sh
+npm run counter:video -- VIDEO.mkv \
+  --calibration artifacts/live-2026-07-24-side-calibration.json
+```
+
+Open <http://127.0.0.1:8000> before playback begins. The detector still
+processes every source frame; only the annotated browser preview is throttled
+to 12 FPS to keep JPEG transport from affecting detector timing. Change that
+with `--preview-fps 20`, or disable it with `--no-preview`. Use the browser's
+**Restart video** button to stop the current analysis, rewind the file, clear
+the session streak, and resume without restarting the server. This reproduces
+frame cadence and live publication timing, but not SRT packet loss, decoder
+reconnects, encoder latency, or network jitter. Use the real SRT command when
+those transport effects are specifically under test.
 
 `scripts/analyze_video.py` reads either a fixed spectator-view video file or a
 live OBS SRT stream and writes one finalized `hit`, `out`, or `miss` JSONL

@@ -19,15 +19,53 @@
       body {
         min-height: 100vh;
         margin: 0;
-        display: grid;
-        place-items: center;
         background:
           radial-gradient(circle at 50% 35%, #17345a 0, transparent 42%),
           #07111f;
       }
 
       main {
-        width: min(92vw, 720px);
+        width: min(96vw, 1500px);
+        min-height: 100vh;
+        margin: auto;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(220px, 28%);
+        align-items: center;
+        gap: clamp(1rem, 3vw, 2.5rem);
+        padding: 2rem 0;
+      }
+
+      #preview-shell {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid rgb(148 163 184 / 28%);
+        border-radius: 1rem;
+        aspect-ratio: 16 / 9;
+        background: #020617;
+        box-shadow: 0 1.5rem 5rem rgb(0 0 0 / 40%);
+      }
+
+      #preview {
+        width: 100%;
+        height: 100%;
+        display: block;
+        object-fit: contain;
+      }
+
+      #preview-label {
+        position: absolute;
+        left: 0.8rem;
+        bottom: 0.7rem;
+        padding: 0.35rem 0.55rem;
+        border-radius: 0.4rem;
+        background: rgb(2 6 23 / 78%);
+        color: #cbd5e1;
+        font-size: 0.75rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      #scoreboard {
         text-align: center;
       }
 
@@ -42,7 +80,7 @@
 
       #count {
         margin: 0.03em 0 0.08em;
-        font-size: clamp(12rem, 55vw, 30rem);
+        font-size: clamp(8rem, 18vw, 18rem);
         font-variant-numeric: tabular-nums;
         font-weight: 800;
         line-height: 0.92;
@@ -85,14 +123,66 @@
       #status.error::before {
         background: #ef4444;
       }
+
+      #restart {
+        margin-top: 1.25rem;
+        padding: 0.7rem 1rem;
+        border: 1px solid rgb(148 163 184 / 35%);
+        border-radius: 0.55rem;
+        background: rgb(15 23 42 / 75%);
+        color: #e2e8f0;
+        font: inherit;
+        font-weight: 650;
+        cursor: pointer;
+      }
+
+      #restart:hover {
+        background: #1e293b;
+      }
+
+      #restart:disabled {
+        cursor: wait;
+        opacity: 0.55;
+      }
+
+      @media (max-width: 800px) {
+        main {
+          grid-template-columns: 1fr;
+          align-content: center;
+        }
+
+        #scoreboard {
+          display: grid;
+          grid-template-columns: auto auto;
+          align-items: center;
+          justify-content: center;
+          column-gap: 1.5rem;
+        }
+
+        #scoreboard h1,
+        #status {
+          grid-column: 1 / -1;
+        }
+
+        #count {
+          font-size: clamp(6rem, 30vw, 10rem);
+        }
+      }
     </style>
   </head>
   <body>
     <main>
-      <h1>Hits</h1>
-      <div id="count" aria-live="polite">0</div>
-      <div id="best">Best: <span id="best-count">0</span></div>
-      <div id="status">Connecting</div>
+      <div id="preview-shell">
+        <img id="preview" alt="Live annotated detector view" />
+        <div id="preview-label">Waiting for detector video</div>
+      </div>
+      <section id="scoreboard">
+        <h1>Hits</h1>
+        <div id="count" aria-live="polite">0</div>
+        <div id="best">Best: <span id="best-count">0</span></div>
+        <div id="status">Connecting</div>
+        <button id="restart" type="button">Restart video</button>
+      </section>
     </main>
 
     <script type="module">
@@ -105,22 +195,73 @@
       const count = document.querySelector("#count")
       const bestCount = document.querySelector("#best-count")
       const status = document.querySelector("#status")
+      const preview = document.querySelector("#preview")
+      const previewLabel = document.querySelector("#preview-label")
+      const restartButton = document.querySelector("#restart")
       const events = new EventSource("/events")
       let counterState = { attempts: [], streak: 0 }
       let healthWarning = null
       let highScore = loadHighScore(window.localStorage)
       bestCount.textContent = highScore
 
+      // Starting an endless MJPEG request before window.load would keep
+      // navigation and browser automation waiting forever when no preview is
+      // expected (for example, an event-only replay).
+      const startPreview = () => {
+        if (preview.src) return
+        preview.src = "/preview.mjpg"
+      }
+      if (document.readyState === "complete") {
+        startPreview()
+      } else {
+        window.addEventListener("load", startPreview, { once: true })
+      }
+      preview.addEventListener("load", () => {
+        previewLabel.textContent = "Detector view · real-time"
+      })
+      preview.addEventListener("error", () => {
+        previewLabel.textContent = "Detector video disconnected"
+        preview.removeAttribute("src")
+        window.setTimeout(startPreview, 1000)
+      })
+
+      restartButton.addEventListener("click", async () => {
+        restartButton.disabled = true
+        status.className = ""
+        status.textContent = "Restarting video"
+        previewLabel.textContent = "Rewinding detector video"
+        try {
+          const response = await fetch("/restart", { method: "POST" })
+          if (!response.ok) throw new Error(`restart failed: ${response.status}`)
+        } catch (error) {
+          status.className = "error"
+          status.textContent = "Could not restart detector"
+          console.error(error)
+        } finally {
+          restartButton.disabled = false
+        }
+      })
+
       events.onmessage = ({ data }) => {
         const shot = JSON.parse(data)
-        counterState = reduceCounterState(counterState, shot)
+        if (shot.type === "session_reset") {
+          counterState = { attempts: [], streak: 0 }
+          healthWarning = null
+        } else {
+          counterState = reduceCounterState(counterState, shot)
+        }
         count.textContent = counterState.streak
         if (counterState.streak > highScore) {
           highScore = counterState.streak
           bestCount.textContent = highScore
           saveHighScore(window.localStorage, highScore)
         }
-        if (shot.type === "counter_health") {
+        if (shot.type === "analyzer_exit" && shot.returncode !== 0) {
+          healthWarning = shot
+          status.className = "error"
+          status.textContent = `Detector stopped (exit ${shot.returncode})`
+          previewLabel.textContent = "Detector failed — check terminal"
+        } else if (shot.type === "counter_health") {
           if (shot.status === "warning") {
             healthWarning = shot
             status.className = "error"

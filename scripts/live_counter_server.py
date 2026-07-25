@@ -2,6 +2,7 @@
 """Serve live analyzer attempt-ledger upserts to a local browser page."""
 
 import argparse
+import base64
 import json
 import queue
 import signal
@@ -14,7 +15,7 @@ import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
 
@@ -61,6 +62,19 @@ class ShotEventBroker:
     def mark_source_done(self) -> None:
         self._source_done.set()
 
+    def reset(self) -> None:
+        """Begin a new source run while keeping browser subscribers connected."""
+        with self._lock:
+            self.session_id = uuid.uuid4().hex
+            self._events.clear()
+            self._source_done.clear()
+            for updates in self._subscribers:
+                while True:
+                    try:
+                        updates.get_nowait()
+                    except queue.Empty:
+                        break
+
     def status(self) -> Dict[str, Any]:
         with self._lock:
             return {"done": self._source_done.is_set(), "messages": len(self._events)}
@@ -88,7 +102,42 @@ class ShotEventBroker:
                 self._subscribers.remove(updates)
 
 
-def handler_for(events: ShotEventBroker):
+class PreviewFrameBroker:
+    """Keep only the newest annotated JPEG for browser MJPEG clients."""
+
+    def __init__(self) -> None:
+        self._condition = threading.Condition()
+        self._version = 0
+        self._jpeg: Optional[bytes] = None
+
+    def publish(self, jpeg: bytes) -> None:
+        with self._condition:
+            self._jpeg = jpeg
+            self._version += 1
+            self._condition.notify_all()
+
+    def reset(self) -> None:
+        with self._condition:
+            self._jpeg = None
+            self._version += 1
+            self._condition.notify_all()
+
+    def next_frame(
+        self, after_version: int, timeout: float = 15,
+    ) -> tuple[int, Optional[bytes]]:
+        with self._condition:
+            self._condition.wait_for(
+                lambda: self._version > after_version,
+                timeout=timeout,
+            )
+            return self._version, self._jpeg
+
+
+def handler_for(
+    events: ShotEventBroker,
+    preview: Optional[PreviewFrameBroker] = None,
+    restart: Optional[Callable[[], None]] = None,
+):
     class CounterHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             path = self.path.split("?", 1)[0]
@@ -98,10 +147,24 @@ def handler_for(events: ShotEventBroker):
                 self._send_file(COUNTER_SCRIPT, "text/javascript; charset=utf-8")
             elif path == "/events":
                 self._send_events()
+            elif path == "/preview.mjpg" and preview is not None:
+                self._send_preview()
             elif path == "/status":
                 self._send_json(events.status())
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
+
+        def do_POST(self) -> None:
+            path = self.path.split("?", 1)[0]
+            if path != "/restart" or restart is None:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            try:
+                restart()
+            except Exception as exc:
+                self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+                return
+            self._send_json({"status": "restarted"})
 
         def _send_file(self, path: Path, content_type: str) -> None:
             try:
@@ -149,6 +212,31 @@ def handler_for(events: ShotEventBroker):
             finally:
                 events.unsubscribe(updates)
 
+        def _send_preview(self) -> None:
+            assert preview is not None
+            self.send_response(HTTPStatus.OK)
+            self.send_header(
+                "Content-Type", "multipart/x-mixed-replace; boundary=frame",
+            )
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            version = 0
+            try:
+                while True:
+                    next_version, jpeg = preview.next_frame(version)
+                    if next_version == version or jpeg is None:
+                        continue
+                    version = next_version
+                    self.wfile.write(
+                        b"--frame\r\nContent-Type: image/jpeg\r\n"
+                        + f"Content-Length: {len(jpeg)}\r\n\r\n".encode("ascii")
+                        + jpeg
+                        + b"\r\n"
+                    )
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
         def log_message(self, format: str, *args: Any) -> None:
             if self.path.split("?", 1)[0] not in ("/events", "/status"):
                 super().log_message(format, *args)
@@ -180,6 +268,12 @@ def analyzer_command(args: argparse.Namespace) -> List[str]:
         command.extend(["--live-events", args.live_events])
     if args.realtime:
         command.append("--realtime")
+    if getattr(args, "preview", False):
+        command.extend([
+            "--preview-stdout",
+            "--preview-fps",
+            str(getattr(args, "preview_fps", 12)),
+        ])
     return command
 
 
@@ -211,7 +305,9 @@ def counter_urls(host: str, port: int, video: Optional[str]) -> List[str]:
 
 
 def read_analyzer(
-    process: subprocess.Popen[str], events: ShotEventBroker,
+    process: subprocess.Popen[str],
+    events: ShotEventBroker,
+    preview: PreviewFrameBroker,
 ) -> int:
     assert process.stdout is not None
     for line in process.stdout:
@@ -221,7 +317,15 @@ def read_analyzer(
             print(f"Ignoring non-JSON analyzer output: {line.rstrip()}", file=sys.stderr)
             continue
         if isinstance(event, dict):
-            events.publish(event)
+            if event.get("type") == "_preview_frame":
+                encoded = event.get("jpeg_base64")
+                if isinstance(encoded, str):
+                    try:
+                        preview.publish(base64.b64decode(encoded, validate=True))
+                    except ValueError:
+                        print("Ignoring invalid browser preview frame", file=sys.stderr)
+            else:
+                events.publish(event)
     return process.wait()
 
 
@@ -229,7 +333,10 @@ def run_analyzer(
     args: argparse.Namespace,
     events: ShotEventBroker,
     process_holder: List[subprocess.Popen[str]],
+    preview: Optional[PreviewFrameBroker] = None,
 ) -> None:
+    if preview is None:
+        preview = PreviewFrameBroker()
     if args.wait_for_subscriber:
         events.wait_for_subscriber()
     process = subprocess.Popen(
@@ -243,7 +350,7 @@ def run_analyzer(
     process_holder.append(process)
     returncode: Optional[int] = None
     try:
-        returncode = read_analyzer(process, events)
+        returncode = read_analyzer(process, events, preview)
     finally:
         if returncode is None:
             returncode = process.poll()
@@ -352,32 +459,74 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="pace prerecorded analysis against wall-clock time",
     )
+    parser.add_argument(
+        "--no-preview",
+        dest="preview",
+        action="store_false",
+        help="disable the annotated browser video preview",
+    )
+    parser.add_argument(
+        "--preview-fps",
+        type=float,
+        default=12,
+        help="maximum annotated browser preview rate (default: 12 FPS)",
+    )
+    parser.set_defaults(preview=True)
     args = parser.parse_args()
     if args.video is None and args.replay_events is None:
         parser.error("video is required unless --replay-events is supplied")
     if args.replay_interval_ms < 0:
         parser.error("--replay-interval-ms cannot be negative")
+    if args.preview_fps <= 0:
+        parser.error("--preview-fps must be greater than zero")
     return args
 
 
 def main() -> None:
     args = parse_args()
     events = ShotEventBroker()
-    server = ThreadingHTTPServer((args.host, args.port), handler_for(events))
+    preview = PreviewFrameBroker()
     process_holder: List[subprocess.Popen[str]] = []
-    if args.replay_events is not None:
-        reader = threading.Thread(
-            target=replay_events,
-            args=(args.replay_events, args.replay_interval_ms / 1000, events),
-            daemon=True,
-        )
-    else:
-        reader = threading.Thread(
-            target=run_analyzer,
-            args=(args, events, process_holder),
-            daemon=True,
-        )
-    reader.start()
+    reader_holder: List[threading.Thread] = []
+    restart_lock = threading.Lock()
+
+    def start_source(reset: bool = False) -> None:
+        with restart_lock:
+            existing_process = process_holder[-1] if process_holder else None
+            stop_analyzer(existing_process)
+            if reader_holder and reader_holder[-1].is_alive():
+                reader_holder[-1].join(timeout=10)
+            if reset:
+                events.reset()
+                preview.reset()
+                events.publish({
+                    "type": "session_reset",
+                    "logged_at_unix_seconds": round(time.time(), 3),
+                })
+            process_holder.clear()
+            if args.replay_events is not None:
+                reader = threading.Thread(
+                    target=replay_events,
+                    args=(
+                        args.replay_events,
+                        args.replay_interval_ms / 1000,
+                        events,
+                    ),
+                    daemon=True,
+                )
+            else:
+                reader = threading.Thread(
+                    target=run_analyzer,
+                    args=(args, events, process_holder, preview),
+                    daemon=True,
+                )
+            reader_holder[:] = [reader]
+            reader.start()
+
+    server = ThreadingHTTPServer(
+        (args.host, args.port), handler_for(events, preview, lambda: start_source(True)),
+    )
+    start_source()
     urls = counter_urls(args.host, args.port, args.video)
     print(f"Hit counter on this Mac: {urls[0]}", flush=True)
     if len(urls) > 1:

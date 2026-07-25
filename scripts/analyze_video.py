@@ -6,6 +6,7 @@ deliberately conservative: an incomplete/occluded trajectory is unknown,
 rather than a fabricated table coordinate.
 """
 import argparse
+import base64
 import json
 import math
 import sys
@@ -3722,6 +3723,7 @@ def process_video(
     on_frame_processed: Optional[
         Callable[[int, Dict[str, Any]], None]
     ] = None,
+    on_preview_frame: Optional[Callable[[int, np.ndarray], None]] = None,
 ) -> List[BounceEvent]:
     """Process an already-open source and return its detected bounce events."""
     fps = source.fps
@@ -3737,7 +3739,7 @@ def process_video(
     tracker = MultiBallTracker(settings)
     diagnostics = (
         DetectorDiagnostics(track_lifetime_frames=max(1, round(fps * .5)))
-        if writer is not None else None
+        if writer is not None or on_preview_frame is not None else None
     )
     telemetry = TelemetryReader()
     clean_recording_started = not clean_start_on_launch
@@ -3825,12 +3827,16 @@ def process_video(
             classifier.process_active_tracks(tracker.confirmed_tracks, frame_number)
             if diagnostics is not None:
                 diagnostics.set_unconfirmed_tracks(tracker.tracks)
-            if writer is not None:
-                writer.write(draw_overlay(
+            if writer is not None or on_preview_frame is not None:
+                annotated_frame = draw_overlay(
                     frame, table, net_line, tracker.visible_points, classifier.events,
                     homography, calibration["table_surface_y"],
                     diagnostics, frame_number,
-                ))
+                )
+                if writer is not None:
+                    writer.write(annotated_frame)
+                if on_preview_frame is not None:
+                    on_preview_frame(frame_number, annotated_frame)
             if on_frame_processed is not None:
                 on_frame_processed(frame_number, {
                     "candidate_count": len(candidates),
@@ -3922,9 +3928,22 @@ def main() -> None:
         action="store_true",
         help="pace prerecorded input against wall-clock time",
     )
+    parser.add_argument(
+        "--preview-stdout",
+        action="store_true",
+        help="emit throttled JPEG detector previews on stdout for the counter server",
+    )
+    parser.add_argument(
+        "--preview-fps",
+        type=float,
+        default=12,
+        help="maximum browser preview rate (default: 12 FPS)",
+    )
     args = parser.parse_args()
     if args.clean_recording_seconds <= 0:
         parser.error("--clean-recording-seconds must be greater than zero")
+    if args.preview_fps <= 0:
+        parser.error("--preview-fps must be greater than zero")
     annotated_path = None if args.no_annotated else args.annotated
     if not args.extract_calibration_frame:
         # Live SRT sources can block while waiting for the sender. Clear stale
@@ -4132,6 +4151,36 @@ def main() -> None:
                 if health_monitor is not None:
                     health_monitor.observe_pipeline(live_metrics)
 
+            preview_interval_frames = max(1, round(fps / args.preview_fps))
+
+            def write_preview_frame(
+                frame_number: int,
+                frame: np.ndarray,
+            ) -> None:
+                nonlocal live_stdout_open
+                if (
+                    not args.preview_stdout
+                    or not live_stdout_open
+                    or frame_number % preview_interval_frames
+                ):
+                    return
+                encoded, jpeg = cv2.imencode(
+                    ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 72],
+                )
+                if not encoded:
+                    return
+                record = {
+                    "type": "_preview_frame",
+                    "frame_number": frame_number,
+                    "video_time_seconds": round(frame_number / fps, 3),
+                    "jpeg_base64": base64.b64encode(jpeg).decode("ascii"),
+                }
+                try:
+                    print(json.dumps(record, separators=(",", ":")), flush=True)
+                except BrokenPipeError:
+                    live_stdout_open = False
+                    sys.stdout = open("/dev/null", "w", encoding="utf-8")
+
             def write_bounce_diagnostic(
                 diagnostic: TrackDiagnostic, draw_frame: int,
             ) -> None:
@@ -4182,6 +4231,9 @@ def main() -> None:
                 ),
                 on_track_diagnostic=write_bounce_diagnostic,
                 on_frame_processed=write_pipeline_heartbeat,
+                on_preview_frame=(
+                    write_preview_frame if args.preview_stdout else None
+                ),
             )
             live_normalizer.finish_session(processing_frame)
             if pipeline_logger is not None:

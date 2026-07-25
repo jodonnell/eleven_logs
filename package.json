@@ -10,6 +10,7 @@
     "check": "npm run lint && npm test -- --runInBand && npm run test:video && npm run test:e2e:counter",
     "capture:evaluation": "python3 scripts/capture_evaluation.py",
     "counter": "python3 scripts/live_counter_server.py",
+    "counter:video": "python3 scripts/live_counter_server.py --realtime --wait-for-subscriber",
     "evaluate:detector": "python3 scripts/evaluate_detector.py",
     "counter:quest": "python3 scripts/live_counter_server.py 'srt://192.168.1.197:9000?mode=caller&latency=400000' --host 0.0.0.0 --calibration artifacts/live-2026-07-24-side-calibration.json --live-events artifacts/live-counter-events.jsonl --clean-recording artifacts/live-counter-clean.mkv --clean-recording-seconds 30 --clean-recording-start launch --clean-recording-codec mjpeg",
     "counter:quest:debug": "npm run counter:quest -- --clean-recording artifacts/live-counter-clean.mkv --clean-recording-seconds 120 --clean-recording-start immediate --clean-recording-codec mjpeg",

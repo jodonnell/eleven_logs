@@ -14,9 +14,11 @@ from unittest.mock import MagicMock, patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from live_counter_server import (  # pyright: ignore[reportMissingImports]  # noqa: E402
+    PreviewFrameBroker,
     ShotEventBroker,
     analyzer_command,
     counter_urls,
+    read_analyzer,
     run_analyzer,
     stop_analyzer,
 )
@@ -42,6 +44,17 @@ class ShotEventBrokerTest(unittest.TestCase):
         events.mark_source_done()
 
         self.assertEqual(events.status(), {"done": True, "messages": 1})
+
+    def test_reset_starts_a_new_empty_session(self):
+        events = ShotEventBroker()
+        previous_session = events.session_id
+        events.publish({"outcome": "hit"})
+        events.mark_source_done()
+
+        events.reset()
+
+        self.assertNotEqual(events.session_id, previous_session)
+        self.assertEqual(events.status(), {"done": False, "messages": 0})
 
     def test_subscription_replays_only_events_after_given_id(self):
         events = ShotEventBroker()
@@ -206,6 +219,55 @@ class ShotEventBrokerTest(unittest.TestCase):
                 json.loads(live_events.read_text(encoding="utf-8"))["type"],
                 "analyzer_exit",
             )
+
+    def test_preview_broker_keeps_only_the_latest_jpeg(self):
+        preview = PreviewFrameBroker()
+        preview.publish(b"first")
+        preview.publish(b"latest")
+
+        version, jpeg = preview.next_frame(0, timeout=0)
+
+        self.assertEqual(version, 2)
+        self.assertEqual(jpeg, b"latest")
+
+    def test_analyzer_command_enables_throttled_browser_preview(self):
+        args = Namespace(
+            video="recording.mp4",
+            output="shots.jsonl",
+            calibration=None,
+            annotated=None,
+            clean_recording=None,
+            clean_recording_seconds=120,
+            clean_recording_start="launch",
+            clean_recording_codec="ffv1",
+            live_events=None,
+            realtime=True,
+            preview=True,
+            preview_fps=15,
+        )
+
+        self.assertEqual(analyzer_command(args)[-4:], [
+            "--realtime", "--preview-stdout", "--preview-fps", "15",
+        ])
+
+    def test_analyzer_preview_frames_are_not_added_to_sse_history(self):
+        process = MagicMock()
+        process.stdout = [
+            json.dumps({
+                "type": "_preview_frame",
+                "jpeg_base64": "anBlZw==",
+            }) + "\n",
+            json.dumps({"type": "attempt_upsert", "outcome": "hit"}) + "\n",
+        ]
+        process.wait.return_value = 0
+        events = ShotEventBroker()
+        preview = PreviewFrameBroker()
+
+        self.assertEqual(read_analyzer(process, events, preview), 0)
+
+        self.assertEqual(preview.next_frame(0, timeout=0)[1], b"jpeg")
+        self.assertEqual(events.status()["messages"], 1)
+        self.assertEqual(events.subscribe().get_nowait()[1]["type"], "attempt_upsert")
 
 
 if __name__ == "__main__":
