@@ -111,14 +111,16 @@
         font-weight: 750;
       }
 
-      #session-stats {
+      #session-stats,
+      #last-ball-stats {
         margin: 0 auto 1.5rem;
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 0.65rem;
       }
 
-      main.debug #session-stats {
+      main.debug #session-stats,
+      main.debug #last-ball-stats {
         grid-template-columns: 1fr;
       }
 
@@ -147,6 +149,14 @@
         font-variant-numeric: tabular-nums;
         font-weight: 700;
         white-space: nowrap;
+      }
+
+      #last-outcome.hit {
+        color: #4ade80;
+      }
+
+      #last-outcome.miss {
+        color: #f87171;
       }
 
       #status {
@@ -211,12 +221,14 @@
 
         main.debug #scoreboard h1,
         main.debug #session-stats,
+        main.debug #last-ball-stats,
         main.debug #status,
         main.debug #restart {
           grid-column: 1 / -1;
         }
 
-        main.debug #session-stats {
+        main.debug #session-stats,
+        main.debug #last-ball-stats {
           width: 100%;
           grid-template-columns: repeat(3, minmax(0, 1fr));
         }
@@ -228,7 +240,9 @@
 
       @media (max-width: 480px) {
         #session-stats,
-        main.debug #session-stats {
+        #last-ball-stats,
+        main.debug #session-stats,
+        main.debug #last-ball-stats {
           grid-template-columns: 1fr;
         }
       }
@@ -258,6 +272,20 @@
             <span id="average-spin" class="stat-value">—</span>
           </div>
         </div>
+        <div id="last-ball-stats" aria-label="Last ball statistics">
+          <div class="stat">
+            <span class="stat-label">Last ball</span>
+            <span id="last-outcome" class="stat-value">—</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Speed</span>
+            <span id="last-speed" class="stat-value">—</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Spin</span>
+            <span id="last-spin" class="stat-value">—</span>
+          </div>
+        </div>
         <div id="status">Connecting</div>
         <button id="restart" type="button" hidden>Restart video</button>
       </section>
@@ -275,6 +303,9 @@
       const hitPercentage = document.querySelector("#hit-percentage")
       const averageSpeed = document.querySelector("#average-speed")
       const averageSpin = document.querySelector("#average-spin")
+      const lastOutcome = document.querySelector("#last-outcome")
+      const lastSpeed = document.querySelector("#last-speed")
+      const lastSpin = document.querySelector("#last-spin")
       const status = document.querySelector("#status")
       const preview = document.querySelector("#preview")
       const previewLabel = document.querySelector("#preview-label")
@@ -351,6 +382,25 @@
           stats?.averageSpinRevolutionsPerSecond == null
             ? "—"
             : `${stats.averageSpinRevolutionsPerSecond.toFixed(1)} rev/s`
+        const lastBall = stats?.lastBall
+        lastOutcome.className = "stat-value"
+        if (!lastBall) {
+          lastOutcome.textContent = "—"
+          lastSpeed.textContent = "—"
+          lastSpin.textContent = "—"
+          return
+        }
+        const outcome = lastBall.outcome === "hit" ? "Hit" : "Miss"
+        lastOutcome.textContent = outcome
+        lastOutcome.classList.add(outcome.toLowerCase())
+        lastSpeed.textContent =
+          lastBall.speedMps == null
+            ? "—"
+            : `${lastBall.speedMps.toFixed(1)} m/s`
+        lastSpin.textContent =
+          lastBall.spinRevolutionsPerSecond == null
+            ? "—"
+            : `${lastBall.spinRevolutionsPerSecond.toFixed(1)} rev/s`
       }
 
       const establishCounterAfterCurrentBatch = () => {

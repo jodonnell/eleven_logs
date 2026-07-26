@@ -18,6 +18,7 @@ const average = (values) =>
 
 export const sessionStats = (attempts) => {
   const finalized = orderedFinalized(attempts)
+  const lastAttempt = finalized.at(-1)
   const successfulHits = finalized.filter(
     (attempt) => attempt.outcome === "hit",
   )
@@ -37,6 +38,19 @@ export const sessionStats = (attempts) => {
         : (successfulHits.length / finalized.length) * 100,
     averageSpeedMps: average(speeds),
     averageSpinRevolutionsPerSecond: average(spins),
+    lastBall: lastAttempt
+      ? {
+          outcome: lastAttempt.outcome,
+          speedMps: Number.isFinite(lastAttempt.hit?.speed_mps)
+            ? lastAttempt.hit.speed_mps
+            : null,
+          spinRevolutionsPerSecond: Number.isFinite(
+            lastAttempt.hit?.spin_revolutions_per_second,
+          )
+            ? lastAttempt.hit.spin_revolutions_per_second
+            : null,
+        }
+      : null,
   }
 }
 

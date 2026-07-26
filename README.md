@@ -90,7 +90,8 @@ so it survives refreshes and server restarts without requiring a database.
 Session stats show the hit percentage as hits over finalized attempts. Average
 player-return speed and spin include only successful hits whose TV telemetry
 was read; misses, outs, and attempts without trusted on-screen OCR values are
-excluded.
+excluded. A separate last-ball row shows the newest finalized hit or miss and
+its player-return speed and spin when available.
 
 The first six distinct contacts remain buffered long enough to infer a stable
 cadence, so startup can publish those initial attempts several seconds late.

@@ -101,6 +101,11 @@ describe("live hit counter attempt ledger", () => {
       hitPercentage: (2 / 3) * 100,
       averageSpeedMps: 14,
       averageSpinRevolutionsPerSecond: 90,
+      lastBall: {
+        outcome: "hit",
+        speedMps: 16,
+        spinRevolutionsPerSecond: 100,
+      },
     })
   })
 
@@ -111,6 +116,34 @@ describe("live hit counter attempt ledger", () => {
       hitPercentage: 100,
       averageSpeedMps: null,
       averageSpinRevolutionsPerSecond: null,
+      lastBall: {
+        outcome: "hit",
+        speedMps: null,
+        spinRevolutionsPerSecond: null,
+      },
+    })
+  })
+
+  it("shows telemetry for the latest finalized miss without averaging it", () => {
+    const attempts = [
+      {
+        ...attempt(1, "finalized", "hit"),
+        hit: { speed_mps: 14, spin_revolutions_per_second: 90 },
+      },
+      {
+        ...attempt(2, "finalized", "miss"),
+        hit: { speed_mps: 12, spin_revolutions_per_second: 70 },
+      },
+    ]
+
+    const stats = sessionStats(attempts)
+
+    expect(stats.averageSpeedMps).toBe(14)
+    expect(stats.averageSpinRevolutionsPerSecond).toBe(90)
+    expect(stats.lastBall).toEqual({
+      outcome: "miss",
+      speedMps: 12,
+      spinRevolutionsPerSecond: 70,
     })
   })
 })

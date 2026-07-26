@@ -25,6 +25,9 @@ test("resets after a miss and counts the following hits", async ({ page }) => {
   await expect(page.locator("#hit-percentage")).toHaveText("85.7% (6 / 7)")
   await expect(page.locator("#average-speed")).toHaveText("—")
   await expect(page.locator("#average-spin")).toHaveText("—")
+  await expect(page.locator("#last-outcome")).toHaveText("Hit")
+  await expect(page.locator("#last-speed")).toHaveText("—")
+  await expect(page.locator("#last-spin")).toHaveText("—")
 
   await page.goto("/?debug=true")
   await expect(page.locator("#preview-shell")).toBeVisible()
