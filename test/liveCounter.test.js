@@ -5,6 +5,7 @@ import {
   reconcileAttemptUpsert,
   reduceCounterState,
   saveHighScore,
+  sessionStats,
 } from "../live-counter/counter.js"
 
 const attempt = (sequence, state, outcome) => ({
@@ -72,6 +73,45 @@ describe("live hit counter attempt ledger", () => {
 
     expect(visible).toEqual([0, 1, 1, 2, 2, 0, 0, 1])
     expect(state.attempts).toHaveLength(4)
+  })
+
+  it("calculates hit percentage and averages only available player telemetry", () => {
+    const attempts = [
+      {
+        ...attempt(1, "finalized", "hit"),
+        hit: { speed_mps: 12, spin_revolutions_per_second: 80 },
+      },
+      {
+        ...attempt(2, "finalized", "miss"),
+        hit: { speed_mps: 50, spin_revolutions_per_second: 200 },
+      },
+      {
+        ...attempt(3, "finalized", "hit"),
+        hit: { speed_mps: 16, spin_revolutions_per_second: 100 },
+      },
+      {
+        ...attempt(4, "pending"),
+        hit: { speed_mps: 99, spin_revolutions_per_second: 999 },
+      },
+    ]
+
+    expect(sessionStats(attempts)).toEqual({
+      hits: 2,
+      total: 3,
+      hitPercentage: (2 / 3) * 100,
+      averageSpeedMps: 14,
+      averageSpinRevolutionsPerSecond: 90,
+    })
+  })
+
+  it("leaves OCR averages unavailable when no hit telemetry was read", () => {
+    expect(sessionStats([attempt(1, "finalized", "hit")])).toEqual({
+      hits: 1,
+      total: 1,
+      hitPercentage: 100,
+      averageSpeedMps: null,
+      averageSpinRevolutionsPerSecond: null,
+    })
   })
 })
 

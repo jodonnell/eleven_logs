@@ -28,6 +28,7 @@ from analyze_video import (  # noqa: E402
     TelemetryReader,
     attach_missing_machine_telemetry,
     candidates_for_frame,
+    classify_digit,
     find_bounce,
     find_bounces,
     map_log_coordinate,
@@ -36,6 +37,7 @@ from analyze_video import (  # noqa: E402
     reset_output_file,
     shadow_contact_score,
     split_wide_component,
+    telemetry_title_bounds,
 )
 
 
@@ -1471,6 +1473,33 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertEqual(reading.speed_mps, 11.4)
         self.assertEqual(reading.spin_revolutions_per_second, 64)
         self.assertEqual(reading.spin_direction["label"], "up")
+
+    def test_telemetry_title_ignores_stronger_blue_table_edge(self):
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        frame[577:586, 815:988] = (255, 0, 0)
+        frame[660:670, 230:1502] = (255, 0, 0)
+
+        self.assertEqual(
+            telemetry_title_bounds(frame),
+            (815, 577, 988, 586),
+        )
+
+    def test_compressed_four_pixel_hud_digits_are_read(self):
+        zero = np.uint8([
+            [0, 255, 255, 255, 255, 0],
+            [255, 255, 0, 0, 255, 255],
+            [255, 255, 0, 0, 255, 255],
+            [0, 255, 255, 255, 255, 0],
+        ])
+        five = np.uint8([
+            [255, 255, 255, 255, 0],
+            [255, 255, 255, 255, 0],
+            [0, 0, 255, 255, 255],
+            [255, 0, 255, 255, 255],
+        ])
+
+        self.assertEqual(classify_digit(zero)[0], "0")
+        self.assertEqual(classify_digit(five)[0], "5")
 
     def test_low_resolution_tv_telemetry_is_read(self):
         cap = cv2.VideoCapture(str(ROOT / "sample2-trimmed-58s.mp4"))

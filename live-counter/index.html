@@ -111,6 +111,44 @@
         font-weight: 750;
       }
 
+      #session-stats {
+        margin: 0 auto 1.5rem;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.65rem;
+      }
+
+      main.debug #session-stats {
+        grid-template-columns: 1fr;
+      }
+
+      .stat {
+        min-width: 0;
+        padding: 0.8rem 0.65rem;
+        border: 1px solid rgb(148 163 184 / 22%);
+        border-radius: 0.7rem;
+        background: rgb(15 23 42 / 48%);
+      }
+
+      .stat-label {
+        display: block;
+        margin-bottom: 0.25rem;
+        color: #8da2bd;
+        font-size: 0.7rem;
+        font-weight: 650;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .stat-value {
+        display: block;
+        color: #e2e8f0;
+        font-size: clamp(1rem, 3vw, 1.3rem);
+        font-variant-numeric: tabular-nums;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
       #status {
         display: inline-flex;
         align-items: center;
@@ -163,7 +201,7 @@
           align-content: center;
         }
 
-        #scoreboard {
+        main.debug #scoreboard {
           display: grid;
           grid-template-columns: auto auto;
           align-items: center;
@@ -171,13 +209,27 @@
           column-gap: 1.5rem;
         }
 
-        #scoreboard h1,
-        #status {
+        main.debug #scoreboard h1,
+        main.debug #session-stats,
+        main.debug #status,
+        main.debug #restart {
           grid-column: 1 / -1;
+        }
+
+        main.debug #session-stats {
+          width: 100%;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
         }
 
         main.debug #count {
           font-size: clamp(6rem, 30vw, 10rem);
+        }
+      }
+
+      @media (max-width: 480px) {
+        #session-stats,
+        main.debug #session-stats {
+          grid-template-columns: 1fr;
         }
       }
     </style>
@@ -192,6 +244,20 @@
         <h1>Hits</h1>
         <div id="count" aria-live="polite">—</div>
         <div id="best">Best: <span id="best-count">0</span></div>
+        <div id="session-stats">
+          <div class="stat">
+            <span class="stat-label">Hit percentage</span>
+            <span id="hit-percentage" class="stat-value">—</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Average speed</span>
+            <span id="average-speed" class="stat-value">—</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Average spin</span>
+            <span id="average-spin" class="stat-value">—</span>
+          </div>
+        </div>
         <div id="status">Connecting</div>
         <button id="restart" type="button" hidden>Restart video</button>
       </section>
@@ -206,6 +272,9 @@
 
       const count = document.querySelector("#count")
       const bestCount = document.querySelector("#best-count")
+      const hitPercentage = document.querySelector("#hit-percentage")
+      const averageSpeed = document.querySelector("#average-speed")
+      const averageSpin = document.querySelector("#average-spin")
       const status = document.querySelector("#status")
       const preview = document.querySelector("#preview")
       const previewLabel = document.querySelector("#preview-label")
@@ -262,6 +331,28 @@
         count.textContent = counterReady ? counterState.streak : "—"
       }
 
+      const formatDecimal = (value) =>
+        Number.isInteger(value) ? String(value) : value.toFixed(1)
+
+      const renderStats = () => {
+        const stats = counterState.stats
+        if (!stats || stats.total === 0) {
+          hitPercentage.textContent = "—"
+        } else {
+          hitPercentage.textContent =
+            `${formatDecimal(stats.hitPercentage)}% ` +
+            `(${stats.hits} / ${stats.total})`
+        }
+        averageSpeed.textContent =
+          stats?.averageSpeedMps == null
+            ? "—"
+            : `${stats.averageSpeedMps.toFixed(1)} m/s`
+        averageSpin.textContent =
+          stats?.averageSpinRevolutionsPerSecond == null
+            ? "—"
+            : `${stats.averageSpinRevolutionsPerSecond.toFixed(1)} rev/s`
+      }
+
       const establishCounterAfterCurrentBatch = () => {
         if (establishTimer !== null) return
         establishTimer = window.setTimeout(() => {
@@ -309,7 +400,7 @@
         const shot = JSON.parse(data)
         if (shot.type === "session_reset") {
           clearCounterTimers()
-          counterState = { attempts: [], streak: 0 }
+          counterState = { attempts: [], streak: 0, stats: null }
           counterReady = false
           counterEstablished = false
           healthWarning = null
@@ -330,6 +421,7 @@
         } else {
           renderCounter()
         }
+        renderStats()
         if (counterState.streak > highScore) {
           highScore = counterState.streak
           bestCount.textContent = highScore

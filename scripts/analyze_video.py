@@ -62,12 +62,12 @@ LOW_RES_DIGIT_TEMPLATES = {
         for variant in bitmap.split("|")
     ]
     for digit, bitmap in {
-        "0": "0100/1011/1001/1011|1001/1001/1111|1011/1001/1111|1101/1001/1101",
-        "1": "111/001/001|111/011/011",
+        "0": "0100/1011/1001/1011|1001/1001/1111|1011/1001/1111|1101/1001/1101|011110/110011/110011/011110",
+        "1": "111/001/001|111/011/011|111/111/011/011",
         "2": "0011/0010/1100|0100/0011/0110/1100|0100/0011/0110/1110",
         "3": "011/110/011|100/011/110/011",
         "4": "0010/0110/1010/0011|0010/0110/1010/1011|0110/1010/1111",
-        "5": "1000/1111/0011|1100/0111/0001|1110/1000/1111/0011|1110/1000/1111/1011",
+        "5": "1000/1111/0011|1100/0111/0001|1110/1000/1111/0011|1110/1000/1111/1011|11110/11110/00111/10111|10000/11110/00011/11110",
         "6": "1000/1111/1011|1011/1110/1001|1100/1111/1001|01100/11000/11110/11110/01100",
         "7": "011/010/100|011/010/110|111/001/011/010",
         "8": "1011/1110/1001|1011/1110/1011|1101/0111/1101",
@@ -743,24 +743,39 @@ def telemetry_title_bounds(frame: np.ndarray) -> Optional[Tuple[int, int, int, i
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     blue = cv2.inRange(hsv, (100, 90, 100), (145, 255, 255))
     row_counts = np.count_nonzero(blue, axis=1)
-    maximum = int(row_counts.max())
-    if maximum < max(8, frame.shape[1] * .008):
-        return None
-    rows = np.flatnonzero(row_counts >= maximum * .3)
+    minimum_row_pixels = max(8, frame.shape[1] * .008)
+    rows = np.flatnonzero(row_counts >= minimum_row_pixels)
     groups = np.split(rows, np.flatnonzero(np.diff(rows) > 1) + 1)
     groups = [group for group in groups if len(group) >= 2]
     if not groups:
         return None
-    title_rows = max(groups, key=lambda group: int(row_counts[group].sum()))
-    y0, y1 = int(title_rows[0]), int(title_rows[-1] + 1)
-    selected = blue[y0:y1] > 0
-    _, xs = np.nonzero(selected)
-    if not len(xs):
+
+    candidates = []
+    for group in groups:
+        local_maximum = int(row_counts[group].max())
+        core_rows = group[row_counts[group] >= local_maximum * .3]
+        core_groups = np.split(
+            core_rows, np.flatnonzero(np.diff(core_rows) > 1) + 1,
+        )
+        for core in core_groups:
+            if len(core) < 2:
+                continue
+            y0, y1 = int(core[0]), int(core[-1] + 1)
+            _, xs = np.nonzero(blue[y0:y1] > 0)
+            if not len(xs):
+                continue
+            x0, x1 = int(xs.min()), int(xs.max() + 1)
+            width_ratio = (x1 - x0) / frame.shape[1]
+            # The title is wide but bounded to the TV. Reject long blue table
+            # edges, which can be much stronger than the title itself.
+            if .05 <= width_ratio <= .3:
+                candidates.append((
+                    int(row_counts[core].sum()),
+                    (x0, y0, x1, y1),
+                ))
+    if not candidates:
         return None
-    x0, x1 = int(xs.min()), int(xs.max() + 1)
-    if x1 - x0 < frame.shape[1] * .05:
-        return None
-    return x0, y0, x1, y1
+    return max(candidates, key=lambda candidate: candidate[0])[1]
 
 
 def normalize_digit(mask: np.ndarray) -> np.ndarray:
@@ -853,7 +868,7 @@ def read_hud_number(
     if kind == "speed":
         top, bottom, right, needs_decimal = 3.0, 4.2, .62, True
     else:
-        top, bottom, right, needs_decimal = 4.5, 5.7, .59, False
+        top, bottom, right, needs_decimal = 4.5, 5.7, .58, False
     left = .44
     roi = frame[
         round(y0 + top * height):round(y0 + bottom * height),

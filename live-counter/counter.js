@@ -11,6 +11,35 @@ export const currentHitStreak = (attempts) => {
   return streak
 }
 
+const average = (values) =>
+  values.length === 0
+    ? null
+    : values.reduce((total, value) => total + value, 0) / values.length
+
+export const sessionStats = (attempts) => {
+  const finalized = orderedFinalized(attempts)
+  const successfulHits = finalized.filter(
+    (attempt) => attempt.outcome === "hit",
+  )
+  const speeds = successfulHits
+    .map((attempt) => attempt.hit?.speed_mps)
+    .filter((value) => Number.isFinite(value))
+  const spins = successfulHits
+    .map((attempt) => attempt.hit?.spin_revolutions_per_second)
+    .filter((value) => Number.isFinite(value))
+
+  return {
+    hits: successfulHits.length,
+    total: finalized.length,
+    hitPercentage:
+      finalized.length === 0
+        ? null
+        : (successfulHits.length / finalized.length) * 100,
+    averageSpeedMps: average(speeds),
+    averageSpinRevolutionsPerSecond: average(spins),
+  }
+}
+
 export const reconcileAttemptUpsert = (attempts, message) => {
   if (message.type !== "attempt_upsert") return attempts
   const index = attempts.findIndex(
@@ -33,7 +62,11 @@ export const reconcileAttemptUpsert = (attempts, message) => {
 
 export const reduceCounterState = (state, message) => {
   const attempts = reconcileAttemptUpsert(state.attempts, message)
-  return { attempts, streak: currentHitStreak(attempts) }
+  return {
+    attempts,
+    streak: currentHitStreak(attempts),
+    stats: sessionStats(attempts),
+  }
 }
 
 export const HIGH_SCORE_STORAGE_KEY = "eleven-practice.high-score"
