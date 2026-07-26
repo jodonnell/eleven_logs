@@ -199,8 +199,12 @@
       const previewLabel = document.querySelector("#preview-label")
       const restartButton = document.querySelector("#restart")
       const events = new EventSource("/events")
+      const RESET_HOLD_MS = 400
       let counterState = { attempts: [], streak: 0 }
       let counterReady = false
+      let counterEstablished = false
+      let establishTimer = null
+      let resetTimer = null
       let healthWarning = null
       let highScore = loadHighScore(window.localStorage)
       bestCount.textContent = highScore
@@ -226,12 +230,44 @@
         window.setTimeout(startPreview, 1000)
       })
 
+      const clearCounterTimers = () => {
+        window.clearTimeout(establishTimer)
+        window.clearTimeout(resetTimer)
+        establishTimer = null
+        resetTimer = null
+      }
+
+      const renderCounter = () => {
+        if (resetTimer !== null) return
+        count.textContent = counterReady ? counterState.streak : "—"
+      }
+
+      const establishCounterAfterCurrentBatch = () => {
+        if (establishTimer !== null) return
+        establishTimer = window.setTimeout(() => {
+          establishTimer = null
+          counterEstablished = true
+          renderCounter()
+        }, 100)
+      }
+
+      const showVisibleReset = () => {
+        window.clearTimeout(resetTimer)
+        count.textContent = "0"
+        resetTimer = window.setTimeout(() => {
+          resetTimer = null
+          renderCounter()
+        }, RESET_HOLD_MS)
+      }
+
       restartButton.addEventListener("click", async () => {
         restartButton.disabled = true
+        clearCounterTimers()
         status.className = ""
         status.textContent = "Restarting video"
         previewLabel.textContent = "Rewinding detector video"
         counterReady = false
+        counterEstablished = false
         count.textContent = "—"
         try {
           const response = await fetch("/restart", { method: "POST" })
@@ -248,16 +284,28 @@
       events.onmessage = ({ data }) => {
         const shot = JSON.parse(data)
         if (shot.type === "session_reset") {
+          clearCounterTimers()
           counterState = { attempts: [], streak: 0 }
           counterReady = false
+          counterEstablished = false
           healthWarning = null
         } else {
           counterState = reduceCounterState(counterState, shot)
           if (shot.type === "attempt_upsert" && shot.state === "finalized") {
+            if (!counterReady) establishCounterAfterCurrentBatch()
             counterReady = true
           }
         }
-        count.textContent = counterReady ? counterState.streak : "—"
+        if (
+          shot.type === "attempt_upsert" &&
+          shot.state === "finalized" &&
+          shot.outcome !== "hit" &&
+          counterEstablished
+        ) {
+          showVisibleReset()
+        } else {
+          renderCounter()
+        }
         if (counterState.streak > highScore) {
           highScore = counterState.streak
           bestCount.textContent = highScore
@@ -285,7 +333,9 @@
           status.className = "connected"
           status.textContent = shot.message
           if (shot.status === "warming_up") {
+            clearCounterTimers()
             counterReady = false
+            counterEstablished = false
             count.textContent = "—"
           }
         } else if (shot.type === "attempt_upsert" && !healthWarning) {
