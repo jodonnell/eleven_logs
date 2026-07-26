@@ -387,8 +387,13 @@ class VideoDetectorUnitTest(unittest.TestCase):
         path = [(30 + frame, 100 + frame * 20, 150, 0.0) for frame in range(13)]
         classifier.start_attempt(launch, 18)
         attempt = classifier.active_attempt
-        near = self.ordered_contact_candidate(34, -80, "player")
-        far = self.ordered_contact_candidate(39, 50, "opponent")
+        source = (30, 100, 150)
+        near = self.ordered_contact_candidate(
+            34, -80, "player", source=source,
+        )
+        far = self.ordered_contact_candidate(
+            39, 50, "opponent", source=source,
+        )
         classifier.record_contact_candidate(near, path, 42)
         classifier.record_contact_candidate(far, path, 42)
 
@@ -414,6 +419,28 @@ class VideoDetectorUnitTest(unittest.TestCase):
         classifier.finish_attempt(43)
 
         self.assertEqual([event.outcome for event in classifier.events], ["far_table"])
+
+    def test_ordered_miss_does_not_suppress_an_unrelated_far_contact(self):
+        near = self.ordered_contact_candidate(
+            34, -80, "player", source=(30, 100, 50),
+        )
+        far = self.ordered_contact_candidate(
+            39, 50, "opponent", source=(30, 100, 50),
+        )
+        unrelated = self.ordered_contact_candidate(
+            45, 70, "opponent", source=(43, 200, 80),
+        )
+
+        self.assertTrue(
+            AttemptClassifier.contact_belongs_to_ordered_miss(
+                far, (near, far),
+            )
+        )
+        self.assertFalse(
+            AttemptClassifier.contact_belongs_to_ordered_miss(
+                unrelated, (near, far),
+            )
+        )
 
     def test_velocity_flattening_cannot_establish_player_contact(self):
         attempt = Attempt(0, (0, 0))
@@ -1636,6 +1663,7 @@ class VideoDetectorUnitTest(unittest.TestCase):
                 ("attempt-0001", "finalized"),
                 ("attempt-0002", "finalized"),
                 ("attempt-0003", "finalized"),
+                ("attempt-0004", "pending"),
             ],
         )
         self.assertEqual(
@@ -1757,6 +1785,53 @@ class VideoDetectorUnitTest(unittest.TestCase):
             by_id.setdefault(item["attempt_id"], set()).add(item["outcome"])
         self.assertTrue(all(len(outcomes) == 1 for outcomes in by_id.values()))
         self.assertEqual(len(finalized), len(by_id))
+
+    def test_live_normalizer_publishes_emitted_hit_before_session_end(self):
+        reported = []
+        normalizer = LiveAttemptNormalizer(60, reported.append)
+        for frame in (70, 130, 190):
+            event = self.cadence_event(frame)
+            normalizer.observe(event)
+            normalizer.settle_attempt()
+
+        fourth = self.cadence_event(250)
+        normalizer.observe(fourth)
+        normalizer.settle_attempt()
+
+        finalized = [
+            item for item in reported
+            if item.get("sequence") == 4 and item["state"] == "finalized"
+        ]
+        self.assertEqual(
+            [(item["outcome"], item.get("revision", 0)) for item in finalized],
+            [("hit", 0)],
+        )
+
+    def test_live_normalizer_refines_future_cadence_without_moving_latest_id(self):
+        normalizer = LiveAttemptNormalizer(
+            60, lambda _attempt: None, minimum_cadence_hits=6,
+        )
+        normalizer.period = 82.0
+        normalizer.phase = 70.0
+        normalizer.ledger = [
+            normalizer.attempt_record(
+                index, round(70 + index * 82), "pending",
+            )
+            for index in range(8)
+        ]
+        normalizer.events = [
+            self.cadence_event(round(70 + index * 81.4))
+            for index in range(8)
+        ]
+        latest_anchor = normalizer.ledger[-1]["anchor_frame_number"]
+
+        normalizer.refine_cadence()
+
+        self.assertAlmostEqual(normalizer.period, 81.4)
+        self.assertAlmostEqual(
+            normalizer.phase + 7 * normalizer.period,
+            latest_anchor,
+        )
 
     def test_live_normalizer_does_not_finalize_a_provisional_out_before_hit(self):
         reported = []

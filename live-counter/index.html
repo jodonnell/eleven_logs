@@ -178,7 +178,7 @@
       </div>
       <section id="scoreboard">
         <h1>Hits</h1>
-        <div id="count" aria-live="polite">0</div>
+        <div id="count" aria-live="polite">—</div>
         <div id="best">Best: <span id="best-count">0</span></div>
         <div id="status">Connecting</div>
         <button id="restart" type="button">Restart video</button>
@@ -200,6 +200,7 @@
       const restartButton = document.querySelector("#restart")
       const events = new EventSource("/events")
       let counterState = { attempts: [], streak: 0 }
+      let counterReady = false
       let healthWarning = null
       let highScore = loadHighScore(window.localStorage)
       bestCount.textContent = highScore
@@ -230,6 +231,8 @@
         status.className = ""
         status.textContent = "Restarting video"
         previewLabel.textContent = "Rewinding detector video"
+        counterReady = false
+        count.textContent = "—"
         try {
           const response = await fetch("/restart", { method: "POST" })
           if (!response.ok) throw new Error(`restart failed: ${response.status}`)
@@ -246,11 +249,15 @@
         const shot = JSON.parse(data)
         if (shot.type === "session_reset") {
           counterState = { attempts: [], streak: 0 }
+          counterReady = false
           healthWarning = null
         } else {
           counterState = reduceCounterState(counterState, shot)
+          if (shot.type === "attempt_upsert" && shot.state === "finalized") {
+            counterReady = true
+          }
         }
-        count.textContent = counterState.streak
+        count.textContent = counterReady ? counterState.streak : "—"
         if (counterState.streak > highScore) {
           highScore = counterState.streak
           bestCount.textContent = highScore
@@ -277,6 +284,10 @@
         } else if (shot.type === "counter_status" && !healthWarning) {
           status.className = "connected"
           status.textContent = shot.message
+          if (shot.status === "warming_up") {
+            counterReady = false
+            count.textContent = "—"
+          }
         } else if (shot.type === "attempt_upsert" && !healthWarning) {
           status.className = "connected"
           if (shot.state === "pending") {

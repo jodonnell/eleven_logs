@@ -2322,6 +2322,22 @@ class AttemptClassifier:
                     return near, far
         return None
 
+    @staticmethod
+    def contact_belongs_to_ordered_miss(
+        candidate: ContactCandidate,
+        ordered_contact: Optional[
+            Tuple[ContactCandidate, ContactCandidate]
+        ],
+    ) -> bool:
+        """Limit an own-side miss history to its physical source track."""
+        if ordered_contact is None:
+            return False
+        near, far = ordered_contact
+        return (
+            candidate.source_track_key == far.source_track_key
+            and candidate.frame_number > near.frame_number
+        )
+
     def record_contact_history_rejections(
         self, attempt: Attempt, draw_frame: int,
     ) -> None:
@@ -2592,7 +2608,9 @@ class AttemptClassifier:
         if (
             event.hit_table
             and event.outcome == "far_table"
-            and ordered_contact is None
+            and not self.contact_belongs_to_ordered_miss(
+                candidate, ordered_contact,
+            )
         ):
             self.notify_confirmed_hit(event)
 
@@ -2968,6 +2986,12 @@ class LiveAttemptNormalizer:
     def observe(self, event: BounceEvent) -> None:
         self.remember_event(event)
         self.pending_attempt_events.append(event)
+        # Every emitted far-table event is already a finalized detector
+        # decision. Some contact paths deliberately skip the earlier
+        # low-latency callback, so publish the hit here as a reliable fallback
+        # instead of waiting for finish_session() to revise an old miss.
+        if event.hit_table and event.outcome == "far_table":
+            self.observe_confirmed_hit(event)
 
     def observe_attempt_started(self, _anchor: int) -> None:
         self.launches_seen += 1
@@ -3174,12 +3198,14 @@ class LiveAttemptNormalizer:
     def observe_confirmed_hit(self, event: BounceEvent) -> None:
         """Publish direct visual evidence without waiting for cadence."""
         self.remember_event(event)
+        self.refine_cadence()
         self.latest_trusted_frame = max(
             self.latest_trusted_frame or event.frame_number,
             event.frame_number,
         )
         self.trusted_allows_following_slot = True
         self.finalize_direct(event, "hit")
+        self.retry_confirmed_hits()
         if (
             self.period is not None
             and self.ledger
@@ -3189,6 +3215,38 @@ class LiveAttemptNormalizer:
             pending = self.attempt_record(len(self.ledger), anchor, "pending")
             self.ledger.append(pending)
             self.on_attempt(pending)
+
+    def refine_cadence(self) -> None:
+        """Refine future slot spacing without moving published attempt IDs."""
+        if self.period is None or self.phase is None:
+            return
+        hits = [
+            item for item in self.events
+            if item.hit_table and item.outcome == "far_table"
+        ]
+        if len(hits) < self.minimum_cadence_hits + 2:
+            return
+        refined = infer_attempt_period(
+            [item.frame_number for item in hits], self.fps,
+        )
+        if (
+            refined is None
+            or abs(refined - self.period) > self.period * .03
+        ):
+            return
+        if self.ledger:
+            last_index = len(self.ledger) - 1
+            last_anchor = self.ledger[last_index]["anchor_frame_number"]
+            self.phase = last_anchor - last_index * refined
+        self.period = refined
+
+    def retry_confirmed_hits(self) -> None:
+        """Publish remembered hits once cadence exposes their ledger slots."""
+        if self.period is None:
+            return
+        for event in self.events:
+            if event.hit_table and event.outcome == "far_table":
+                self.finalize_direct(event, "hit")
 
     def observe_confirmed_non_hit(self, event: BounceEvent) -> None:
         """Hold non-hit evidence until the current attempt is closed.
@@ -3263,6 +3321,7 @@ class LiveAttemptNormalizer:
             # attempt. Two later cadence slots make an unseen miss stable while
             # leaving time for a long visible out track to finish.
             self.sync_slots(slots, len(slots) - 3)
+            self.retry_confirmed_hits()
 
     def finalize(self, total_frames: int) -> List[BounceEvent]:
         return normalize_attempt_events(self.events, total_frames, self.fps)
