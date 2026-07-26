@@ -68,10 +68,10 @@ LOW_RES_DIGIT_TEMPLATES = {
         "2": "0011/0010/1100|0100/0011/0110/1100|0100/0011/0110/1110|01111/00001/00110/11111",
         "3": "011/110/011|100/011/110/011|11110/00110/00011/00011",
         "4": "0010/0110/1010/0011|0010/0110/1010/1011|0110/1010/1111|00011/01111/11011/00011|000110/011010/111111/000010",
-        "5": "1000/1111/0011|1100/0111/0001|1110/1000/1111/0011|1110/1000/1111/1011|11110/11110/00111/10111|10000/11110/00011/11110",
-        "6": "1000/1111/1011|1011/1110/1001|1100/1111/1001|01100/11000/11110/11110/01100",
-        "7": "011/010/100|011/010/110|111/001/011/010",
-        "8": "1011/1110/1001|1011/1110/1011|1101/0111/1101|011011/011110/110011/111111|010011/011110/110011/111111",
+        "5": "1000/1111/0011|1100/0111/0001|1110/1000/1111/0011|1110/1000/1111/1011|11110/11110/00111/10111|10000/11110/00011/11110|010000/011110/000011/111110|11110/11110/00011/00011",
+        "6": "1000/1111/1011|1011/1110/1001|1100/1111/1001|01100/11000/11110/11110/01100|011110/011110/110011/010011",
+        "7": "011/010/100|011/010/110|111/001/011/010|00011/00110/01100/11000",
+        "8": "1011/1110/1001|1011/1110/1011|1101/0111/1101|011011/011110/110011/111111|010011/011110/110011/111111|011110/011110/011111/110011",
         "9": "0100/1011/1111/0010|1101/1111/0001|1011/1111/0011|010011/110011/001011/011110|011011/110011/001011/011110|011110/110011/011111/000110",
     }.items()
 }
@@ -815,13 +815,30 @@ def classify_digit(mask: np.ndarray) -> Tuple[str, float]:
                 template = normalize_digit(raw_template * 255)
                 intersection = np.count_nonzero(normalized & template)
                 total = np.count_nonzero(normalized) + np.count_nonzero(template)
-                candidate_scores.append(2 * intersection / total if total else 0.0)
+                score = 2 * intersection / total if total else 0.0
+                if raw_template.shape == mask.shape:
+                    native = mask > 0
+                    native_intersection = np.count_nonzero(
+                        native & raw_template,
+                    )
+                    native_total = (
+                        np.count_nonzero(native)
+                        + np.count_nonzero(raw_template)
+                    )
+                    # Preserve native pixel geometry as a tiebreaker. Scaling a
+                    # four-pixel glyph to the common template canvas can make
+                    # distinct 6/8 shapes nearly identical.
+                    if native_total:
+                        score += .04 * (
+                            2 * native_intersection / native_total
+                        )
+                candidate_scores.append(score)
             scores[digit] = max(candidate_scores)
         ranked = sorted(scores, key=scores.get, reverse=True)
         if len(ranked) > 1 and scores[ranked[0]] - scores[ranked[1]] < .015:
             return "?", 0.0
         digit = ranked[0]
-        return digit, round(scores[digit], 3)
+        return digit, round(min(1.0, scores[digit]), 3)
     contours, hierarchy = cv2.findContours(
         (mask > 0).astype(np.uint8), cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE,
     )
@@ -952,16 +969,11 @@ def read_hud_number(
         confidence = min(confidence, score)
     if confidence < .38:
         return None
-    if (
-        6 <= height < 15
-        and needs_decimal
-        and decimal_x is None
-        and len(recognized) >= 2
-    ):
+    if 6 <= height < 15 and needs_decimal and len(recognized) >= 2:
         # Speed is always rendered with exactly one decimal place. At the
-        # distant-TV scale the decimal is a single antialiased pixel and is
-        # often the only part lost to compression, even though every digit is
-        # intact. Recover its fixed position instead of discarding the number.
+        # distant-TV scale its one-pixel dot can disappear or merge with the
+        # net post, so its detected position is less reliable than the fixed
+        # format. A value such as 13.1 must never become 1.31.
         decimal_x = (
             recognized[-2][0] + recognized[-1][0]
         ) / 2
@@ -1158,24 +1170,19 @@ class TelemetryReader:
         # candidate debounce below keeps the assembled state from publishing
         # during a screen transition.
         minimum_evidence = 2
-        speeds = Counter(
-            speed for speed, _, _ in self.component_samples
-            if speed is not None
-        )
-        spins = Counter(
-            spin for _, spin, _ in self.component_samples
-            if spin is not None
+        numeric_pairs = Counter(
+            (speed, spin) for speed, spin, _ in self.component_samples
+            if speed is not None and spin is not None
         )
         directions = Counter(
             direction["label"] for _, _, direction in self.component_samples
             if direction is not None
         )
-        if not speeds or not spins or not directions:
+        if not numeric_pairs or not directions:
             return None
-        speed, speed_count = speeds.most_common(1)[0]
-        spin, spin_count = spins.most_common(1)[0]
+        (speed, spin), numeric_count = numeric_pairs.most_common(1)[0]
         direction_label, direction_count = directions.most_common(1)[0]
-        if min(speed_count, spin_count, direction_count) < minimum_evidence:
+        if min(numeric_count, direction_count) < minimum_evidence:
             return None
         direction = next(
             direction for _, _, direction in reversed(self.component_samples)
@@ -3208,6 +3215,7 @@ class LiveAttemptNormalizer:
     def attempt_record(
         self, index: int, anchor: int, state: str,
         event: Optional[BounceEvent] = None,
+        decision_frame_number: Optional[int] = None,
     ) -> Dict[str, Any]:
         record: Dict[str, Any] = {
             "attempt_id": f"attempt-{index + 1:04d}",
@@ -3219,10 +3227,16 @@ class LiveAttemptNormalizer:
             record.update(event.to_record())
             record["outcome"] = "hit" if event.outcome == "hit" else "miss"
             record["attempt_frame_number"] = anchor
+            record["decision_frame_number"] = (
+                event.draw_frame
+                if decision_frame_number is None
+                else decision_frame_number
+            )
         return record
 
     def sync_slots(
         self, slots: Sequence[Tuple[int, BounceEvent]], finalize_through: int,
+        decision_frame_number: Optional[int] = None,
     ) -> None:
         for index, (anchor, _event) in enumerate(slots):
             if index < len(self.ledger):
@@ -3237,6 +3251,7 @@ class LiveAttemptNormalizer:
             anchor = self.ledger[index]["anchor_frame_number"]
             finalized = self.attempt_record(
                 index, anchor, "finalized", slots[index][1],
+                decision_frame_number=decision_frame_number,
             )
             self.ledger[index] = finalized
             self.on_attempt(finalized)
@@ -3303,11 +3318,16 @@ class LiveAttemptNormalizer:
                 )
                 finalized_miss = self.attempt_record(
                     index, anchor, "finalized", missed,
+                    decision_frame_number=direct.draw_frame,
                 )
                 self.ledger[index] = finalized_miss
                 self.on_attempt(finalized_miss)
         else:
-            self.sync_slots(slots, target - 1)
+            self.sync_slots(
+                slots,
+                target - 1,
+                decision_frame_number=direct.draw_frame,
+            )
         if self.ledger[target]["state"] == "finalized":
             return
         anchor = self.ledger[target]["anchor_frame_number"]
@@ -3440,7 +3460,11 @@ class LiveAttemptNormalizer:
             # A single later launcher-like track can be a fragment of the same
             # attempt. Two later cadence slots make an unseen miss stable while
             # leaving time for a long visible out track to finish.
-            self.sync_slots(slots, len(slots) - 3)
+            self.sync_slots(
+                slots,
+                len(slots) - 3,
+                decision_frame_number=next_launch_frame,
+            )
             self.retry_confirmed_hits()
 
     def finalize(self, total_frames: int) -> List[BounceEvent]:
@@ -3470,7 +3494,11 @@ class LiveAttemptNormalizer:
             )
             self.trusted_allows_following_slot = False
         slots = self.candidate_slots(total_frames=total_frames)
-        self.sync_slots(slots, len(slots) - 1)
+        self.sync_slots(
+            slots,
+            len(slots) - 1,
+            decision_frame_number=total_frames,
+        )
         if final_event is not None:
             self.finalize_direct(
                 final_event, "miss", target_frame=final_event.frame_number,
@@ -3544,6 +3572,7 @@ class LiveAttemptNormalizer:
                 finalized = self.attempt_record(
                     index, anchor, "finalized",
                     replace(event, outcome="miss"),
+                    decision_frame_number=total_frames,
                 )
                 self.ledger[index] = finalized
                 self.on_attempt(finalized)
@@ -3582,6 +3611,7 @@ class DirectLiveAttemptPublisher:
                 else "miss"
             )
             record["attempt_frame_number"] = anchor
+            record["decision_frame_number"] = event.draw_frame
         return record
 
     def observe_attempt_started(self, anchor: int) -> None:
@@ -4274,6 +4304,9 @@ def main() -> None:
                     evidence_frame = attempt.get(
                         "frame_number", attempt["anchor_frame_number"],
                     )
+                    decision_frame = attempt.get(
+                        "decision_frame_number", evidence_frame,
+                    )
                     record["publication_delay_frames"] = (
                         processing_frame - evidence_frame
                     )
@@ -4283,6 +4316,15 @@ def main() -> None:
                     record["attempt_publication_delay_seconds"] = round(
                         (processing_frame - attempt["anchor_frame_number"]) / fps,
                         3,
+                    )
+                    record["decision_publication_delay_seconds"] = round(
+                        (processing_frame - decision_frame) / fps,
+                        3,
+                    )
+                    record["feedback_delay_seconds"] = (
+                        record["publication_delay_seconds"]
+                        if attempt.get("outcome") == "hit"
+                        else record["decision_publication_delay_seconds"]
                     )
                 attempt_upsert_count += 1
                 attempt_states[record["attempt_id"]] = record["state"]

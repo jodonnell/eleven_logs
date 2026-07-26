@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "test" / "fixtures" / "sample2-live-counter.json"
 VIDEO = ROOT / "sample2-trimmed-58s.mp4"
 QUEST_FIXTURE = ROOT / "test" / "fixtures" / "quest-2026-07-20-live-counter.json"
-QUEST_VIDEO = ROOT / "artifacts" / "live-counter-clean.mkv"
+QUEST_VIDEO = ROOT / "artifacts" / "quest-2026-07-20-live-counter.mkv"
 sys.path.insert(0, str(ROOT / "scripts"))
 from live_counter_replay import (  # noqa: E402
     expected_streaks,

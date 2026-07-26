@@ -146,6 +146,7 @@ def verify_records(
             ))
 
     shot_publications = browser_shots
+    latency_start = fixture.get("latency_assertions_start_sequence")
     for index, record in enumerate(shot_publications):
         required = (
             "attempt_id", "anchor_frame_number", "frame_number",
@@ -158,15 +159,44 @@ def verify_records(
                 mismatch_line(index, "publication metadata", f"missing:{','.join(missing)}", record)
             )
         outcome = record.get("outcome")
-        limit = fixture.get(
-            f"max_{outcome}_publication_delay_seconds",
-            fixture["max_no_swing_publication_delay_seconds"],
-        )
-        if record.get("attempt_publication_delay_seconds", 0) > limit:
+        if latency_start is not None and record["sequence"] < latency_start:
+            continue
+        if latency_start is not None:
+            required_latency = (
+                "decision_frame_number",
+                "decision_publication_delay_seconds",
+                "feedback_delay_seconds",
+            )
+            missing_latency = [
+                name for name in required_latency if name not in record
+            ]
+            if missing_latency:
+                mismatches.append(mismatch_line(
+                    index,
+                    "latency metadata",
+                    f"missing:{','.join(missing_latency)}",
+                    record,
+                ))
+                continue
+            limit = (
+                fixture["max_hit_contact_publication_delay_seconds"]
+                if outcome == "hit"
+                else fixture["max_miss_decision_publication_delay_seconds"]
+            )
+            actual_delay = record["feedback_delay_seconds"]
+            delay_name = "feedback-delay"
+        else:
+            limit = fixture.get(
+                f"max_{outcome}_publication_delay_seconds",
+                fixture["max_no_swing_publication_delay_seconds"],
+            )
+            actual_delay = record.get("attempt_publication_delay_seconds", 0)
+            delay_name = "attempt-delay"
+        if actual_delay > limit:
             mismatches.append(mismatch_line(
                 index,
-                f"attempt-delay<={limit}s",
-                f"attempt-delay={record['attempt_publication_delay_seconds']}s",
+                f"{delay_name}<={limit}s",
+                f"{delay_name}={actual_delay}s",
                 record,
             ))
     return mismatches

@@ -1518,6 +1518,37 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertEqual(classify_digit(nine)[0], "9")
         self.assertEqual(classify_digit(four)[0], "4")
 
+    def test_black_arena_compression_variants_are_read(self):
+        five = np.uint8([
+            [0, 1, 0, 0, 0, 0],
+            [0, 1, 1, 1, 1, 0],
+            [0, 0, 0, 0, 1, 1],
+            [1, 1, 1, 1, 1, 0],
+        ]) * 255
+        six = np.uint8([
+            [0, 1, 1, 1, 1, 0],
+            [0, 1, 1, 1, 1, 0],
+            [1, 1, 0, 0, 1, 1],
+            [0, 1, 0, 0, 1, 1],
+        ]) * 255
+        seven = np.uint8([
+            [0, 0, 0, 1, 1],
+            [0, 0, 1, 1, 0],
+            [0, 1, 1, 0, 0],
+            [1, 1, 0, 0, 0],
+        ]) * 255
+        eight = np.uint8([
+            [0, 1, 1, 1, 1, 0],
+            [0, 1, 1, 1, 1, 0],
+            [0, 1, 1, 1, 1, 1],
+            [1, 1, 0, 0, 1, 1],
+        ]) * 255
+
+        self.assertEqual(classify_digit(five)[0], "5")
+        self.assertEqual(classify_digit(six)[0], "6")
+        self.assertEqual(classify_digit(seven)[0], "7")
+        self.assertEqual(classify_digit(eight)[0], "8")
+
     def test_low_resolution_tv_telemetry_is_read(self):
         cap = cv2.VideoCapture(str(ROOT / "sample2-trimmed-58s.mp4"))
         cap.set(cv2.CAP_PROP_POS_MSEC, 5_000)
@@ -1586,9 +1617,10 @@ class VideoDetectorUnitTest(unittest.TestCase):
         reader = TelemetryReader(stable_samples=1)
         reader.bounds = (0, 0, 1, 1)
         components = [
-            (12.3, None, direction),
             (12.3, 87, None),
-            (None, 87, direction),
+            (12.3, 87, None),
+            (None, None, direction),
+            (None, None, direction),
         ]
 
         with patch(
@@ -1602,10 +1634,11 @@ class VideoDetectorUnitTest(unittest.TestCase):
 
         self.assertIsNone(readings[0])
         self.assertIsNone(readings[1])
-        self.assertIsNotNone(readings[2])
-        self.assertEqual(readings[2].speed_mps, 12.3)
-        self.assertEqual(readings[2].spin_revolutions_per_second, 87)
-        self.assertEqual(readings[2].spin_direction["label"], "up")
+        self.assertIsNone(readings[2])
+        self.assertIsNotNone(readings[3])
+        self.assertEqual(readings[3].speed_mps, 12.3)
+        self.assertEqual(readings[3].spin_revolutions_per_second, 87)
+        self.assertEqual(readings[3].spin_direction["label"], "up")
 
     def test_return_out_uses_telemetry_before_event_as_player_hit(self):
         direction = {"x": 0, "y": 1, "angle_degrees": 90, "label": "up"}
@@ -2095,6 +2128,23 @@ class VideoDetectorUnitTest(unittest.TestCase):
             if item.get("sequence") == 4 and item["state"] == "finalized"
         )
         self.assertEqual(deadline["outcome"], "miss")
+        self.assertEqual(deadline["decision_frame_number"], 382)
+
+    def test_later_confirmed_hit_is_the_decision_frame_for_inferred_misses(self):
+        reported = []
+        normalizer = LiveAttemptNormalizer(60, reported.append)
+        for frame in (70, 190, 250):
+            event = self.cadence_event(frame)
+            normalizer.observe_confirmed_hit(event)
+            normalizer.observe(event)
+
+        normalizer.settle_attempt(next_launch_frame=370)
+        missed = next(
+            item for item in reported
+            if item.get("outcome") == "miss"
+        )
+
+        self.assertEqual(missed["decision_frame_number"], 250)
 
     def test_live_normalizer_final_output_matches_batch_normalization(self):
         events = [self.cadence_event(frame) for frame in (70, 190, 250)]

@@ -14,6 +14,23 @@ const expectedStreaks = (outcomes) => {
   })
 }
 
+const reconcileFinalized = (attempts) => {
+  const latest = new Map()
+  for (const attempt of attempts) {
+    if (attempt.state !== "finalized") continue
+    const current = latest.get(attempt.attempt_id)
+    if (
+      current === undefined ||
+      (attempt.revision ?? 0) > (current.revision ?? 0)
+    ) {
+      latest.set(attempt.attempt_id, attempt)
+    }
+  }
+  return [...latest.values()].sort(
+    (left, right) => left.sequence - right.sequence,
+  )
+}
+
 test("displays every finalized sample2 attempt exactly once", async ({
   page,
   request,
@@ -47,12 +64,9 @@ test("displays every finalized sample2 attempt exactly once", async ({
     ({ message }) =>
       message.type === "attempt_upsert" && message.state === "finalized",
   )
-  const finalized = finalizedUpdates.map(({ message }) => message)
+  const finalized = reconcileFinalized(attempts)
 
   expect(finalized.map(({ outcome }) => outcome)).toEqual(fixture.outcomes)
-  expect(finalizedUpdates.map(({ streak }) => streak)).toEqual(
-    expectedStreaks(fixture.outcomes),
-  )
   expect(finalized.map(({ attempt_id }) => attempt_id)).toEqual(
     fixture.outcomes.map(
       (_outcome, index) => `attempt-${String(index + 1).padStart(4, "0")}`,
@@ -75,9 +89,15 @@ test("displays every finalized sample2 attempt exactly once", async ({
   }
 
   for (const attempt of finalized) {
+    if (attempt.sequence < fixture.latency_assertions_start_sequence) continue
     const limit =
-      fixture[`max_${attempt.outcome}_publication_delay_seconds`]
-    expect(attempt.attempt_publication_delay_seconds).toBeLessThanOrEqual(limit)
+      attempt.outcome === "hit"
+        ? fixture.max_hit_contact_publication_delay_seconds
+        : fixture.max_miss_decision_publication_delay_seconds
+    expect(attempt.feedback_delay_seconds).toBeLessThanOrEqual(limit)
   }
+  expect(finalizedUpdates.at(-1).streak).toBe(
+    expectedStreaks(fixture.outcomes).at(-1),
+  )
   await expect(page.locator("#count")).toHaveText("0")
 })

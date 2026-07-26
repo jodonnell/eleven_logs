@@ -7,7 +7,7 @@
   "scripts": {
     "build": "esbuild src/app.js --bundle --outfile=out.js",
     "build:watch": "esbuild src/app.js --bundle --outfile=out.js --servedir=.",
-    "check": "npm run lint && npm test -- --runInBand && npm run test:video && npm run test:e2e:counter",
+    "check": "npm run lint && npm test -- --runInBand && npm run test:video && npm run test:e2e:counter && npm run test:e2e:counter:sample",
     "capture:evaluation": "python3 scripts/capture_evaluation.py",
     "counter": "python3 scripts/live_counter_server.py",
     "counter:preview": "python3 scripts/live_counter_server.py --preview-only --realtime --wait-for-subscriber",
@@ -18,7 +18,7 @@
     "counter:replay": "python3 scripts/live_counter_replay.py test/fixtures/sample2-live-counter.json",
     "console": "node src/stats.js",
     "deploy": "./bin/deploy.sh",
-    "lint": "eslint src/*.js test/*.js",
+    "lint": "eslint src/*.js test/*.js e2e/*.js *.config.js",
     "label:evaluation": "python3 scripts/label_evaluation.py",
     "prettier": "prettier src/*.js test/*.js --write",
     "test": "jest ./test/",

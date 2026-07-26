@@ -241,7 +241,7 @@ class AutoCalibrationTest(unittest.TestCase):
             output = Path(directory) / "attempts.jsonl"
             subprocess.run(
                 [sys.executable, "scripts/analyze_video.py", str(VIDEO),
-                 "--output", str(output), "--no-annotated", "--end-seconds", "18"],
+                 "--output", str(output), "--no-annotated", "--end-seconds", "20"],
                 cwd=ROOT,
                 text=True,
                 capture_output=True,

@@ -155,8 +155,14 @@ reject launcher fragments and recover fully occluded launches. Overlapping
 tracks for one physical contact are deduplicated before cadence inference, and
 cadence is locked once established so attempt IDs cannot shift. A later
 confirmed hit can revise a previous launch miss, and the browser accepts only
-explicitly higher revisions. Evidence
-`frame_number` and publication latency remain available for diagnostics.
+explicitly higher revisions. Finalized records distinguish the physical
+evidence `frame_number` from `decision_frame_number`, the frame where enough
+evidence existed to commit the result. `publication_delay_seconds` measures
+contact/evidence-to-publication latency,
+`decision_publication_delay_seconds` measures decision-to-publication latency,
+and `feedback_delay_seconds` uses contact latency for hits and decision latency
+for misses. This keeps miss delivery latency meaningful even when cadence must
+wait for a later launch to prove that no return occurred.
 
 Compare a captured browser SSE ledger with timestamped human labels using the
 same reconciliation rules as the counter page:
@@ -193,7 +199,9 @@ Failures print a compact expected/actual result with shot timestamp and live
 publication delay. The Playwright checks exercise the served page and SSE
 stream with both deterministic messages and checked-in
 `sample2-trimmed-58s.mp4`, and
-verify that the visible counter recovers after a reset. The shorter structured
+verify that the visible counter recovers after a reset. The checked-in video
+fixture enforces tight feedback latency after cadence warm-up while still
+checking all warm-up outcomes. The shorter structured
 unit fixture covers 5 hits, 2
 no-swings, 3 hits, 1 out, and 3 hits for fast normalizer iteration.
 
