@@ -1501,6 +1501,23 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertEqual(classify_digit(zero)[0], "0")
         self.assertEqual(classify_digit(five)[0], "5")
 
+    def test_net_obscured_spin_digits_are_read(self):
+        nine = np.uint8([
+            [0, 1, 0, 0, 1, 1],
+            [1, 1, 0, 0, 1, 1],
+            [0, 0, 1, 0, 1, 1],
+            [0, 1, 1, 1, 1, 0],
+        ]) * 255
+        four = np.uint8([
+            [0, 0, 0, 1, 1, 0],
+            [0, 1, 1, 0, 1, 0],
+            [1, 1, 1, 1, 1, 1],
+            [0, 0, 0, 0, 1, 0],
+        ]) * 255
+
+        self.assertEqual(classify_digit(nine)[0], "9")
+        self.assertEqual(classify_digit(four)[0], "4")
+
     def test_low_resolution_tv_telemetry_is_read(self):
         cap = cv2.VideoCapture(str(ROOT / "sample2-trimmed-58s.mp4"))
         cap.set(cv2.CAP_PROP_POS_MSEC, 5_000)
@@ -1595,6 +1612,51 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertEqual(record["machine"]["speed_mps"], 10.5)
         self.assertEqual(record["hit"]["speed_mps"], 15.0)
         self.assertIsNotNone(record["posx"])
+
+    def test_machine_screen_is_not_substituted_for_missing_hit_screen(self):
+        classifier = self.classifier()
+        direction = {"x": 0, "y": 1, "angle_degrees": 90, "label": "up"}
+        machine = TelemetryReading(2, 10.5, 51, direction)
+        launch = [(frame, 800 - frame * 10, 100, 0.0) for frame in range(18)]
+        path = [(30 + frame, 100 + frame * 20, 100, 0.0) for frame in range(9)]
+
+        classifier.observe_telemetry(machine)
+        classifier.start_attempt(launch, 18)
+        classifier.add_bounce(path, path[4], path[1:4], path[5:8], 39)
+        classifier.finish_attempt(40)
+
+        record = classifier.events[0].to_record()
+        self.assertEqual(record["machine"]["spin_revolutions_per_second"], 51)
+        self.assertNotIn("hit", record)
+
+    def test_stale_post_launch_screen_is_not_used_as_hit_telemetry(self):
+        classifier = self.classifier()
+        direction = {"x": 0, "y": 1, "angle_degrees": 90, "label": "up"}
+        machine = TelemetryReading(2, 10.5, 51, direction)
+        stale = TelemetryReading(20, 15.0, 90, direction)
+        attempt = Attempt(
+            0, (0, 0),
+            machine_telemetry=machine,
+            telemetry_after_launch=[stale],
+        )
+
+        hit, attached_machine = classifier.telemetry_pair_for_attempt(
+            attempt, 100,
+        )
+
+        self.assertIsNone(hit)
+        self.assertEqual(attached_machine, machine)
+
+    def test_obscured_player_spin_infers_leading_one(self):
+        reading = TelemetryReading(
+            25, 15.0, 9,
+            {"x": 0, "y": 1, "angle_degrees": 90, "label": "up"},
+        )
+
+        record = reading.to_player_record(60)
+
+        self.assertEqual(record["spin_revolutions_per_second"], 109)
+        self.assertTrue(record["spin_leading_digit_inferred"])
 
     def test_tracker_completes_a_path_after_the_allowed_gap(self):
         tracker = MultiBallTracker(DetectorSettings(max_gap=1, min_track_observations=1))

@@ -63,15 +63,15 @@ LOW_RES_DIGIT_TEMPLATES = {
     ]
     for digit, bitmap in {
         "0": "0100/1011/1001/1011|1001/1001/1111|1011/1001/1111|1101/1001/1101|011110/110011/110011/011110",
-        "1": "111/001/001|111/011/011|111/111/011/011",
-        "2": "0011/0010/1100|0100/0011/0110/1100|0100/0011/0110/1110",
-        "3": "011/110/011|100/011/110/011",
-        "4": "0010/0110/1010/0011|0010/0110/1010/1011|0110/1010/1111",
+        "1": "111/001/001|111/011/011|111/111/011/011|111/001/011/001|111/001/001/001",
+        "2": "0011/0010/1100|0100/0011/0110/1100|0100/0011/0110/1110|01111/00001/00110/11111",
+        "3": "011/110/011|100/011/110/011|11110/00110/00011/00011",
+        "4": "0010/0110/1010/0011|0010/0110/1010/1011|0110/1010/1111|00011/01111/11011/00011|000110/011010/111111/000010",
         "5": "1000/1111/0011|1100/0111/0001|1110/1000/1111/0011|1110/1000/1111/1011|11110/11110/00111/10111|10000/11110/00011/11110",
         "6": "1000/1111/1011|1011/1110/1001|1100/1111/1001|01100/11000/11110/11110/01100",
         "7": "011/010/100|011/010/110|111/001/011/010",
-        "8": "1011/1110/1001|1011/1110/1011|1101/0111/1101",
-        "9": "0100/1011/1111/0010|1101/1111/0001|1011/1111/0011",
+        "8": "1011/1110/1001|1011/1110/1011|1101/0111/1101|011011/011110/110011/111111|010011/011110/110011/111111",
+        "9": "0100/1011/1111/0010|1101/1111/0001|1011/1111/0011|010011/110011/001011/011110|011011/110011/001011/011110|011110/110011/011111/000110",
     }.items()
 }
 
@@ -219,6 +219,16 @@ class TelemetryReading:
             "spin_direction": self.spin_direction,
             "video_time_seconds": round(self.frame_number / fps, 3),
         }
+
+    def to_player_record(self, fps: float) -> Dict[str, Any]:
+        record = self.to_record(fps)
+        if self.spin_revolutions_per_second < 20:
+            # The net post can hide the leading digit of a three-digit player
+            # return. This player does not produce 200+ rev/s, so a visible
+            # 00--19 suffix is conservatively the tail of 100--119 rev/s.
+            record["spin_revolutions_per_second"] += 100
+            record["spin_leading_digit_inferred"] = True
+        return record
 
 
 @dataclass(frozen=True)
@@ -1611,16 +1621,20 @@ class AttemptClassifier:
         )
         return reading if abs(reading.frame_number - frame) <= self.fps * .4 else None
 
-    def telemetry_pair_before(
-        self, frame: int,
+    def telemetry_pair_for_attempt(
+        self, attempt: Attempt, frame: int,
     ) -> Tuple[Optional[TelemetryReading], Optional[TelemetryReading]]:
-        """Return (player hit, preceding machine delivery) at a landing."""
-        readings = [item for item in self.telemetry_history if item.frame_number <= frame]
-        if not readings:
+        """Return the post-hit screen update and this attempt's delivery."""
+        machine = attempt.machine_telemetry
+        if machine is None:
             return None, None
-        hit = readings[-1]
-        machine = readings[-2] if len(readings) >= 2 else None
-        return hit, machine
+        post_launch = [
+            item for item in attempt.telemetry_after_launch
+            if item.frame_number <= frame
+            and frame - item.frame_number <= self.fps * .6
+            and not TelemetryReader.same_values(item, machine)
+        ]
+        return (post_launch[-1] if post_launch else None), machine
 
     def launcher_rejection_reason(self, path: Track) -> Optional[str]:
         """Explain why a completed path cannot establish a machine launch."""
@@ -2592,7 +2606,9 @@ class AttemptClassifier:
         far = candidate.table_side == "opponent"
         confidence = candidate.confidence
         outcome = "unknown" if in_occlusion else ("far_table" if far else "near_table")
-        hit_telemetry, machine_telemetry = self.telemetry_pair_before(hit[0])
+        hit_telemetry, machine_telemetry = self.telemetry_pair_for_attempt(
+            attempt, hit[0],
+        )
         event = BounceEvent(
             video_time_seconds=round(hit[0] / self.fps, 3),
             video_timestamp=fmt_timestamp(hit[0] / self.fps),
@@ -2608,7 +2624,8 @@ class AttemptClassifier:
             draw_frame=draw_frame,
             attempt_frame_number=attempt.frame,
             hit=(
-                hit_telemetry.to_record(self.fps) if hit_telemetry else None
+                hit_telemetry.to_player_record(self.fps)
+                if hit_telemetry else None
             ),
             machine=(
                 machine_telemetry.to_record(self.fps) if machine_telemetry else None
