@@ -4,6 +4,8 @@ test("resets after a miss and counts the following hits", async ({ page }) => {
   await page.goto("/")
   const count = page.locator("#count")
   const best = page.locator("#best-count")
+  await expect(page.locator("#preview-shell")).toBeHidden()
+  await expect(page.locator("#restart")).toBeHidden()
 
   for (const [expected, expectedBest] of [
     [1, 1],
@@ -20,4 +22,8 @@ test("resets after a miss and counts the following hits", async ({ page }) => {
 
   await page.reload()
   await expect(page.locator("#best-count")).toHaveText("3")
+
+  await page.goto("/?debug=true")
+  await expect(page.locator("#preview-shell")).toBeVisible()
+  await expect(page.locator("#restart")).toBeVisible()
 })
