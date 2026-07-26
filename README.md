@@ -210,6 +210,16 @@ npm run counter:video -- VIDEO.mkv \
   --calibration artifacts/live-2026-07-24-side-calibration.json
 ```
 
+To inspect a local recording without running the detector, requiring a
+calibration, writing analyzer output, or connecting to OBS, use:
+
+```sh
+npm run counter:preview -- VIDEO.mkv
+```
+
+This mode labels the debug page as **Video preview · detector disabled** so it
+cannot be mistaken for analyzed output.
+
 Open <http://127.0.0.1:8000/?debug=true> before playback begins to show the
 annotated detector replay and its restart control. Without `?debug=true`, the
 browser shows only the normal counter and does not connect to the video

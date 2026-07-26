@@ -5,6 +5,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from argparse import Namespace
@@ -18,6 +19,7 @@ from live_counter_server import (  # pyright: ignore[reportMissingImports]  # no
     ShotEventBroker,
     analyzer_command,
     counter_urls,
+    preview_video,
     read_analyzer,
     run_analyzer,
     stop_analyzer,
@@ -268,6 +270,41 @@ class ShotEventBrokerTest(unittest.TestCase):
         self.assertEqual(preview.next_frame(0, timeout=0)[1], b"jpeg")
         self.assertEqual(events.status()["messages"], 1)
         self.assertEqual(events.subscribe().get_nowait()[1]["type"], "attempt_upsert")
+
+    def test_preview_only_streams_video_without_running_analyzer(self):
+        frame = MagicMock()
+        frame.number = 0
+        frame.image.shape = (720, 1280, 3)
+        source = MagicMock()
+        source.fps = 30
+        source.read.side_effect = [frame, None]
+        events = ShotEventBroker()
+        preview = PreviewFrameBroker()
+        encoded = MagicMock()
+        encoded.tobytes.return_value = b"jpeg"
+
+        with (
+            patch("live_counter_server.open_video_source", return_value=source),
+            patch(
+                "live_counter_server.cv2.imencode",
+                return_value=(True, encoded),
+            ),
+        ):
+            preview_video(
+                "recording.mkv",
+                realtime=True,
+                preview_fps=10,
+                wait_for_subscriber=False,
+                events=events,
+                preview=preview,
+                stop=threading.Event(),
+            )
+
+        source.close.assert_called_once_with()
+        self.assertEqual(preview.next_frame(0, timeout=0)[1], b"jpeg")
+        message = events.subscribe().get_nowait()[1]
+        self.assertEqual(message["type"], "preview_only")
+        self.assertEqual(events.status(), {"done": True, "messages": 1})
 
 
 if __name__ == "__main__":

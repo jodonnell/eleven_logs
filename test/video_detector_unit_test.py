@@ -1575,6 +1575,38 @@ class VideoDetectorUnitTest(unittest.TestCase):
 
         self.assertTrue(TelemetryReader.same_values(original, jittered))
 
+    def test_telemetry_combines_repeated_fields_across_imperfect_frames(self):
+        frame = np.zeros((10, 10, 3), dtype=np.uint8)
+        direction = {
+            "x": 0,
+            "y": 1,
+            "angle_degrees": 90,
+            "label": "up",
+        }
+        reader = TelemetryReader(stable_samples=1)
+        reader.bounds = (0, 0, 1, 1)
+        components = [
+            (12.3, None, direction),
+            (12.3, 87, None),
+            (None, 87, direction),
+        ]
+
+        with patch(
+            "analyze_video.read_telemetry_components",
+            side_effect=components,
+        ):
+            readings = [
+                reader.update(frame, frame_number)
+                for frame_number in range(len(components))
+            ]
+
+        self.assertIsNone(readings[0])
+        self.assertIsNone(readings[1])
+        self.assertIsNotNone(readings[2])
+        self.assertEqual(readings[2].speed_mps, 12.3)
+        self.assertEqual(readings[2].spin_revolutions_per_second, 87)
+        self.assertEqual(readings[2].spin_direction["label"], "up")
+
     def test_return_out_uses_telemetry_before_event_as_player_hit(self):
         direction = {"x": 0, "y": 1, "angle_degrees": 90, "label": "up"}
         machine = TelemetryReading(180, 10.6, 50, direction)

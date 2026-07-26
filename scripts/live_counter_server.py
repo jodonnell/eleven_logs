@@ -18,6 +18,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
+import cv2
+
+from video_source import open_video_source
+
 
 ROOT = Path(__file__).resolve().parents[1]
 COUNTER_PAGE = ROOT / "live-counter" / "index.html"
@@ -397,6 +401,54 @@ def replay_events(path: Path, interval_seconds: float, events: ShotEventBroker) 
     events.mark_source_done()
 
 
+def preview_video(
+    path: str,
+    realtime: bool,
+    preview_fps: float,
+    wait_for_subscriber: bool,
+    events: ShotEventBroker,
+    preview: PreviewFrameBroker,
+    stop: threading.Event,
+) -> None:
+    """Stream an unannotated local video without starting the detector."""
+    if wait_for_subscriber:
+        events.wait_for_subscriber()
+    source = None
+    try:
+        source = open_video_source(path, realtime=realtime)
+        interval = max(1, round(source.fps / preview_fps))
+        events.publish({
+            "type": "preview_only",
+            "message": "Local video preview — detector disabled",
+        })
+        while not stop.is_set():
+            frame = source.read()
+            if frame is None:
+                break
+            if frame.number % interval:
+                continue
+            image = frame.image
+            if image.shape[1] > 1280:
+                scale = 1280 / image.shape[1]
+                image = cv2.resize(
+                    image,
+                    (1280, max(1, round(image.shape[0] * scale))),
+                    interpolation=cv2.INTER_AREA,
+                )
+            encoded, jpeg = cv2.imencode(
+                ".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 72],
+            )
+            if encoded:
+                preview.publish(jpeg.tobytes())
+    except Exception as exc:
+        print(f"Video preview failed: {exc}", file=sys.stderr, flush=True)
+        events.publish({"type": "preview_error", "message": str(exc)})
+    finally:
+        if source is not None:
+            source.close()
+        events.mark_source_done()
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -444,6 +496,11 @@ def parse_args() -> argparse.Namespace:
         help="serve deterministic JSONL messages instead of running the analyzer",
     )
     parser.add_argument(
+        "--preview-only",
+        action="store_true",
+        help="stream a local video without detector analysis or calibration",
+    )
+    parser.add_argument(
         "--replay-interval-ms",
         type=float,
         default=200,
@@ -475,6 +532,14 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.video is None and args.replay_events is None:
         parser.error("video is required unless --replay-events is supplied")
+    if args.preview_only and args.replay_events is not None:
+        parser.error("--preview-only cannot be combined with --replay-events")
+    if (
+        args.preview_only
+        and args.video is not None
+        and args.video.lower().startswith("srt://")
+    ):
+        parser.error("--preview-only accepts a local video file, not an SRT URL")
     if args.replay_interval_ms < 0:
         parser.error("--replay-interval-ms cannot be negative")
     if args.preview_fps <= 0:
@@ -488,10 +553,13 @@ def main() -> None:
     preview = PreviewFrameBroker()
     process_holder: List[subprocess.Popen[str]] = []
     reader_holder: List[threading.Thread] = []
+    stop_holder: List[threading.Event] = []
     restart_lock = threading.Lock()
 
     def start_source(reset: bool = False) -> None:
         with restart_lock:
+            if stop_holder:
+                stop_holder[-1].set()
             existing_process = process_holder[-1] if process_holder else None
             stop_analyzer(existing_process)
             if reader_holder and reader_holder[-1].is_alive():
@@ -511,6 +579,22 @@ def main() -> None:
                         args.replay_events,
                         args.replay_interval_ms / 1000,
                         events,
+                    ),
+                    daemon=True,
+                )
+            elif args.preview_only:
+                stop = threading.Event()
+                stop_holder[:] = [stop]
+                reader = threading.Thread(
+                    target=preview_video,
+                    args=(
+                        args.video,
+                        args.realtime,
+                        args.preview_fps,
+                        args.wait_for_subscriber,
+                        events,
+                        preview,
+                        stop,
                     ),
                     daemon=True,
                 )
@@ -536,6 +620,8 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        if stop_holder:
+            stop_holder[-1].set()
         process = process_holder[0] if process_holder else None
         stop_analyzer(process)
         # serve_forever() ran on this thread and has already returned. Calling

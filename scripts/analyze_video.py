@@ -11,6 +11,7 @@ import json
 import math
 import sys
 import time
+from collections import Counter, deque
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
@@ -951,6 +952,19 @@ def read_hud_number(
         confidence = min(confidence, score)
     if confidence < .38:
         return None
+    if (
+        6 <= height < 15
+        and needs_decimal
+        and decimal_x is None
+        and len(recognized) >= 2
+    ):
+        # Speed is always rendered with exactly one decimal place. At the
+        # distant-TV scale the decimal is a single antialiased pixel and is
+        # often the only part lost to compression, even though every digit is
+        # intact. Recover its fixed position instead of discarding the number.
+        decimal_x = (
+            recognized[-2][0] + recognized[-1][0]
+        ) / 2
     if height < 15 and needs_decimal and decimal_x is not None:
         decimal_index = next((
             index for index, (center_x, _) in enumerate(recognized)
@@ -1040,32 +1054,64 @@ def read_telemetry(
     bounds = bounds or telemetry_title_bounds(frame)
     if bounds is None:
         return None
-    speed = read_hud_number(frame, bounds, "speed")
-    spin = read_hud_number(frame, bounds, "spin")
-    direction = read_spin_direction(frame, bounds)
+    speed, spin, direction = read_telemetry_components(frame, bounds)
     if speed is None or spin is None or direction is None:
         return None
+    return TelemetryReading(frame_number, speed, spin, direction)
+
+
+def read_telemetry_components(
+    frame: np.ndarray,
+    bounds: Tuple[int, int, int, int],
+) -> Tuple[
+    Optional[float],
+    Optional[int],
+    Optional[Dict[str, Any]],
+]:
+    """Read and validate each HUD field without requiring one perfect frame."""
+    raw_speed = read_hud_number(frame, bounds, "speed")
+    raw_spin = read_hud_number(frame, bounds, "spin")
+    direction = read_spin_direction(frame, bounds)
     # At low capture resolutions, unit text or compression artifacts can be
     # mistaken for another digit (for example, "51 rev/s" becoming 517).
     # Reject readings outside Eleven's displayed range instead of attaching a
-    # confidently repeated but physically bogus value to every attempt.
-    if (
-        not 0 < speed < 100
-        or not 0 <= spin <= MAX_SPIN_REVOLUTIONS_PER_SECOND
-    ):
-        return None
-    return TelemetryReading(frame_number, float(speed), int(spin), direction)
+    # confidently repeated but physically bogus value to every attempt. Do
+    # this per field so a bad spin read does not throw away a good speed read.
+    speed = (
+        float(raw_speed)
+        if raw_speed is not None and 0 < raw_speed < 100
+        else None
+    )
+    spin = (
+        int(raw_spin)
+        if raw_spin is not None
+        and 0 <= raw_spin <= MAX_SPIN_REVOLUTIONS_PER_SECOND
+        else None
+    )
+    return speed, spin, direction
 
 
 class TelemetryReader:
     """Debounce repeated HUD OCR into timestamped screen state changes."""
 
-    def __init__(self, stable_samples: int = 2) -> None:
+    def __init__(
+        self,
+        stable_samples: int = 3,
+        evidence_window: int = 6,
+    ) -> None:
         self.stable_samples = stable_samples
+        self.evidence_window = evidence_window
         self.candidate: Optional[TelemetryReading] = None
         self.candidate_count = 0
         self.latest: Optional[TelemetryReading] = None
         self.bounds: Optional[Tuple[int, int, int, int]] = None
+        self.component_samples: deque[
+            Tuple[
+                Optional[float],
+                Optional[int],
+                Optional[Dict[str, Any]],
+            ]
+        ] = deque(maxlen=evidence_window)
 
     @staticmethod
     def same_values(left: TelemetryReading, right: TelemetryReading) -> bool:
@@ -1086,7 +1132,10 @@ class TelemetryReader:
             self.bounds = telemetry_title_bounds(frame)
         if self.bounds is None:
             return None
-        reading = read_telemetry(frame, frame_number, self.bounds)
+        self.component_samples.append(
+            read_telemetry_components(frame, self.bounds)
+        )
+        reading = self.consensus_reading(frame_number)
         if reading is None:
             return None
         if self.candidate is not None and self.same_values(reading, self.candidate):
@@ -1100,6 +1149,45 @@ class TelemetryReader:
             return None
         self.latest = reading
         return reading
+
+    def consensus_reading(
+        self, frame_number: int,
+    ) -> Optional[TelemetryReading]:
+        """Combine repeated field reads from adjacent frames of one HUD state."""
+        # Two matching observations make a field usable; the separate
+        # candidate debounce below keeps the assembled state from publishing
+        # during a screen transition.
+        minimum_evidence = 2
+        speeds = Counter(
+            speed for speed, _, _ in self.component_samples
+            if speed is not None
+        )
+        spins = Counter(
+            spin for _, spin, _ in self.component_samples
+            if spin is not None
+        )
+        directions = Counter(
+            direction["label"] for _, _, direction in self.component_samples
+            if direction is not None
+        )
+        if not speeds or not spins or not directions:
+            return None
+        speed, speed_count = speeds.most_common(1)[0]
+        spin, spin_count = spins.most_common(1)[0]
+        direction_label, direction_count = directions.most_common(1)[0]
+        if min(speed_count, spin_count, direction_count) < minimum_evidence:
+            return None
+        direction = next(
+            direction for _, _, direction in reversed(self.component_samples)
+            if direction is not None
+            and direction["label"] == direction_label
+        )
+        return TelemetryReading(
+            frame_number,
+            speed,
+            spin,
+            direction,
+        )
 
 def shadow_contact_score(
     hsv: np.ndarray, center: Point, settings: DetectorSettings = DetectorSettings(),

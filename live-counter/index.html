@@ -321,6 +321,7 @@
       let establishTimer = null
       let resetTimer = null
       let healthWarning = null
+      let previewDescription = "Detector view · real-time"
       let highScore = loadHighScore(window.localStorage)
       bestCount.textContent = highScore
 
@@ -341,7 +342,7 @@
           window.addEventListener("load", startPreview, { once: true })
         }
         preview.addEventListener("load", () => {
-          previewLabel.textContent = "Detector view · real-time"
+          previewLabel.textContent = previewDescription
         })
         preview.addEventListener("error", () => {
           previewLabel.textContent = "Detector video disconnected"
@@ -495,6 +496,15 @@
             status.className = "connected"
             status.textContent = shot.message
           }
+        } else if (shot.type === "preview_only") {
+          previewDescription = "Video preview · detector disabled"
+          previewLabel.textContent = previewDescription
+          status.className = "connected"
+          status.textContent = shot.message
+        } else if (shot.type === "preview_error") {
+          status.className = "error"
+          status.textContent = `Video preview failed: ${shot.message}`
+          previewLabel.textContent = "Video preview failed"
         } else if (shot.type === "counter_status" && !healthWarning) {
           status.className = "connected"
           status.textContent = shot.message
