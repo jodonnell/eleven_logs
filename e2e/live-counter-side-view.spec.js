@@ -31,6 +31,18 @@ const reconcileFinalized = (attempts) => {
   )
 }
 
+const missingPlayerTelemetry = (attempts, source) =>
+  attempts
+    .filter(({ outcome }) => outcome === "hit")
+    .flatMap((hit, index) => {
+      const identity =
+        hit.attempt_id ?? hit.video_timestamp ?? `hit ${index + 1}`
+      return Number.isFinite(hit.hit?.speed_mps) &&
+        Number.isFinite(hit.hit?.spin_revolutions_per_second)
+        ? []
+        : [`${source}: ${identity}`]
+    })
+
 test("reconciles every labeled side-view attempt exactly once", async ({
   page,
   request,
@@ -67,6 +79,13 @@ test("reconciles every labeled side-view attempt exactly once", async ({
   const finalized = reconcileFinalized(attempts)
 
   expect(finalized.map(({ outcome }) => outcome)).toEqual(fixture.outcomes)
+  expect(
+    [
+      ...missingPlayerTelemetry(canonical, "canonical"),
+      ...missingPlayerTelemetry(finalized, "SSE"),
+    ],
+    "every successful hit must include complete player speed/spin telemetry",
+  ).toEqual([])
   expect(finalized.map(({ attempt_id }) => attempt_id)).toEqual(
     fixture.outcomes.map(
       (_outcome, index) => `attempt-${String(index + 1).padStart(4, "0")}`,

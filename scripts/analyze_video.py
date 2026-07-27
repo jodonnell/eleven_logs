@@ -63,14 +63,14 @@ LOW_RES_DIGIT_TEMPLATES = {
         for variant in bitmap.split("|")
     ]
     for digit, bitmap in {
-        "0": "0100/1011/1001/1011|1001/1001/1111|1011/1001/1111|1101/1001/1101|011110/110011/110011/011110",
+        "0": "0100/1011/1001/1011|1001/1001/1111|1011/1001/1111|1101/1001/1101|011110/110011/110011/011110|11110/11011/10011/10011/11111",
         "1": "111/001/001|111/011/011|111/111/011/011|111/001/011/001|111/001/001/001",
-        "2": "0011/0010/1100|0100/0011/0110/1100|0100/0011/0110/1110|01111/00001/00110/11111",
+        "2": "0011/0010/1100|0100/0011/0110/1100|0100/0011/0110/1110|01111/00001/00110/11111|001110/011111/000111/001110/111111|011110/000011/001100/111010",
         "3": "011/110/011|100/011/110/011|11110/00110/00011/00011",
         "4": "0010/0110/1010/0011|0010/0110/1010/1011|0110/1010/1111|00011/01111/11011/00011|000110/011010/111111/000010",
-        "5": "1000/1111/0011|1100/0111/0001|1110/1000/1111/0011|1110/1000/1111/1011|11110/11110/00111/10111|10000/11110/00011/11110|010000/011110/000011/111110|11110/11110/00011/00011",
-        "6": "1000/1111/1011|1011/1110/1001|1100/1111/1001|01100/11000/11110/11110/01100|011110/011110/110011/010011",
-        "7": "011/010/100|011/010/110|111/001/011/010|00011/00110/01100/11000",
+        "5": "1000/1111/0011|1100/0111/0001|1110/1000/1111/0011|1110/1000/1111/1011|11110/11110/00111/10111|10000/11110/00011/11110|010000/011110/000011/111110|11110/11110/00011/00011|011110/011111/011111/000011/111111|001100/011111/001111/000111/111111",
+        "6": "1000/1111/1011|1011/1110/1001|1100/1111/1001|01100/11000/11110/11110/01100|011110/011110/110011/010011|000110/011111/111111/111011/011111|001100/011111/011111/111111/111111",
+        "7": "011/010/100|011/010/110|111/001/011/010|00011/00110/01100/11000|111111/000110/001100/001000|11110/00011/01100/11000|11111/11111/00110/01110/11100",
         "8": "1011/1110/1001|1011/1110/1011|1101/0111/1101|011011/011110/110011/111111|010011/011110/110011/111111|011110/011110/011111/110011",
         "9": "0100/1011/1111/0010|1101/1111/0001|1011/1111/0011|010011/110011/001011/011110|011011/110011/001011/011110|011110/110011/011111/000110",
     }.items()
@@ -808,6 +808,18 @@ def normalize_digit(mask: np.ndarray) -> np.ndarray:
 def classify_digit(mask: np.ndarray) -> Tuple[str, float]:
     normalized = normalize_digit(mask)
     if mask.shape[0] <= 5:
+        native = mask > 0
+        exact = [
+            digit
+            for digit, raw_templates in LOW_RES_DIGIT_TEMPLATES.items()
+            if any(
+                raw_template.shape == mask.shape
+                and np.array_equal(native, raw_template)
+                for raw_template in raw_templates
+            )
+        ]
+        if len(exact) == 1:
+            return exact[0], 1.0
         scores = {}
         for digit, raw_templates in LOW_RES_DIGIT_TEMPLATES.items():
             candidate_scores = []
@@ -817,7 +829,6 @@ def classify_digit(mask: np.ndarray) -> Tuple[str, float]:
                 total = np.count_nonzero(normalized) + np.count_nonzero(template)
                 score = 2 * intersection / total if total else 0.0
                 if raw_template.shape == mask.shape:
-                    native = mask > 0
                     native_intersection = np.count_nonzero(
                         native & raw_template,
                     )
@@ -921,7 +932,15 @@ def read_hud_number(
         for index in range(digit_count):
             left = round(start + (end - start) * index / digit_count)
             right_edge = round(start + (end - start) * (index + 1) / digit_count)
-            cell = core[:, left:right_edge]
+            # In the profile-side view the physical net post crosses the
+            # leading ``1`` of a three-digit player spin. The suffix remains
+            # visible in the wider antialiased mask, so infer only that
+            # occluded leading digit and classify the two visible cells.
+            if digit_count == 3 and index == 0:
+                digits.append("1")
+                continue
+            cell_mask = white if digit_count == 3 else core
+            cell = cell_mask[:, left:right_edge]
             cell_ys, cell_xs = np.nonzero(cell)
             if not len(cell_xs):
                 return None
@@ -1721,6 +1740,21 @@ class AttemptClassifier:
     ) -> Tuple[Optional[TelemetryReading], Optional[TelemetryReading]]:
         """Return the post-hit screen update and this attempt's delivery."""
         machine = attempt.machine_telemetry
+        if self.calibration.get("camera_geometry") == "profile_side_view":
+            # In the canonical side view the projected table contact and the
+            # player-return HUD update share essentially the same timestamp.
+            # Launcher tracking can therefore begin after that HUD state was
+            # published, causing it to be mistaken for machine telemetry.
+            # Anchor the player result to the contact, then recover the most
+            # recent distinct preceding state as the machine setting.
+            hit = self.telemetry_near(frame)
+            if hit is not None:
+                preceding = [
+                    item for item in self.telemetry_history
+                    if item.frame_number < hit.frame_number
+                    and not TelemetryReader.same_values(item, hit)
+                ]
+                return hit, (preceding[-1] if preceding else machine)
         if machine is None:
             return None, None
         post_launch = [
@@ -2319,6 +2353,9 @@ class AttemptClassifier:
             departure=(),
         )
         self.record_contact_candidate(candidate, path, draw_frame, attempt)
+        hit_telemetry, machine_telemetry = self.telemetry_pair_for_attempt(
+            attempt, hit[0],
+        )
         event = BounceEvent(
             video_time_seconds=round(hit[0] / self.fps, 3),
             video_timestamp=fmt_timestamp(hit[0] / self.fps),
@@ -2333,6 +2370,14 @@ class AttemptClassifier:
             pixel=candidate.pixel,
             draw_frame=draw_frame,
             attempt_frame_number=attempt.frame,
+            hit=(
+                hit_telemetry.to_player_record(self.fps)
+                if hit_telemetry else None
+            ),
+            machine=(
+                machine_telemetry.to_record(self.fps)
+                if machine_telemetry else None
+            ),
         )
         attempt.classified_contact_keys.add(contact_key)
         attempt.bounces.append(event)

@@ -1424,6 +1424,30 @@ class VideoDetectorUnitTest(unittest.TestCase):
 
         self.assertIsNone(classifier.projected_profile_contact(path))
 
+    def test_projected_profile_contact_preserves_player_telemetry(self):
+        classifier = self.profile_classifier()
+        direction = {
+            "x": 0.0, "y": 1.0, "angle_degrees": 90, "label": "up",
+        }
+        machine = TelemetryReading(100, 10.5, 51, direction)
+        player = TelemetryReading(130, 14.2, 87, direction)
+        attempt = Attempt(100, (800, 200), machine_telemetry=machine)
+        attempt.telemetry_after_launch.append(player)
+        path = [
+            (frame, float(x), 300.0, 0.0)
+            for frame, x in ((120, 300), (125, 400), (130, 500))
+        ]
+
+        classifier.add_projected_profile_bounce(
+            path, (130, 650.0, 340.0, 1.0), 132, attempt,
+        )
+
+        self.assertEqual(len(attempt.bounces), 1)
+        event = attempt.bounces[0]
+        self.assertEqual(event.hit["speed_mps"], 14.2)
+        self.assertEqual(event.hit["spin_revolutions_per_second"], 87)
+        self.assertEqual(event.machine["speed_mps"], 10.5)
+
     def test_identity_homography_maps_pixel_to_table_coordinate(self):
         self.assertEqual(
             map_log_coordinate(np.eye(3, dtype=np.float32), (2.5, 4.0), 0.7786086),
@@ -1447,6 +1471,19 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertIsNotNone(reading)
         self.assertEqual(reading.speed_mps, 10.5)
         self.assertEqual(reading.spin_revolutions_per_second, 51)
+        self.assertEqual(reading.spin_direction["label"], "up")
+
+    def test_side_view_reads_net_obscured_three_digit_player_telemetry(self):
+        cap = cv2.VideoCapture(str(ROOT / "side-view-regression.mkv"))
+        cap.set(cv2.CAP_PROP_POS_MSEC, 7_900)
+        ok, frame = cap.read()
+        cap.release()
+
+        self.assertTrue(ok)
+        reading = read_telemetry(frame, 474)
+        self.assertIsNotNone(reading)
+        self.assertEqual(reading.speed_mps, 12.3)
+        self.assertEqual(reading.spin_revolutions_per_second, 106)
         self.assertEqual(reading.spin_direction["label"], "up")
 
     def test_telemetry_title_ignores_stronger_blue_table_edge(self):
