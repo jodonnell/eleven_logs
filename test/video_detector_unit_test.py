@@ -1573,8 +1573,8 @@ class VideoDetectorUnitTest(unittest.TestCase):
         direction = {"x": 0, "y": 1, "angle_degrees": 90, "label": "up"}
 
         with (
-            patch("analyze_video.read_hud_number", side_effect=[19.5, 517]),
-            patch("analyze_video.read_spin_direction", return_value=direction),
+            patch("video_analysis.telemetry.read_hud_number", side_effect=[19.5, 517]),
+            patch("video_analysis.telemetry.read_spin_direction", return_value=direction),
         ):
             reading = read_telemetry(frame, 1, (0, 0, 1, 1))
 
@@ -1610,7 +1610,7 @@ class VideoDetectorUnitTest(unittest.TestCase):
         ]
 
         with patch(
-            "analyze_video.read_telemetry_components",
+            "video_analysis.telemetry.read_telemetry_components",
             side_effect=components,
         ):
             readings = [

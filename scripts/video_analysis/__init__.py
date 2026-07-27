@@ -1,0 +1,1 @@
+"""Modular video-analysis implementation."""
