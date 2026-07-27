@@ -25,6 +25,7 @@ from video_source import open_video_source
 
 ROOT = Path(__file__).resolve().parents[1]
 COUNTER_PAGE = ROOT / "live-counter" / "index.html"
+COUNTER_APP = ROOT / "live-counter" / "app.js"
 COUNTER_SCRIPT = ROOT / "live-counter" / "counter.js"
 ANALYZER = ROOT / "scripts" / "analyze_video.py"
 
@@ -147,6 +148,8 @@ def handler_for(
             path = self.path.split("?", 1)[0]
             if path == "/":
                 self._send_file(COUNTER_PAGE, "text/html; charset=utf-8")
+            elif path == "/app.js":
+                self._send_file(COUNTER_APP, "text/javascript; charset=utf-8")
             elif path == "/counter.js":
                 self._send_file(COUNTER_SCRIPT, "text/javascript; charset=utf-8")
             elif path == "/events":
