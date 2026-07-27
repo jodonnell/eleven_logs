@@ -64,9 +64,13 @@ const render = () => {
   labelsElement.replaceChildren()
   labels.forEach((label, index) => {
     const row = document.createElement("li")
-    row.className = `${label.outcome}${reasons.has(index) ? " needs-audit" : ""}`
+    row.className = `${label.outcome}${
+      reasons.has(index) ? " needs-audit" : ""
+    }`
     row.innerHTML = `
-      <button class="timestamp" title="Replay this attempt">${formatTime(label.time_seconds)}</button>
+      <button class="timestamp" title="Replay this attempt">${formatTime(
+        label.time_seconds,
+      )}</button>
       <span class="outcome">${label.outcome}</span>
       <span class="reason">${reasons.get(index) || ""}</span>
       <div class="row-actions">
@@ -120,7 +124,10 @@ const undo = () => {
 }
 
 const seek = (seconds) => {
-  video.currentTime = Math.max(0, Math.min(video.duration || Infinity, video.currentTime + seconds))
+  video.currentTime = Math.max(
+    0,
+    Math.min(video.duration || Infinity, video.currentTime + seconds),
+  )
 }
 
 const togglePlayback = () => {
@@ -149,15 +156,21 @@ const auditNext = () => {
 const exportLabels = () => {
   const content = JSON.stringify({ version: 1, labels }, null, 2)
   const link = document.createElement("a")
-  link.href = URL.createObjectURL(new Blob([content], { type: "application/json" }))
+  link.href = URL.createObjectURL(
+    new Blob([content], { type: "application/json" }),
+  )
   link.download = "evaluation-labels.json"
   link.click()
   URL.revokeObjectURL(link.href)
 }
 
 document.querySelector("#hit").addEventListener("click", () => addLabel("hit"))
-document.querySelector("#miss").addEventListener("click", () => addLabel("miss"))
-document.querySelector("#uncertain").addEventListener("click", () => addLabel("uncertain"))
+document
+  .querySelector("#miss")
+  .addEventListener("click", () => addLabel("miss"))
+document
+  .querySelector("#uncertain")
+  .addEventListener("click", () => addLabel("uncertain"))
 document.querySelector("#back").addEventListener("click", () => seek(-1))
 document.querySelector("#forward").addEventListener("click", () => seek(1))
 document.querySelector("#play").addEventListener("click", togglePlayback)
@@ -166,7 +179,8 @@ document.querySelector("#audit").addEventListener("click", auditNext)
 document.querySelector("#export").addEventListener("click", exportLabels)
 
 document.addEventListener("keydown", (event) => {
-  if (event.repeat || ["INPUT", "TEXTAREA"].includes(event.target.tagName)) return
+  if (event.repeat || ["INPUT", "TEXTAREA"].includes(event.target.tagName))
+    return
   const key = event.key.toLowerCase()
   const actions = {
     h: () => addLabel("hit"),

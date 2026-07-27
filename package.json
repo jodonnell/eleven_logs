@@ -4,7 +4,7 @@
   "description": "",
   "type": "module",
   "scripts": {
-    "check": "npm run lint && npm test -- --runInBand && npm run test:video && npm run test:e2e:counter && npm run test:e2e:counter:side-view",
+    "check": "npm run lint && npm run typecheck && npm test -- --runInBand && npm run test:video && npm run test:e2e:counter && npm run test:e2e:counter:side-view",
     "capture:evaluation": "python3 scripts/capture_evaluation.py",
     "counter": "python3 scripts/live_counter_server.py",
     "counter:preview": "python3 scripts/live_counter_server.py --preview-only --realtime --wait-for-subscriber",
@@ -14,14 +14,15 @@
     "counter:quest:debug": "npm run counter:quest -- --clean-recording artifacts/live-counter-clean.mkv --clean-recording-seconds 120 --clean-recording-start immediate --clean-recording-codec mjpeg",
     "counter:replay": "python3 scripts/live_counter_replay.py test/fixtures/side-view-live-counter.json",
     "counter:side-view:debug": "python3 scripts/live_counter_server.py side-view-regression.mkv --realtime --wait-for-subscriber --calibration artifacts/live-2026-07-24-side-calibration.json",
-    "lint": "eslint test/*.js e2e/*.js *.config.js",
+    "lint": "eslint test/*.js e2e/*.js live-counter/*.js evaluation-labeler/*.js *.config.js",
     "label:evaluation": "python3 scripts/label_evaluation.py",
-    "prettier": "prettier test/*.js --write",
+    "prettier": "prettier test/*.js e2e/*.js live-counter/*.js live-counter/*.html evaluation-labeler/*.js evaluation-labeler/*.html evaluation-labeler/*.css *.config.js --write",
     "test": "jest ./test/",
     "test:e2e:counter": "playwright test e2e/live-counter.spec.js",
     "test:e2e:counter:side-view": "playwright test e2e/live-counter-side-view.spec.js --config playwright.side-view.config.js",
-    "test:video": "python3 -m unittest test/video_source_test.py test/auto_calibration_test.py test/video_detector_unit_test.py test/live_counter_replay_test.py test/capture_evaluation_test.py test/label_evaluation_test.py test/evaluate_detector_test.py test/review_mismatches_test.py test/compare_sse_labels_test.py",
-    "test:watch": "jest --watch ./test/"
+    "test:video": "python3 -m unittest test/video_source_test.py test/auto_calibration_test.py test/video_detector_unit_test.py test/live_counter_replay_test.py test/live_counter_server_test.py test/capture_evaluation_test.py test/label_evaluation_test.py test/evaluate_detector_test.py test/review_mismatches_test.py test/compare_sse_labels_test.py",
+    "test:watch": "jest --watch ./test/",
+    "typecheck": "pyright"
   },
   "author": "Jacob",
   "license": "ISC",

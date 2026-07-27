@@ -39,7 +39,10 @@ Calibration = Dict[str, Any]
 
 
 DIGIT_TEMPLATES = {
-    digit: np.uint8([[pixel == "1" for pixel in row] for row in bitmap.split("/")])
+    digit: np.asarray(
+        [[pixel == "1" for pixel in row] for row in bitmap.split("/")],
+        dtype=np.uint8,
+    )
     for digit, bitmap in {
         "0": "0000000000000000/0000000000000000/0000000000000000/0000000000000000/0000111111100000/0011111111111000/0111110001111100/0111100000111100/0111100000111110/0111100000111110/0111100000111110/0111100000111110/0111110000111100/0011111001111100/0001111111111000/0000001111000000/0000000000000000/0000000000000000/0000000000000000/0000000000000000",
         "1": "0000000000000000/0000000011111100/0000011111111100/0000011111111100/0111111111111100/0111111011111100/0111110011111100/0000000011111100/0000000011111110/0000000011111110/0000000011111110/0000000011111110/0000000011111110/0000000011111110/0000000011111110/0000000011111110/0000000011111110/0000000011111110/0000000011111110/0000000000000000",
@@ -59,7 +62,10 @@ DIGIT_TEMPLATES = {
 # templates are downsampled (notably 0/9 and 5/6/8).
 LOW_RES_DIGIT_TEMPLATES = {
     digit: [
-        np.uint8([[pixel == "1" for pixel in row] for row in variant.split("/")])
+        np.asarray(
+            [[pixel == "1" for pixel in row] for row in variant.split("/")],
+            dtype=np.uint8,
+        )
         for variant in bitmap.split("|")
     ]
     for digit, bitmap in {
@@ -369,13 +375,21 @@ def calibration_geometry(
     if "control_points" in data:
         if len(data["control_points"]) != 4:
             raise SystemExit("Calibration needs exactly four image/log control points")
-        image = np.float32([point["image"] for point in data["control_points"]]) * scale
-        log = np.float32([point["log"] for point in data["control_points"]])
+        image = np.asarray(
+            [point["image"] for point in data["control_points"]], dtype=np.float32,
+        ) * scale
+        log = np.asarray(
+            [point["log"] for point in data["control_points"]], dtype=np.float32,
+        )
     else:
         names = ("far_left", "far_right", "near_right", "near_left")
-        image = np.float32([data["image_corners"][name] for name in names]) * scale
-        log = np.float32([data["log_corners"][name] for name in names])
-    table_polygon = np.float32(data["table_polygon"]) * scale
+        image = np.asarray(
+            [data["image_corners"][name] for name in names], dtype=np.float32,
+        ) * scale
+        log = np.asarray(
+            [data["log_corners"][name] for name in names], dtype=np.float32,
+        )
+    table_polygon = np.asarray(data["table_polygon"], dtype=np.float32) * scale
     # Contacts may use a deliberately smaller reviewed surface than the
     # rendered table outline. Keep it camera calibration data rather than a
     # detector-wide pixel constant.
@@ -845,7 +859,7 @@ def classify_digit(mask: np.ndarray) -> Tuple[str, float]:
                         )
                 candidate_scores.append(score)
             scores[digit] = max(candidate_scores)
-        ranked = sorted(scores, key=scores.get, reverse=True)
+        ranked = sorted(scores, key=lambda item: scores[item], reverse=True)
         if len(ranked) > 1 and scores[ranked[0]] - scores[ranked[1]] < .015:
             return "?", 0.0
         digit = ranked[0]
@@ -875,7 +889,7 @@ def classify_digit(mask: np.ndarray) -> Tuple[str, float]:
                 scores = {"9": scores.get("9", 0.0)}
     if not scores:
         return "?", 0.0
-    digit = max(scores, key=scores.get)
+    digit = max(scores, key=lambda item: scores[item])
     return digit, round(scores[digit], 3)
 
 
@@ -954,8 +968,12 @@ def read_hud_number(
         return int("".join(digits)) if confidence >= .38 else None
     count, labels, stats, _ = cv2.connectedComponentsWithStats(core)
     minimum_area = max(1, round(height * height * .015))
-    boxes = sorted(
-        [tuple(map(int, box)) for box in stats[1:] if box[4] >= minimum_area],
+    boxes: List[Tuple[int, int, int, int, int]] = sorted(
+        [
+            (int(box[0]), int(box[1]), int(box[2]), int(box[3]), int(box[4]))
+            for box in stats[1:]
+            if box[4] >= minimum_area
+        ],
         key=lambda box: box[0],
     )
     if not boxes:
@@ -1274,7 +1292,7 @@ def candidates_for_frame(
     corridor_height = max(1.0, corridor_bottom - corridor_top)
     for i in range(1, count):
         area = int(stats[i, cv2.CC_STAT_AREA])
-        center = tuple(map(float, centers[i]))
+        center: Point = (float(centers[i][0]), float(centers[i][1]))
         if not point_in_polygon(center, tracking_polygon):
             if diagnostics is not None:
                 diagnostics.candidate(center, "rejected", "outside tracking region")
@@ -1340,7 +1358,8 @@ def candidates_for_frame(
 def map_log_coordinate(
     homography: np.ndarray, image_point: Point, surface_y: float
 ) -> Tuple[float, float, float]:
-    mapped = cv2.perspectiveTransform(np.float32([[image_point]]), homography)[0][0]
+    source = np.asarray([[image_point]], dtype=np.float32)
+    mapped = cv2.perspectiveTransform(source, homography)[0][0]
     return round(float(mapped[0]), 4), round(float(surface_y), 4), round(float(mapped[1]), 4)
 
 
@@ -1356,7 +1375,7 @@ def draw_overlay(
     frame_number: Optional[int] = None,
 ) -> np.ndarray:
     view = frame.copy()
-    poly = np.int32(table).reshape((-1, 1, 2))
+    poly = table.astype(np.int32).reshape((-1, 1, 2))
     cv2.polylines(view, [poly], True, (0, 255, 255), 3)
     cv2.line(view, tuple(map(int, net_line[0])), tuple(map(int, net_line[1])), (255, 0, 255), 3)
     # Calibration grid: x is across the table width; z is player(-) to
@@ -1364,14 +1383,15 @@ def draw_overlay(
     # any bounce coordinates are trusted.
     inverse_homography = np.linalg.inv(homography)
     for z in (-1.37, -0.685, 0.0, 0.685, 1.37):
-        line = np.float32([[[-0.7625, z]], [[0.7625, z]]])
+        line = np.asarray([[[-0.7625, z]], [[0.7625, z]]], dtype=np.float32)
         projected = cv2.perspectiveTransform(line, inverse_homography).reshape(-1, 2)
         cv2.line(view, tuple(map(int, projected[0])), tuple(map(int, projected[1])), (80, 160, 255), 1)
     for x in (-0.7625, -0.38125, 0.0, 0.38125, 0.7625):
-        line = np.float32([[[x, -1.37]], [[x, 1.37]]])
+        line = np.asarray([[[x, -1.37]], [[x, 1.37]]], dtype=np.float32)
         projected = cv2.perspectiveTransform(line, inverse_homography).reshape(-1, 2)
         cv2.line(view, tuple(map(int, projected[0])), tuple(map(int, projected[1])), (80, 160, 255), 1)
-    center = cv2.perspectiveTransform(np.float32([[[0.0, 0.0]]]), inverse_homography)[0][0]
+    origin = np.asarray([[[0.0, 0.0]]], dtype=np.float32)
+    center = cv2.perspectiveTransform(origin, inverse_homography)[0][0]
     cv2.drawMarker(view, tuple(map(int, center)), (0, 0, 255), cv2.MARKER_CROSS, 22, 2)
     cv2.putText(view, "log-space grid; red = (0,0)", (16, 30), cv2.FONT_HERSHEY_SIMPLEX, .55, (0, 0, 255), 2)
     for point in track:
@@ -1394,13 +1414,17 @@ def draw_overlay(
                 continue
             cv2.drawMarker(view, center, colors["rejected"], cv2.MARKER_TILTED_CROSS, 8, 1)
         for path in diagnostics.unconfirmed_tracks:
-            points = np.int32([(point[1], point[2]) for point in path])
+            points = np.asarray(
+                [(point[1], point[2]) for point in path], dtype=np.int32,
+            )
             if len(points) >= 2:
                 cv2.polylines(view, [points], False, (255, 255, 0), 1)
         current_frame = frame_number if frame_number is not None else 0
         for completed in diagnostics.visible_completed_tracks(current_frame)[-8:]:
             color = colors[completed.kind]
-            points = np.int32([(point[1], point[2]) for point in completed.points])
+            points = np.asarray(
+                [(point[1], point[2]) for point in completed.points], dtype=np.int32,
+            )
             if len(points) >= 2:
                 cv2.polylines(view, [points], False, color, 2)
             if len(points):
@@ -2256,8 +2280,8 @@ class AttemptClassifier:
         if net_distance > maximum_net_distance:
             return None
 
-        xs = np.float64([point[1] for point in path])
-        ys = np.float64([point[2] for point in path])
+        xs = np.asarray([point[1] for point in path], dtype=np.float64)
+        ys = np.asarray([point[2] for point in path], dtype=np.float64)
         if float(np.ptp(xs)) < minimum_progress:
             return None
         coefficients = np.polyfit(xs, ys, 2)
@@ -3939,7 +3963,8 @@ def create_video_writer(
 ) -> cv2.VideoWriter:
     """Create an annotated-video writer or fail before processing begins."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*codec), fps, size)
+    fourcc = getattr(cv2, "VideoWriter_fourcc")(*codec)
+    writer = cv2.VideoWriter(path, fourcc, fps, size)
     if not writer.isOpened():
         writer.release()
         raise SystemExit(f"Could not create annotated video at {path}")
@@ -3984,11 +4009,16 @@ def process_video(
     video_width, video_height = source.width, source.height
     width, height = round(video_width * scale), round(video_height * scale)
     settings = DetectorSettings.from_calibration(calibration)
-    net_line = np.float32(calibration["net_line"]) * scale
-    occlusion = np.float32(calibration.get("occlusion_polygon", [])) * scale
-    tracking_polygon = np.float32(calibration["tracking_polygon"]) * scale
-    contact_polygon = np.float32(
-        calibration.get("table_contact_polygon", calibration["table_polygon"])
+    net_line = np.asarray(calibration["net_line"], dtype=np.float32) * scale
+    occlusion = np.asarray(
+        calibration.get("occlusion_polygon", []), dtype=np.float32,
+    ) * scale
+    tracking_polygon = np.asarray(
+        calibration["tracking_polygon"], dtype=np.float32,
+    ) * scale
+    contact_polygon = np.asarray(
+        calibration.get("table_contact_polygon", calibration["table_polygon"]),
+        dtype=np.float32,
     ) * scale
     tracker = MultiBallTracker(settings)
     diagnostics = (
@@ -4439,7 +4469,7 @@ def main() -> None:
                     "type": "_preview_frame",
                     "frame_number": frame_number,
                     "video_time_seconds": round(frame_number / fps, 3),
-                    "jpeg_base64": base64.b64encode(jpeg).decode("ascii"),
+                    "jpeg_base64": base64.b64encode(jpeg.tobytes()).decode("ascii"),
                 }
                 try:
                     print(json.dumps(record, separators=(",", ":")), flush=True)

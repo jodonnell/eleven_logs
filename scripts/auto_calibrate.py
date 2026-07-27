@@ -151,7 +151,7 @@ def infer_ball_color(
     tracking = np.asarray(calibration["tracking_polygon"], dtype=np.float32) * scale
     table = np.asarray(calibration["table_polygon"], dtype=np.float32) * scale
     region = np.zeros((height, width), dtype=np.uint8)
-    cv2.fillPoly(region, [np.int32(tracking)], 255)
+    cv2.fillPoly(region, [tracking.astype(np.int32)], 255)
     # Player hands and paddles occupy the lower exterior of the corridor. Ball
     # calibration needs the tabletop and the air above it, not that foreground.
     table_bottom = int(np.max(table[:, 1]))
@@ -449,8 +449,10 @@ def perspective_table_geometry(
     end_edges = [edges[index] for index in end_indexes]
     end_lengths = [float(np.linalg.norm(edge[1] - edge[0])) for edge in end_edges]
     player_index = int(np.argmax(end_lengths))
-    player_edge = tuple(map(float, np.mean(end_edges[player_index], axis=0)))
-    opponent_edge = tuple(map(float, np.mean(end_edges[1 - player_index], axis=0)))
+    player_center = np.mean(end_edges[player_index], axis=0)
+    opponent_center = np.mean(end_edges[1 - player_index], axis=0)
+    player_edge = (float(player_center[0]), float(player_center[1]))
+    opponent_edge = (float(opponent_center[0]), float(opponent_center[1]))
     # Side-view fixtures have an almost horizontal player-to-launcher axis and
     # retain the established calibrated path. This fallback is for elevated
     # end/three-quarter views where depth occupies substantial image height.
@@ -482,8 +484,10 @@ def perspective_table_geometry(
     crossed = float(np.linalg.norm(left[0] - right[1]) + np.linalg.norm(left[1] - right[0]))
     if crossed < direct:
         right = (right[1], right[0])
-    net_start = tuple(map(float, (left[0] + right[0]) / 2))
-    net_end = tuple(map(float, (left[1] + right[1]) / 2))
+    net_start_array = (left[0] + right[0]) / 2
+    net_end_array = (left[1] + right[1]) / 2
+    net_start = (float(net_start_array[0]), float(net_start_array[1]))
+    net_end = (float(net_end_array[0]), float(net_end_array[1]))
     table_polygon = [[float(x), float(y)] for x, y in full]
     return table_polygon, player_edge, opponent_edge, (
         net_start[0], net_start[1], net_end[0], net_end[1],
@@ -611,8 +615,14 @@ def calibration_from_frame(
     )
     if perspective is not None:
         visible_table, player_edge_small, opponent_edge_small, net = perspective
-        player_edge = tuple(value * inverse_scale for value in player_edge_small)
-        opponent_edge = tuple(value * inverse_scale for value in opponent_edge_small)
+        player_edge = (
+            player_edge_small[0] * inverse_scale,
+            player_edge_small[1] * inverse_scale,
+        )
+        opponent_edge = (
+            opponent_edge_small[0] * inverse_scale,
+            opponent_edge_small[1] * inverse_scale,
+        )
         net_start = (net[0] * inverse_scale, net[1] * inverse_scale)
         net_end = (net[2] * inverse_scale, net[3] * inverse_scale)
         table_polygon = [
@@ -655,7 +665,8 @@ def calibration_from_frame(
             diagnostic_path = Path(diagnostic)
             view = small.copy()
             cv2.polylines(
-                view, [np.int32(visible_table).reshape((-1, 1, 2))],
+                view,
+                [np.asarray(visible_table, dtype=np.int32).reshape((-1, 1, 2))],
                 True, (0, 255, 255), 2,
             )
             cv2.line(
@@ -758,7 +769,13 @@ def calibration_from_frame(
     if diagnostic is not None:
         diagnostic_path = Path(diagnostic)
         view = small.copy()
-        cv2.polylines(view, [np.int32(visible_table).reshape((-1, 1, 2))], True, (0, 255, 255), 2)
+        cv2.polylines(
+            view,
+            [np.asarray(visible_table, dtype=np.int32).reshape((-1, 1, 2))],
+            True,
+            (0, 255, 255),
+            2,
+        )
         cv2.line(view, tuple(map(int, center_line[:2])), tuple(map(int, center_line[2:])), (255, 255, 255), 2)
         cv2.line(view, (round(net_top_x), round(visible_table[0][1])), (round(net_bottom_x), round(visible_table[2][1])), (255, 0, 255), 2)
         cv2.putText(view, "auto table + x=0 line", (16, 28), cv2.FONT_HERSHEY_SIMPLEX, .55, (0, 0, 255), 2)
