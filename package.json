@@ -16,6 +16,7 @@
     "counter:quest": "python3 scripts/live_counter_server.py 'srt://192.168.1.197:9000?mode=caller&latency=400000' --host 0.0.0.0 --calibration artifacts/live-2026-07-24-side-calibration.json --live-events artifacts/live-counter-events.jsonl --clean-recording artifacts/live-counter-clean.mkv --clean-recording-seconds 30 --clean-recording-start launch --clean-recording-codec mjpeg",
     "counter:quest:debug": "npm run counter:quest -- --clean-recording artifacts/live-counter-clean.mkv --clean-recording-seconds 120 --clean-recording-start immediate --clean-recording-codec mjpeg",
     "counter:replay": "python3 scripts/live_counter_replay.py test/fixtures/side-view-live-counter.json",
+    "counter:side-view:debug": "python3 scripts/live_counter_server.py side-view-regression.mkv --realtime --wait-for-subscriber --calibration artifacts/live-2026-07-24-side-calibration.json",
     "console": "node src/stats.js",
     "deploy": "./bin/deploy.sh",
     "lint": "eslint src/*.js test/*.js e2e/*.js *.config.js",
