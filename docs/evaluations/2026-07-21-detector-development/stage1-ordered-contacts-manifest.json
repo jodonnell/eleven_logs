@@ -2,7 +2,7 @@
   "stage": "Stage 1: Ordered contact history",
   "starting_commit": "663af19",
   "baseline": {
-    "report": "artifacts/evaluation-2026-07-21-200632-approach-direction-report.json",
+    "report": "docs/evaluations/2026-07-21-detector-development/evaluation-2026-07-21-200632-approach-direction-report.json",
     "report_sha256": "98579649ec337a91d627fd062989cc429f157335ba87fabdb24e75e889d16d97",
     "sequence_accuracy": 0.9148936170212766,
     "correct": 215,
@@ -17,11 +17,11 @@
     "analyzer_sha256": "0fb4cf83846500e662a26b3c973156203f34e63b183241e466a11814a6d9ea6f",
     "detector_test_sha256": "e63160e20ee77a866d09c52d484d74fa04a98e7f367df8d353bb6929a0e015ae",
     "predictions": {
-      "path": "artifacts/stage1-ordered-contacts.jsonl",
+      "path": "docs/evaluations/2026-07-21-detector-development/stage1-ordered-contacts.jsonl",
       "sha256": "8bb99eb4247a1acb32456724808c5d9f8a4d2a1c3efae09ba3c47f5dab02abec"
     },
     "contact_diagnostics": {
-      "path": "artifacts/stage1-ordered-contacts-diagnostics.jsonl",
+      "path": "docs/evaluations/2026-07-21-detector-development/stage1-ordered-contacts-diagnostics.jsonl",
       "sha256": "4c2a7e9f8c787e4f8d0f7904f5048db7e1acf1c61800c1177807d6c7615aa8f2",
       "records": 421,
       "rejected_records": 15,
@@ -32,9 +32,9 @@
       }
     },
     "report": {
-      "json_path": "artifacts/stage1-ordered-contacts-report.json",
+      "json_path": "docs/evaluations/2026-07-21-detector-development/stage1-ordered-contacts-report.json",
       "json_sha256": "f563aa977bb96836467b0cfcf88a95d98d2722cd6788123f9fc0d0aa0a1e30cd",
-      "markdown_path": "artifacts/stage1-ordered-contacts-report.md",
+      "markdown_path": "docs/evaluations/2026-07-21-detector-development/stage1-ordered-contacts-report.md",
       "markdown_sha256": "5fec6dfe1c4922f96d48ef15738a54da6fbb9cadb30b1dd400fff847bb78cdb2",
       "sequence_accuracy": 0.9234042553191489,
       "correct": 217,

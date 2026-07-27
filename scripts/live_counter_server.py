@@ -281,6 +281,18 @@ def analyzer_command(args: argparse.Namespace) -> List[str]:
     return command
 
 
+def prepare_output_directories(args: argparse.Namespace) -> None:
+    """Create parents for optional analyzer outputs before its process starts."""
+    for value in (
+        args.output,
+        args.annotated,
+        args.clean_recording,
+        args.live_events,
+    ):
+        if value:
+            Path(value).expanduser().parent.mkdir(parents=True, exist_ok=True)
+
+
 def lan_address_for(video: Optional[str]) -> Optional[str]:
     """Return the local address routed toward the video sender."""
     peer = urlparse(video).hostname if video else None
@@ -549,6 +561,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    prepare_output_directories(args)
     events = ShotEventBroker()
     preview = PreviewFrameBroker()
     process_holder: List[subprocess.Popen[str]] = []

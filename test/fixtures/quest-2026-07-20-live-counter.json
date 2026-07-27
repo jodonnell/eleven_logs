@@ -1,5 +1,5 @@
 {
-  "video": "artifacts/quest-2026-07-20-live-counter.mkv",
+  "video": "test/fixtures/local/quest-2026-07-20-live-counter.mkv",
   "max_no_swing_publication_delay_seconds": 4.5,
   "max_hit_publication_delay_seconds": 1.5,
   "max_miss_publication_delay_seconds": 3.5,

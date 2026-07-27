@@ -136,7 +136,7 @@
       774.375
     ]
   ],
-  "diagnostic": "artifacts/evaluation-2026-07-22-blue-orange-auto-calibration.png",
+  "diagnostic": "docs/evaluations/2026-07-22-blue-orange/evaluation-2026-07-22-blue-orange-auto-calibration.png",
   "ball_color": {
     "hue_center": 15.0,
     "hue_tolerance": 9.0,

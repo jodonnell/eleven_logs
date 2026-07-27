@@ -2,7 +2,7 @@
   "stage": "Stage 2: Overlapping attempts and durable ball ownership",
   "starting_commit": "e786e7f",
   "baseline": {
-    "report": "artifacts/stage1-ordered-contacts-report.json",
+    "report": "docs/evaluations/2026-07-21-detector-development/stage1-ordered-contacts-report.json",
     "sequence_accuracy": 0.9234042553191489,
     "correct": 217,
     "wrong_outcome": 15,
@@ -16,11 +16,11 @@
     "analyzer_sha256": "9e077baa973e570b4b2b7fd3dd8eef296c1593db8b4dde2335364d17b518eccf",
     "detector_test_sha256": "0e558fa7708df72286e5df82803bb70547d3b4896f403a97b2e00b69682f1d28",
     "predictions": {
-      "path": "artifacts/stage2-durable-ownership.jsonl",
+      "path": "docs/evaluations/2026-07-21-detector-development/stage2-durable-ownership.jsonl",
       "sha256": "5c4f83087af8b3b1dd7ae30aa5303c6f4cedd00b86bf16e3034761820d65e68f"
     },
     "association_diagnostics": {
-      "path": "artifacts/stage2-durable-ownership-associations.jsonl",
+      "path": "docs/evaluations/2026-07-21-detector-development/stage2-durable-ownership-associations.jsonl",
       "sha256": "6310e49d59219e1ffbd629ab84ebbbbcd94f92f82f2b19866090c812c771bf52",
       "records": 778,
       "association_records": 490,
@@ -28,14 +28,14 @@
       "competing_association_records": 4
     },
     "contact_diagnostics": {
-      "path": "artifacts/stage2-durable-ownership-contacts.jsonl",
+      "path": "docs/evaluations/2026-07-21-detector-development/stage2-durable-ownership-contacts.jsonl",
       "sha256": "c08905a459fa2d37beaa3ea3f9107d2efa7bb214553f35b64fd6e666a1091e9f",
       "records": 432
     },
     "report": {
-      "json_path": "artifacts/stage2-durable-ownership-report.json",
+      "json_path": "docs/evaluations/2026-07-21-detector-development/stage2-durable-ownership-report.json",
       "json_sha256": "97c042a89f1ec5d8266dc6f36d7365aadc5d9cc2e9d022f6c3fd6144d99eda3c",
-      "markdown_path": "artifacts/stage2-durable-ownership-report.md",
+      "markdown_path": "docs/evaluations/2026-07-21-detector-development/stage2-durable-ownership-report.md",
       "markdown_sha256": "d142f8e7e377512fa754f0c6d0c1beb41f5b639bd9a1449d39bcb72b205c33e8",
       "sequence_accuracy": 0.9273504273504274,
       "correct": 217,
@@ -73,7 +73,7 @@
     },
     "verification": {
       "detector_unit_tests": 76,
-      "full_python_suite": "102 applicable tests passed; the explicitly excluded local artifacts/live-counter-clean.mkv fixture failed its stale 11-shot expectation as documented in the plan",
+      "full_python_suite": "102 applicable tests passed; the explicitly excluded local artifacts/live/archive-2026-07-24/clean.mkv fixture failed its stale 11-shot expectation as documented in the plan",
       "sample": {
         "records": 12,
         "baseline_sha256": "42b1eb26d47e007ec56be43e22263ec60fe31c3e7048bc0f2d657de645945f28",

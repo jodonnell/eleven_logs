@@ -99,5 +99,5 @@
   ],
   "auto_calibrated": true,
   "calibration_frame": 0,
-  "diagnostic": "artifacts/sample2-auto.table-calibration.png"
+  "diagnostic": "artifacts/scratch/archive/sample-analysis/sample2-auto.table-calibration.png"
 }

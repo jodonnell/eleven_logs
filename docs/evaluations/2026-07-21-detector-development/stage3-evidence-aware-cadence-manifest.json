@@ -2,7 +2,7 @@
   "stage": "Stage 3: Evidence-aware cadence reconciliation",
   "starting_commit": "235683b",
   "baseline": {
-    "report": "artifacts/stage2-durable-ownership-report.json",
+    "report": "docs/evaluations/2026-07-21-detector-development/stage2-durable-ownership-report.json",
     "sequence_accuracy": 0.9273504273504274,
     "correct": 217,
     "wrong_outcome": 16,
@@ -14,23 +14,23 @@
   "candidate": {
     "description": "Prefer visual attempt_frame_number launch anchors, collapse sub-half-period visual duplicates by cadence support, insert only one cadence slot bracketed by compatible visual launches, and use the same slots for batch and live output",
     "predictions": {
-      "path": "artifacts/stage3-evidence-aware-cadence.jsonl",
+      "path": "docs/evaluations/2026-07-21-detector-development/stage3-evidence-aware-cadence.jsonl",
       "sha256": "2faf69eb00e0af64da80718baa1fbb53b16616c6fb6330af7d824e10a05680ee"
     },
     "association_diagnostics": {
-      "path": "artifacts/stage3-evidence-aware-cadence-associations.jsonl",
+      "path": "docs/evaluations/2026-07-21-detector-development/stage3-evidence-aware-cadence-associations.jsonl",
       "sha256": "6310e49d59219e1ffbd629ab84ebbbbcd94f92f82f2b19866090c812c771bf52",
       "records": 778
     },
     "contact_diagnostics": {
-      "path": "artifacts/stage3-evidence-aware-cadence-contacts.jsonl",
+      "path": "docs/evaluations/2026-07-21-detector-development/stage3-evidence-aware-cadence-contacts.jsonl",
       "sha256": "c08905a459fa2d37beaa3ea3f9107d2efa7bb214553f35b64fd6e666a1091e9f",
       "records": 432
     },
     "report": {
-      "json_path": "artifacts/stage3-evidence-aware-cadence-report.json",
+      "json_path": "docs/evaluations/2026-07-21-detector-development/stage3-evidence-aware-cadence-report.json",
       "json_sha256": "b6a601470e74d062a01a95b12459b82f4f8ca38af8c419f25c4d70eb2d4e9aa0",
-      "markdown_path": "artifacts/stage3-evidence-aware-cadence-report.md",
+      "markdown_path": "docs/evaluations/2026-07-21-detector-development/stage3-evidence-aware-cadence-report.md",
       "markdown_sha256": "e5af4e346b75b646513e616e53468a11b98a66c255e60aeb7004f51b09688995",
       "sequence_accuracy": 0.9106382978723404,
       "correct": 214,

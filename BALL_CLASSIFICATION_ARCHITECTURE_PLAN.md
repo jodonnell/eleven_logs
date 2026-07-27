@@ -14,7 +14,8 @@ Change a task from `[ ]` to `[x]` only after its implementation, tests, and
 - Starting hit metrics: 92.8% precision, 97.1% recall
 - Current stable video guard: `side-view-regression.mkv`, a lossless 60-second
   trim of the confirmed canonical profile-side evaluation
-- Excluded guard: the current `artifacts/live-counter-clean.mkv` does not match
+- Excluded guard: the archived `artifacts/live/archive-2026-07-24/clean.mkv`
+  does not match
   its old 11-shot label fixture
 
 Rules for every stage:
@@ -126,7 +127,8 @@ misalign attempts despite contradictory launch evidence.
 Candidate result: rejected and reverted. The visual-anchor-first candidate
 scored 91.1% (214 correct) versus Stage 2's 92.7% (217 correct) and reduced the
 historical three-view guard from 48 attempts to 47. See
-`artifacts/stage3-evidence-aware-cadence-manifest.json` for the scorecard and
+`docs/evaluations/2026-07-21-detector-development/stage3-evidence-aware-cadence-manifest.json`
+for the scorecard and
 reconciliation review. The unchecked behavior and test items below were not
 retained.
 
@@ -178,13 +180,13 @@ retained.
 
 ```sh
 python3 scripts/analyze_video.py \
-  artifacts/evaluation-2026-07-21-200632-evaluation.mkv \
-  --output artifacts/STAGE-CANDIDATE.jsonl \
+  artifacts/runs/archive/2026-07-21/evaluation-2026-07-21-200632-evaluation.mkv \
+  --output artifacts/runs/STAGE-CANDIDATE/detector.jsonl \
   --no-annotated
 
 python3 scripts/evaluate_detector.py \
-  artifacts/evaluation-2026-07-21-200632-evaluation-ground-truth-export.json \
-  artifacts/STAGE-CANDIDATE.jsonl \
-  --json-output artifacts/STAGE-CANDIDATE-report.json \
-  --markdown-output artifacts/STAGE-CANDIDATE-report.md
+  docs/evaluations/2026-07-21-detector-development/evaluation-2026-07-21-200632-evaluation-ground-truth-export.json \
+  artifacts/runs/STAGE-CANDIDATE/detector.jsonl \
+  --json-output artifacts/runs/STAGE-CANDIDATE/report.json \
+  --markdown-output artifacts/runs/STAGE-CANDIDATE/report.md
 ```

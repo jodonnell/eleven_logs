@@ -13,9 +13,15 @@ import cv2
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "test" / "fixtures" / "side-view-live-counter.json"
 VIDEO = ROOT / "side-view-regression.mkv"
-CALIBRATION = ROOT / "artifacts" / "live-2026-07-24-side-calibration.json"
+CALIBRATION = (
+    ROOT / "test" / "fixtures" / "calibrations"
+    / "profile-side-live-2026-07-24.json"
+)
 QUEST_FIXTURE = ROOT / "test" / "fixtures" / "quest-2026-07-20-live-counter.json"
-QUEST_VIDEO = ROOT / "artifacts" / "quest-2026-07-20-live-counter.mkv"
+QUEST_VIDEO = (
+    ROOT / "test" / "fixtures" / "local"
+    / "quest-2026-07-20-live-counter.mkv"
+)
 sys.path.insert(0, str(ROOT / "scripts"))
 from live_counter_replay import (  # noqa: E402
     expected_streaks,

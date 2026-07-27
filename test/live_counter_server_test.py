@@ -19,6 +19,7 @@ from live_counter_server import (  # pyright: ignore[reportMissingImports]  # no
     ShotEventBroker,
     analyzer_command,
     counter_urls,
+    prepare_output_directories,
     preview_video,
     read_analyzer,
     run_analyzer,
@@ -129,6 +130,21 @@ class ShotEventBrokerTest(unittest.TestCase):
             "--clean-recording-codec", "mjpeg",
             "--live-events", "artifacts/live-events.jsonl",
         ])
+
+    def test_output_parents_are_created_for_nested_artifact_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            args = Namespace(
+                output=str(root / "run" / "events.jsonl"),
+                annotated=None,
+                clean_recording=str(root / "live" / "clean.mkv"),
+                live_events=str(root / "live" / "events.jsonl"),
+            )
+
+            prepare_output_directories(args)
+
+            self.assertTrue((root / "run").is_dir())
+            self.assertTrue((root / "live").is_dir())
 
     def test_analyzer_command_forwards_realtime_file_pacing(self):
         args = Namespace(

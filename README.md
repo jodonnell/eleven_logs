@@ -23,9 +23,11 @@ or losslessly re-encoding frames in the live path:
 npm run capture:evaluation
 ```
 
-This copies the incoming compressed SRT video directly into a timestamped MKV
-under `artifacts/`, stops after 20 minutes as a safety bound, and can be stopped
-earlier with Ctrl-C. Analyze the saved file offline after recording. Do not use
+This copies the incoming compressed SRT video directly into
+`artifacts/runs/evaluation-TIMESTAMP/capture.mkv`, stops after 20 minutes as a
+safety bound, and can be stopped earlier with Ctrl-C. A sibling
+`capture.manifest.json` records the source, recording path, capture time, and
+duration bound. Analyze the saved file offline after recording. Do not use
 the live counter's `--clean-recording` option for long evaluation sessions: the
 detector can process more slowly than real time and eventually overflow SRT's
 receive buffer.
@@ -33,7 +35,7 @@ receive buffer.
 Label a saved evaluation recording with timestamped ground truth:
 
 ```sh
-npm run label:evaluation -- artifacts/evaluation-session.mkv
+npm run label:evaluation -- artifacts/runs/evaluation-session/capture.mkv
 ```
 
 Open the printed local URL. Press `H`, `M`, or `U` as each attempt finishes;
@@ -57,6 +59,29 @@ npm run evaluate:detector -- ground-truth.json detector-output.jsonl \
 
 The report separates wrong hit/miss decisions from missing and extra launches,
 so one dropped launch does not shift every later comparison.
+
+### Artifact retention
+
+`artifacts/` contains disposable local output and is entirely ignored by Git.
+New evaluation captures use one timestamped directory under `artifacts/runs/`;
+the Quest shortcut reuses `artifacts/live/latest/`; and exploratory frames and
+calibration media belong under `artifacts/scratch/`. Put stable calibration,
+label, and regression inputs in `test/fixtures/`, and put reviewed small
+evaluation records in `docs/evaluations/`.
+
+Preview runs and scratch directories older than 14 days:
+
+```sh
+npm run artifacts:clean
+```
+
+Nothing is removed unless `--apply` is supplied. Add an empty `PINNED` file to
+a run or scratch directory to retain it, and use an `archive/` directory for
+material that should never be selected automatically:
+
+```sh
+npm run artifacts:clean -- --older-than-days 14 --apply
+```
 
 ### Live hit counter
 
@@ -98,7 +123,7 @@ npm run counter:quest
 ```
 
 This shortcut uses the current 1920x1080 profile-side calibration at
-`artifacts/live-2026-07-24-side-calibration.json`, fitted to the detector input
+`test/fixtures/calibrations/profile-side-live-2026-07-24.json`, fitted to the detector input
 captured from the live Quest/OBS framing. The live OBS output must keep that
 resolution, crop, and camera placement. Configure the SRT sender/OBS
 output for 30 FPS. The labeled 153-second evaluation processes more than four
@@ -113,8 +138,8 @@ are not reaching SSE or when eight finalized attempts produce no confirmed
 table contact. These warnings clear automatically after publication or contact
 detection recovers; they do not reset the current score.
 Every normal Quest run also resets and continuously writes
-`artifacts/live-counter-events.jsonl`, plus a bounded 30-second MJPEG detector
-input at `artifacts/live-counter-clean.mkv` beginning with the first detected
+`artifacts/live/latest/events.jsonl`, plus a bounded 30-second MJPEG detector
+input at `artifacts/live/latest/clean.mkv` beginning with the first detected
 launch. This makes a failed live session directly replayable without imposing
 an unbounded recording workload. In addition to `attempt_upsert` records,
 the file receives one `pipeline_heartbeat` per wall-clock second with the
@@ -131,12 +156,12 @@ its frame or attempt sequence. The live log records `source_stalled`,
 For a short detector-diagnostic session, use `npm run counter:quest:debug`.
 It writes two complementary artifacts:
 
-- `artifacts/live-counter-clean.mkv` is lower-overhead MJPEG detector input
+- `artifacts/live/latest/clean.mkv` is lower-overhead MJPEG detector input
   captured before overlays. Recording begins immediately and is capped at 120
   seconds by the Quest debug shortcut, so it still captures sessions when
   launch detection is broken. Direct analyzer captures remain lossless FFV1 by
   default when exact pixel replay is required.
-- `artifacts/live-counter-events.jsonl` preserves every live publication with
+- `artifacts/live/latest/events.jsonl` preserves every live publication with
   its shot frame, publication frame, and publication delay.
 
 The event stream carries `attempt_upsert` records with a `pending -> finalized`
@@ -171,9 +196,9 @@ Stop it with Ctrl-C after the labeled sequence. Change the bound with
 normal use. Render verbose overlays afterward, without burdening live capture:
 
 ```sh
-python3 scripts/analyze_video.py artifacts/live-counter-clean.mkv \
-  --annotated artifacts/live-counter-debug.mp4 \
-  --output artifacts/live-counter-replay.jsonl
+python3 scripts/analyze_video.py artifacts/live/latest/clean.mkv \
+  --annotated artifacts/live/latest/debug.mp4 \
+  --output artifacts/live/latest/replay.jsonl
 ```
 
 Run the checked-in clean sample through the detector and browser-order
@@ -206,7 +231,7 @@ browser is connected:
 
 ```sh
 npm run counter:video -- VIDEO.mkv \
-  --calibration artifacts/live-2026-07-24-side-calibration.json
+  --calibration test/fixtures/calibrations/profile-side-live-2026-07-24.json
 ```
 
 To inspect a local recording without running the detector, requiring a
@@ -251,15 +276,15 @@ launcher region are deliberately not inferred from old-angle fixtures or
 reused across setups.
 
 The strict profile view captured in
-`artifacts/evaluation-2026-07-23-184555.mkv` uses the reviewed
-`artifacts/evaluation-2026-07-23-side-calibration.json`. In this mode the
+`artifacts/runs/archive/2026-07-23/evaluation-2026-07-23-184555.mkv` uses the
+reviewed `test/fixtures/calibrations/profile-side-2026-07-23.json`. In this mode the
 counter deliberately reports no table coordinate because table width is not
 visible. A hit is the directly observable downward-to-upward ball turn on the
 calibrated opponent/right side of the net:
 
 ```sh
 python3 scripts/analyze_video.py VIDEO_OR_SRT_URL \
-  --calibration artifacts/evaluation-2026-07-23-side-calibration.json
+  --calibration test/fixtures/calibrations/profile-side-2026-07-23.json
 ```
 
 Automatic calibration also derives four camera-relative detector regions: a
@@ -277,7 +302,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 python scripts/analyze_video.py side-view-regression.mkv \
-  --calibration artifacts/live-2026-07-24-side-calibration.json
+  --calibration test/fixtures/calibrations/profile-side-live-2026-07-24.json
 ```
 
 For live input, use an OpenCV build whose FFmpeg backend supports SRT. When OBS

@@ -1,33 +1,33 @@
 {
   "evaluation": "Blue table, orange ball, elevated end-view camera",
-  "video": "artifacts/evaluation-2026-07-22-070825-trimmed-70s-to-152s.mkv",
+  "video": "artifacts/runs/archive/2026-07-22/evaluation-2026-07-22-070825-trimmed-70s-to-152s.mkv",
   "labels": {
-    "path": "artifacts/evaluation-labels-2.json",
+    "path": "docs/evaluations/2026-07-22-blue-orange/evaluation-labels-2.json",
     "sha256": "5643ab356b16effe573843d10ea5a4ac5f6b9bb1147ed4ff73048909ea0d742d",
     "attempts": 108
   },
   "automatic_calibration": {
-    "path": "artifacts/evaluation-2026-07-22-blue-orange-auto-calibration.json",
-    "sha256": "e167ad3f7b742a03715061003dd7efaa7a48f402a182aefa6dea1de9edb5cb90",
+    "path": "docs/evaluations/2026-07-22-blue-orange/evaluation-2026-07-22-blue-orange-auto-calibration.json",
+    "sha256": "ae01ee0cc819b7ef3a2ce39ada8f6b982f58ad4832b87880873b6c815ada8441",
     "camera_geometry": "elevated_end_view",
     "table_hsv_hue": 120.0,
     "ball_hsv_hue": 15.0,
     "ball_color_confidence": 1.0
   },
   "predictions": {
-    "path": "artifacts/evaluation-2026-07-22-blue-orange-auto.jsonl",
+    "path": "docs/evaluations/2026-07-22-blue-orange/evaluation-2026-07-22-blue-orange-auto.jsonl",
     "sha256": "8dd2b995dbc0d88190355c78f96559477e591a14abaeff400d6ee22d9671190c",
     "attempts": 111
   },
   "contact_diagnostics": {
-    "path": "artifacts/evaluation-2026-07-22-blue-orange-auto-contacts.jsonl",
+    "path": "docs/evaluations/2026-07-22-blue-orange/evaluation-2026-07-22-blue-orange-auto-contacts.jsonl",
     "sha256": "9cde19a0fddac89fa6db5a599fdb2ab5f265fcb22e89b98369e77ea9b6692266",
     "records": 116
   },
   "report": {
-    "json_path": "artifacts/evaluation-2026-07-22-blue-orange-auto-report.json",
+    "json_path": "docs/evaluations/2026-07-22-blue-orange/evaluation-2026-07-22-blue-orange-auto-report.json",
     "json_sha256": "ab7f41733306d9fd6d5a374e72485599c12705071b5ed1058bbd3302b876ca43",
-    "markdown_path": "artifacts/evaluation-2026-07-22-blue-orange-auto-report.md",
+    "markdown_path": "docs/evaluations/2026-07-22-blue-orange/evaluation-2026-07-22-blue-orange-auto-report.md",
     "markdown_sha256": "4fdc0d60a678e6111ab425251367f2a616c48aaeedfadb18fd70fd09da72ee5e",
     "sequence_accuracy": 0.7168141592920354,
     "correct": 81,

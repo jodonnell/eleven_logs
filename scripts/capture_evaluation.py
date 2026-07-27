@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from datetime import datetime
 from pathlib import Path
@@ -16,7 +17,7 @@ DEFAULT_SRT_URL = "srt://192.168.1.197:9000?mode=caller&latency=120000"
 
 def default_output() -> Path:
     stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
-    return ROOT / "artifacts" / f"evaluation-{stamp}.mkv"
+    return ROOT / "artifacts" / "runs" / f"evaluation-{stamp}" / "capture.mkv"
 
 
 def capture_command(source: str, output: Path, seconds: float) -> List[str]:
@@ -31,6 +32,24 @@ def capture_command(source: str, output: Path, seconds: float) -> List[str]:
         "-t", str(seconds),
         str(output),
     ]
+
+
+def capture_manifest(
+    source: str,
+    output: Path,
+    seconds: float,
+) -> dict[str, object]:
+    try:
+        recorded_path = str(output.relative_to(ROOT))
+    except ValueError:
+        recorded_path = str(output)
+    return {
+        "type": "evaluation-capture",
+        "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "source": source,
+        "recording": recorded_path,
+        "maximum_duration_seconds": seconds,
+    }
 
 
 def parse_args() -> argparse.Namespace:
@@ -50,10 +69,21 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     output = (args.output or default_output()).resolve()
+    manifest = output.with_suffix(".manifest.json")
     if output.exists():
         raise SystemExit(f"Refusing to overwrite existing recording: {output}")
+    if manifest.exists():
+        raise SystemExit(f"Refusing to overwrite existing manifest: {manifest}")
     output.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        json.dumps(
+            capture_manifest(args.source, output, args.seconds),
+            indent=2,
+        ) + "\n",
+        encoding="utf-8",
+    )
     print(f"Recording directly to {output}", flush=True)
+    print(f"Capture manifest at {manifest}", flush=True)
     print("Press Ctrl-C when the session is finished.", flush=True)
     command = capture_command(args.source, output, args.seconds)
     try:

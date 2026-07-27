@@ -11,7 +11,7 @@ export default defineConfig({
   },
   webServer: {
     command:
-      "python3 scripts/live_counter_server.py side-view-regression.mkv --calibration artifacts/live-2026-07-24-side-calibration.json --wait-for-subscriber --port 8898 --output /tmp/eleven-playwright-side-view.jsonl",
+      "python3 scripts/live_counter_server.py side-view-regression.mkv --calibration test/fixtures/calibrations/profile-side-live-2026-07-24.json --wait-for-subscriber --port 8898 --output /tmp/eleven-playwright-side-view.jsonl",
     url: "http://127.0.0.1:8898",
     reuseExistingServer: false,
     timeout: 10_000,

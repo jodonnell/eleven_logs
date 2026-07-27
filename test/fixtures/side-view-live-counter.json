@@ -1,6 +1,6 @@
 {
   "video": "side-view-regression.mkv",
-  "calibration": "artifacts/live-2026-07-24-side-calibration.json",
+  "calibration": "test/fixtures/calibrations/profile-side-live-2026-07-24.json",
   "ground_truth": "test/fixtures/side-view-regression.labels.json",
   "max_no_swing_publication_delay_seconds": 3.0,
   "max_hit_publication_delay_seconds": 5.5,
