@@ -269,12 +269,14 @@ follow the calibrated player/opponent orientation even when a camera view is
 mirrored. The corridor stays horizontally wide for edge-of-table and
 wide-angle paths while excluding room motion well above or below the table.
 
-Install the local Python dependencies once. For the supported profile-side
-view, pass its reviewed calibration explicitly:
+Create an isolated Python environment and install the pinned dependencies. For
+the supported profile-side view, pass its reviewed calibration explicitly:
 
 ```sh
-python3 -m pip install --user opencv-python-headless numpy
-python3 scripts/analyze_video.py side-view-regression.mkv \
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python scripts/analyze_video.py side-view-regression.mkv \
   --calibration artifacts/live-2026-07-24-side-calibration.json
 ```
 

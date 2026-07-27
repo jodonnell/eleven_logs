@@ -1,0 +1,3 @@
+# Runtime and test dependencies for the Python video-analysis tools.
+numpy==2.0.2
+opencv-python-headless==5.0.0.93

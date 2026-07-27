@@ -20,7 +20,7 @@ try:
     import cv2
     import numpy as np
 except ImportError as exc:
-    raise SystemExit("Install dependencies first: python3 -m pip install --user opencv-python-headless numpy") from exc
+    raise SystemExit("Install dependencies first: python3 -m pip install -r requirements.txt") from exc
 
 from auto_calibrate import calibration_from_frame, hue_distance, infer_ball_color
 from video_source import VideoFrame, VideoSource, VideoSourceError, open_video_source
