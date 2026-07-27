@@ -1,8 +1,5 @@
 """Regression test for the per-camera automatic table-origin calibration."""
-import json
-import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -11,41 +8,16 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VIDEO = ROOT / "sample.mp4"
-SAMPLE2_VIDEO = ROOT / "sample2-trimmed-58s.mp4"
-SAMPLE3_VIDEO = ROOT / "sample3-trimmed-44s.mp4"
 sys.path.insert(0, str(ROOT / "scripts"))
 from auto_calibrate import (  # noqa: E402
     calibrated_tracking_regions,
-    calibration_from_frame,
     colored_table_extent,
     detect_geometry,
     infer_ball_color,
-    perspective_table_geometry,
 )
 
 
-def first_frame_calibration(video: Path):
-    capture = cv2.VideoCapture(str(video))
-    ok, frame = capture.read()
-    capture.release()
-    if not ok:
-        raise AssertionError(f"could not read {video}")
-    return calibration_from_frame(frame)
-
-
-def normalized(points, width, height):
-    return [[x / width, y / height] for x, y in points]
-
-
-def assert_points_close(test, actual, expected, delta=.01):
-    test.assertEqual(len(actual), len(expected))
-    for actual_point, expected_point in zip(actual, expected):
-        test.assertAlmostEqual(actual_point[0], expected_point[0], delta=delta)
-        test.assertAlmostEqual(actual_point[1], expected_point[1], delta=delta)
-
-
-class WideViewCalibrationTest(unittest.TestCase):
+class AutomaticCalibrationPrimitiveTest(unittest.TestCase):
     def test_colored_table_extent_finds_blue_table_among_warm_backgrounds(self):
         frame = np.full((300, 500, 3), (35, 75, 130), dtype=np.uint8)
         blue = cv2.cvtColor(
@@ -60,23 +32,6 @@ class WideViewCalibrationTest(unittest.TestCase):
         self.assertLessEqual(top, 90)
         self.assertGreaterEqual(bottom, 220)
         self.assertTrue(mask[160, 250])
-
-    def test_perspective_geometry_recovers_elevated_end_view(self):
-        mask = np.zeros((300, 500), dtype=np.uint8)
-        cv2.fillConvexPoly(
-            mask, np.int32([[220, 50], [300, 60], [290, 120], [190, 110]]), 255,
-        )
-        cv2.fillConvexPoly(
-            mask, np.int32([[188, 114], [292, 124], [350, 250], [100, 230]]), 255,
-        )
-
-        geometry = perspective_table_geometry(mask)
-
-        self.assertIsNotNone(geometry)
-        polygon, player, opponent, net = geometry
-        self.assertEqual(len(polygon), 4)
-        self.assertGreater(player[1], opponent[1])
-        self.assertAlmostEqual((net[1] + net[3]) / 2, 117, delta=8)
 
     def test_ball_color_comes_from_directed_moving_track(self):
         blue = cv2.cvtColor(
@@ -161,179 +116,6 @@ class WideViewCalibrationTest(unittest.TestCase):
         self.assertAlmostEqual(polygon[0][1], 210, delta=5)
         self.assertAlmostEqual(polygon[2][1], 370, delta=5)
         self.assertAlmostEqual(center[1], 270, delta=5)
-
-
-@unittest.skipUnless(
-    VIDEO.exists() and SAMPLE2_VIDEO.exists() and SAMPLE3_VIDEO.exists(),
-    "all three sample videos are local fixtures",
-)
-class AutomaticGeometryRegressionTest(unittest.TestCase):
-    def test_first_frame_geometry_for_every_camera_view(self):
-        cases = [
-            (
-                VIDEO, [4096, 2160], [.2993, .4685],
-                [[.0504, .2389], [.6406, .2389], [.7595, .8870]],
-                [[.3459, .2389], [.2146, .8870]],
-            ),
-            (
-                SAMPLE2_VIDEO, [1024, 540], [.4375, .5000],
-                [[.2446, .3981], [.6569, .3981], [.7751, .6796], [.0503, .6796]],
-                [[.4507, .3981], [.4138, .6796]],
-            ),
-            (
-                SAMPLE3_VIDEO, [4096, 2160], [.4626, .5481],
-                [[.2935, .4565], [.6516, .4565], [.6587, .6981], [.1574, .6981]],
-                [[.4684, .4565], [.4534, .6981]],
-            ),
-        ]
-        for video, image_size, expected_center, expected_table, expected_net in cases:
-            with self.subTest(video=video.name):
-                calibration, center = first_frame_calibration(video)
-                width, height = calibration["image_size"]
-
-                self.assertEqual(calibration["image_size"], image_size)
-                assert_points_close(
-                    self, [[center[0] / width, center[1] / height]], [expected_center],
-                )
-                assert_points_close(
-                    self, normalized(calibration["table_polygon"], width, height),
-                    expected_table,
-                )
-                assert_points_close(
-                    self, normalized(calibration["net_line"], width, height),
-                    expected_net,
-                )
-
-
-@unittest.skipUnless(VIDEO.exists(), "sample.mp4 is a local video fixture")
-class AutoCalibrationTest(unittest.TestCase):
-    def test_first_frame_calibration_stays_in_memory(self):
-        calibration, _ = first_frame_calibration(VIDEO)
-
-        self.assertTrue(calibration["auto_calibrated"])
-        self.assertNotIn("diagnostic", calibration)
-        self.assertNotIn("detector_settings", calibration)
-        self.assertIn("launcher_region", calibration)
-        self.assertIn("return_region", calibration)
-        self.assertIn("tracking_polygon", calibration)
-        assert_points_close(
-            self,
-            normalized(calibration["table_contact_polygon"], *calibration["image_size"]),
-            normalized(calibration["table_polygon"], *calibration["image_size"]),
-            delta=1e-6,
-        )
-
-    def test_first_frame_finds_verified_table_origin(self):
-        """The origin stays at the white-center-stripe/net-base intersection."""
-        calibration, center = first_frame_calibration(VIDEO)
-        # This point was visually approved in artifacts/auto_grid_check.png.
-        # Tolerance allows small OpenCV/Hough implementation differences.
-        width, height = calibration["image_size"]
-        self.assertAlmostEqual(center[0] / width, .2993, delta=.01)
-        self.assertAlmostEqual(center[1] / height, .4685, delta=.01)
-        # The far-left lower rail is occluded in this view. The automatic
-        # path must leave it unknown instead of extending the table to x=0.
-        self.assertEqual(len(calibration["table_polygon"]), 3)
-
-    def test_known_table_contacts_are_not_regressed_to_unknown(self):
-        """Keep the three manually confirmed sample contacts detectable."""
-        with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / "attempts.jsonl"
-            subprocess.run(
-                [sys.executable, "scripts/analyze_video.py", str(VIDEO),
-                 "--output", str(output), "--no-annotated", "--end-seconds", "20"],
-                cwd=ROOT,
-                text=True,
-                capture_output=True,
-                check=True,
-            )
-            events = [json.loads(line) for line in output.read_text().splitlines()]
-        # User-verified contacts: about 4.5s (middle), 6s (close side), and
-        # 17.1s (ball visibly converged with its shadow). The frames are
-        # deliberately exact for this checked-in fixture; use a different
-        # fixture for a moved camera.
-        for frame in (258, 354, 1027):
-            event = next(item for item in events if item["frame_number"] == frame)
-            self.assertTrue(event["hit_table"], f"frame {frame} should be a table contact")
-
-        event = next(item for item in events if item["frame_number"] == 1027)
-        self.assertEqual(event["outcome"], "hit")
-        self.assertTrue(event["is_in"])
-        self.assertAlmostEqual(event["posx"], 0.0043, delta=.03)
-        self.assertAlmostEqual(event["posz"], 0.7473, delta=.05)
-
-    def test_complete_sample_ordered_hit_sequence(self):
-        expected = "out out hit hit miss hit miss miss out out hit miss".split()
-        with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / "sample.jsonl"
-            subprocess.run(
-                [sys.executable, "scripts/analyze_video.py", str(VIDEO),
-                 "--output", str(output)],
-                cwd=ROOT, text=True, capture_output=True, check=True,
-            )
-            actual = [json.loads(line)["outcome"] for line in output.read_text().splitlines()]
-            self.assertEqual({path.name for path in Path(directory).iterdir()}, {"sample.jsonl"})
-
-        self.assertEqual(len(actual), len(expected))
-        self.assertEqual(
-            [item == "hit" for item in actual],
-            [item == "hit" for item in expected],
-        )
-
-
-@unittest.skipUnless(
-    SAMPLE2_VIDEO.exists(),
-    "sample2 video is a local fixture",
-)
-class Sample2OrderedRegressionTest(unittest.TestCase):
-    def test_every_machine_launch_has_the_labeled_ordered_result(self):
-        expected = (
-            "hit hit out out hit out hit out hit out hit hit hit hit out "
-            "hit hit hit hit out hit hit hit hit hit hit hit hit hit hit "
-            "hit hit hit hit out hit hit hit hit hit hit hit hit hit hit "
-            "hit hit miss"
-        ).split()
-        with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / "sample2.jsonl"
-            subprocess.run(
-                [sys.executable, "scripts/analyze_video.py", str(SAMPLE2_VIDEO),
-                 "--output", str(output), "--no-annotated"],
-                cwd=ROOT, text=True, capture_output=True, check=True,
-            )
-            actual = [json.loads(line)["outcome"] for line in output.read_text().splitlines()]
-            self.assertEqual({path.name for path in Path(directory).iterdir()}, {"sample2.jsonl"})
-
-        self.assertEqual(len(actual), 48, "one result is required for every launch")
-        # The user explicitly treats a visible out and a fully occluded miss
-        # as equivalent non-hits; table contacts must still match every ball.
-        self.assertEqual(
-            [item == "hit" for item in actual],
-            [item == "hit" for item in expected],
-        )
-
-
-@unittest.skipUnless(SAMPLE3_VIDEO.exists(), "sample3 video is a local fixture")
-class Sample3UnhintedRegressionTest(unittest.TestCase):
-    def test_auto_calibrated_video_has_every_labeled_hit_in_order(self):
-        expected = (
-            "miss miss hit hit miss hit hit hit miss hit hit hit hit hit hit miss "
-            "hit hit hit hit hit hit hit miss hit miss hit hit hit hit hit hit"
-        ).split()
-        with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / "sample3.jsonl"
-            subprocess.run(
-                [sys.executable, "scripts/analyze_video.py", str(SAMPLE3_VIDEO),
-                 "--output", str(output), "--no-annotated"],
-                cwd=ROOT, text=True, capture_output=True, check=True,
-            )
-            actual = [json.loads(line) for line in output.read_text().splitlines()]
-            self.assertEqual({path.name for path in Path(directory).iterdir()}, {"sample3.jsonl"})
-
-        self.assertEqual(len(actual), 32, "one result is required for every launch")
-        self.assertEqual(
-            [item["outcome"] == "hit" for item in actual],
-            [item == "hit" for item in expected],
-        )
 
 
 if __name__ == "__main__":

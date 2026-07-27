@@ -12,8 +12,8 @@ Change a task from `[ ]` to `[x]` only after its implementation, tests, and
 - Starting accuracy: 91.5% (215 correct)
 - Starting errors: 17 wrong outcomes, 2 missing launches, 1 extra launch
 - Starting hit metrics: 92.8% precision, 97.1% recall
-- Stable video guards: `sample.mp4`, `sample2-trimmed-58s.mp4`, and
-  `sample3-trimmed-44s.mp4`
+- Current stable video guard: `side-view-regression.mkv`, a lossless 60-second
+  trim of the confirmed canonical profile-side evaluation
 - Excluded guard: the current `artifacts/live-counter-clean.mkv` does not match
   its old 11-shot label fixture
 
@@ -24,7 +24,7 @@ Rules for every stage:
 - [x] Produce a named prediction file, JSON report, Markdown report, and
   comparison manifest.
 - [x] Compare every changed attempt, not only aggregate accuracy.
-- [x] Pass all three stable video guards.
+- [x] Pass the stable video guard.
 - [x] Keep the stage only if accuracy improves without a stable-video
   regression; otherwise record the result and revert the behavior.
 - [x] Do not adjust numerical thresholds unless recorded evidence establishes
@@ -125,7 +125,7 @@ misalign attempts despite contradictory launch evidence.
 
 Candidate result: rejected and reverted. The visual-anchor-first candidate
 scored 91.1% (214 correct) versus Stage 2's 92.7% (217 correct) and reduced the
-stable `sample2-trimmed-58s.mp4` guard from 48 attempts to 47. See
+historical three-view guard from 48 attempts to 47. See
 `artifacts/stage3-evidence-aware-cadence-manifest.json` for the scorecard and
 reconciliation review. The unchecked behavior and test items below were not
 retained.

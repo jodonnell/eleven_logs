@@ -192,16 +192,17 @@ regression with:
 ```sh
 npm run counter:replay
 npm run test:e2e:counter
-npm run test:e2e:counter:sample
+npm run test:e2e:counter:side-view
 ```
 
 Failures print a compact expected/actual result with shot timestamp and live
 publication delay. The Playwright checks exercise the served page and SSE
 stream with both deterministic messages and checked-in
-`sample2-trimmed-58s.mp4`, and
-verify that the visible counter recovers after a reset. The checked-in video
-fixture enforces tight feedback latency after cadence warm-up while still
-checking all warm-up outcomes. The shorter structured
+`side-view-regression.mkv`, and verify that the visible counter recovers after
+a reset. The 60-second fixture is a lossless trim of the user-confirmed
+canonical profile-side evaluation and covers 43 human-labeled attempts: 24
+hits and 19 misses. It enforces feedback latency after cadence warm-up while
+still checking all warm-up outcomes. The shorter structured
 unit fixture covers 5 hits, 2
 no-swings, 3 hits, 1 out, and 3 hits for fast normalizer iteration.
 
@@ -254,9 +255,9 @@ after the machine stops. Every live record is flushed immediately. Use
 `--live-stdout` to see it directly without the roughly one-second update delay
 that `tail -f` can add on macOS. At shutdown the file is rewritten using the
 analyzer's existing canonical batch normalization. It never loads the full
-video into memory. Every camera
-placement requires its own calibration: table corners, coordinate orientation,
-net, and the launcher region are deliberately not inferred from `sample.mp4` or
+video into memory. The supported profile-side camera placement requires its
+matching calibration: table corners, coordinate orientation, net, and the
+launcher region are deliberately not inferred from old-angle fixtures or
 reused across setups.
 
 The strict profile view captured in
@@ -278,14 +279,13 @@ follow the calibrated player/opponent orientation even when a camera view is
 mirrored. The corridor stays horizontally wide for edge-of-table and
 wide-angle paths while excluding room motion well above or below the table.
 
-Install the local Python dependencies once. Each run detects the green table,
-white `x=0` centre stripe, and the table-side (bottom) edge of the net from the
-first usable frame. That geometry stays in memory for the duration of the
-analysis; the normal workflow does not create or consume a calibration file:
+Install the local Python dependencies once. For the supported profile-side
+view, pass its reviewed calibration explicitly:
 
 ```sh
 python3 -m pip install --user opencv-python-headless numpy
-python3 scripts/analyze_video.py sample.mp4
+python3 scripts/analyze_video.py side-view-regression.mkv \
+  --calibration artifacts/live-2026-07-24-side-calibration.json
 ```
 
 For live input, use an OpenCV build whose FFmpeg backend supports SRT. When OBS

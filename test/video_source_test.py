@@ -79,9 +79,9 @@ class VideoSourceTest(unittest.TestCase):
         )
 
     def test_local_input_uses_seekable_opencv_source(self):
-        capture = FakeCapture("sample.mp4")
+        capture = FakeCapture("fixture.mp4")
         with patch("video_source.cv2.VideoCapture", return_value=capture):
-            source = open_video_source("sample.mp4")
+            source = open_video_source("fixture.mp4")
             source.seek_seconds(2)
             frame = source.read()
             source.close()
@@ -92,7 +92,7 @@ class VideoSourceTest(unittest.TestCase):
         self.assertTrue(capture.released)
 
     def test_realtime_file_input_paces_frames_against_wall_clock(self):
-        capture = FakeCapture("sample.mp4")
+        capture = FakeCapture("fixture.mp4")
         with (
             patch("video_source.cv2.VideoCapture", return_value=capture),
             patch(
@@ -101,7 +101,7 @@ class VideoSourceTest(unittest.TestCase):
             ),
             patch("video_source.time.sleep") as sleep,
         ):
-            source = open_video_source("sample.mp4", realtime=True)
+            source = open_video_source("fixture.mp4", realtime=True)
             source.read()
             source.read()
             source.close()

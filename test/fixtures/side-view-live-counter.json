@@ -1,0 +1,19 @@
+{
+  "video": "side-view-regression.mkv",
+  "calibration": "artifacts/live-2026-07-24-side-calibration.json",
+  "ground_truth": "test/fixtures/side-view-regression.labels.json",
+  "max_no_swing_publication_delay_seconds": 3.0,
+  "max_hit_publication_delay_seconds": 5.5,
+  "max_miss_publication_delay_seconds": 3.0,
+  "latency_assertions_start_sequence": 13,
+  "max_hit_contact_publication_delay_seconds": 1.5,
+  "max_miss_decision_publication_delay_seconds": 0.75,
+  "outcomes": [
+    "miss", "miss", "miss", "hit", "hit", "miss", "miss", "hit",
+    "miss", "miss", "miss", "hit", "hit", "hit", "miss", "hit",
+    "hit", "hit", "miss", "hit", "hit", "hit", "miss", "miss",
+    "hit", "miss", "miss", "hit", "hit", "miss", "hit", "hit",
+    "miss", "hit", "hit", "hit", "hit", "hit", "miss", "miss",
+    "hit", "miss", "hit"
+  ]
+}

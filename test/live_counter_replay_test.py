@@ -11,8 +11,9 @@ import cv2
 
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURE = ROOT / "test" / "fixtures" / "sample2-live-counter.json"
-VIDEO = ROOT / "sample2-trimmed-58s.mp4"
+FIXTURE = ROOT / "test" / "fixtures" / "side-view-live-counter.json"
+VIDEO = ROOT / "side-view-regression.mkv"
+CALIBRATION = ROOT / "artifacts" / "live-2026-07-24-side-calibration.json"
 QUEST_FIXTURE = ROOT / "test" / "fixtures" / "quest-2026-07-20-live-counter.json"
 QUEST_VIDEO = ROOT / "artifacts" / "quest-2026-07-20-live-counter.mkv"
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -27,12 +28,22 @@ from live_counter_replay import (  # noqa: E402
 from analyze_video import BounceEvent, LiveAttemptNormalizer  # noqa: E402
 
 
-@unittest.skipUnless(VIDEO.exists(), "sample2 video is a local fixture")
-class LiveCounterReplayTest(unittest.TestCase):
-    def test_clean_sample_replays_through_live_normalizer(self):
+@unittest.skipUnless(VIDEO.exists(), "side-view video is a local fixture")
+class SideViewLiveCounterReplayTest(unittest.TestCase):
+    def test_labeled_side_view_replays_through_live_normalizer(self):
         mismatches = run_replay(FIXTURE)
 
         self.assertEqual(mismatches, [], "\n" + "\n".join(mismatches))
+
+    def test_expected_ledger_is_derived_from_confirmed_human_labels(self):
+        fixture = json.loads(FIXTURE.read_text())
+        labels_path = ROOT / fixture["ground_truth"]
+        labels = json.loads(labels_path.read_text())["labels"]
+
+        self.assertEqual(
+            fixture["outcomes"],
+            [label["outcome"] for label in labels],
+        )
 
 
 @unittest.skipUnless(QUEST_VIDEO.exists(), "Quest failure capture is local")
@@ -170,16 +181,17 @@ class StructuredLiveNormalizerTest(unittest.TestCase):
         )
 
 
-@unittest.skipUnless((ROOT / "sample.mp4").exists(), "sample video is a fixture")
+@unittest.skipUnless(VIDEO.exists(), "side-view video is a fixture")
 class CleanRecordingTest(unittest.TestCase):
-    def test_clean_recording_preserves_source_size_and_is_bounded(self):
+    def test_clean_recording_losslessly_preserves_bounded_processed_frames(self):
         with tempfile.TemporaryDirectory() as directory:
             clean = Path(directory) / "clean.mkv"
             output = Path(directory) / "events.jsonl"
             subprocess.run([
                 sys.executable,
                 str(ROOT / "scripts" / "analyze_video.py"),
-                str(ROOT / "sample.mp4"),
+                str(VIDEO),
+                "--calibration", str(CALIBRATION),
                 "--output", str(output),
                 "--clean-recording", str(clean),
                 "--clean-recording-seconds", ".1",
@@ -188,39 +200,23 @@ class CleanRecordingTest(unittest.TestCase):
                 "--no-annotated",
             ], cwd=ROOT, capture_output=True, text=True, check=True)
 
+            source = cv2.VideoCapture(str(VIDEO))
             capture = cv2.VideoCapture(str(clean))
             try:
                 self.assertEqual(round(capture.get(cv2.CAP_PROP_FRAME_COUNT)), 6)
                 self.assertEqual(round(capture.get(cv2.CAP_PROP_FRAME_WIDTH)), 1024)
-                self.assertEqual(round(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)), 540)
+                self.assertEqual(round(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)), 576)
+                source_ok, source_frame = source.read()
+                clean_ok, clean_frame = capture.read()
+                self.assertTrue(source_ok)
+                self.assertTrue(clean_ok)
+                expected = cv2.resize(
+                    source_frame, (1024, 576), interpolation=cv2.INTER_AREA,
+                )
+                self.assertTrue((clean_frame == expected).all())
             finally:
+                source.release()
                 capture.release()
-
-    def test_lossless_processed_capture_replays_identical_records(self):
-        with tempfile.TemporaryDirectory() as directory:
-            direct = Path(directory) / "direct.jsonl"
-            clean = Path(directory) / "clean.mkv"
-            replay = Path(directory) / "replay.jsonl"
-            subprocess.run([
-                sys.executable,
-                str(ROOT / "scripts" / "analyze_video.py"),
-                str(ROOT / "sample2-trimmed-58s.mp4"),
-                "--output", str(direct),
-                "--clean-recording", str(clean),
-                "--clean-recording-seconds", "2",
-                "--clean-recording-start", "immediate",
-                "--end-seconds", "2",
-                "--no-annotated",
-            ], cwd=ROOT, capture_output=True, text=True, check=True)
-            subprocess.run([
-                sys.executable,
-                str(ROOT / "scripts" / "analyze_video.py"),
-                str(clean),
-                "--output", str(replay),
-                "--no-annotated",
-            ], cwd=ROOT, capture_output=True, text=True, check=True)
-
-            self.assertEqual(replay.read_text(), direct.read_text())
 
 
 if __name__ == "__main__":

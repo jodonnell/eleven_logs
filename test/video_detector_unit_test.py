@@ -931,31 +931,6 @@ class VideoDetectorUnitTest(unittest.TestCase):
             "insufficient travel toward opponent",
         )
 
-    def test_elevated_view_splits_continuous_delivery_and_return_track(self):
-        classifier = self.classifier({
-            "table_surface_y": 0.7786086,
-            "camera_geometry": "elevated_end_view",
-            "launcher_region": [580, 0, 950, 300],
-            "return_region": [0, 0, 500, 500],
-        })
-        delivery = [
-            (frame, 800 - frame * 20, 100, 0.0)
-            for frame in range(18)
-        ]
-        outbound = [
-            (18, 500, 100, 0.0),
-            (19, 550, 100, 0.0),
-            (20, 620, 100, 0.0),
-        ]
-
-        returned = classifier.perspective_round_trip_return(
-            delivery + outbound,
-        )
-
-        self.assertIsNotNone(returned)
-        self.assertEqual(returned[0][0], 17)
-        self.assertEqual(returned[-1][0], 20)
-
     def test_side_view_does_not_split_continuous_round_trip_track(self):
         classifier = self.classifier()
         path = [
@@ -1461,17 +1436,17 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertEqual(settings.motion_threshold, 9)
         self.assertEqual(settings.max_gap, 5)
 
-    def test_high_resolution_tv_telemetry_is_read(self):
-        cap = cv2.VideoCapture(str(ROOT / "sample3-trimmed-44s.mp4"))
-        cap.set(cv2.CAP_PROP_POS_MSEC, 100)
+    def test_side_view_tv_telemetry_is_read(self):
+        cap = cv2.VideoCapture(str(ROOT / "side-view-regression.mkv"))
+        cap.set(cv2.CAP_PROP_POS_MSEC, 3_000)
         ok, frame = cap.read()
         cap.release()
 
         self.assertTrue(ok)
-        reading = read_telemetry(frame, 6)
+        reading = read_telemetry(frame, 180)
         self.assertIsNotNone(reading)
-        self.assertEqual(reading.speed_mps, 11.4)
-        self.assertEqual(reading.spin_revolutions_per_second, 64)
+        self.assertEqual(reading.speed_mps, 10.5)
+        self.assertEqual(reading.spin_revolutions_per_second, 51)
         self.assertEqual(reading.spin_direction["label"], "up")
 
     def test_telemetry_title_ignores_stronger_blue_table_edge(self):
@@ -1548,32 +1523,6 @@ class VideoDetectorUnitTest(unittest.TestCase):
         self.assertEqual(classify_digit(six)[0], "6")
         self.assertEqual(classify_digit(seven)[0], "7")
         self.assertEqual(classify_digit(eight)[0], "8")
-
-    def test_low_resolution_tv_telemetry_is_read(self):
-        cap = cv2.VideoCapture(str(ROOT / "sample2-trimmed-58s.mp4"))
-        cap.set(cv2.CAP_PROP_POS_MSEC, 5_000)
-        ok, frame = cap.read()
-        cap.release()
-
-        self.assertTrue(ok)
-        reading = read_telemetry(frame, 300)
-        self.assertIsNotNone(reading)
-        self.assertEqual(reading.speed_mps, 9.6)
-        self.assertEqual(reading.spin_revolutions_per_second, 77)
-        self.assertEqual(reading.spin_direction["label"], "up-right")
-
-    def test_low_resolution_three_digit_spin_is_read(self):
-        cap = cv2.VideoCapture(str(ROOT / "sample2-trimmed-58s.mp4"))
-        cap.set(cv2.CAP_PROP_POS_MSEC, 3_400)
-        ok, frame = cap.read()
-        cap.release()
-
-        self.assertTrue(ok)
-        reading = read_telemetry(frame, 204)
-        self.assertIsNotNone(reading)
-        self.assertEqual(reading.speed_mps, 10.4)
-        self.assertEqual(reading.spin_revolutions_per_second, 109)
-        self.assertEqual(reading.spin_direction["label"], "up")
 
     def test_two_pixel_wide_hud_component_can_be_split(self):
         mask = np.full((1, 2), 255, dtype=np.uint8)
