@@ -2,11 +2,8 @@
   "name": "tt_logs",
   "version": "1.0.0",
   "description": "",
-  "main": "parser.js",
   "type": "module",
   "scripts": {
-    "build": "esbuild src/app.js --bundle --outfile=out.js",
-    "build:watch": "esbuild src/app.js --bundle --outfile=out.js --servedir=.",
     "check": "npm run lint && npm test -- --runInBand && npm run test:video && npm run test:e2e:counter && npm run test:e2e:counter:side-view",
     "capture:evaluation": "python3 scripts/capture_evaluation.py",
     "counter": "python3 scripts/live_counter_server.py",
@@ -17,11 +14,9 @@
     "counter:quest:debug": "npm run counter:quest -- --clean-recording artifacts/live-counter-clean.mkv --clean-recording-seconds 120 --clean-recording-start immediate --clean-recording-codec mjpeg",
     "counter:replay": "python3 scripts/live_counter_replay.py test/fixtures/side-view-live-counter.json",
     "counter:side-view:debug": "python3 scripts/live_counter_server.py side-view-regression.mkv --realtime --wait-for-subscriber --calibration artifacts/live-2026-07-24-side-calibration.json",
-    "console": "node src/stats.js",
-    "deploy": "./bin/deploy.sh",
-    "lint": "eslint src/*.js test/*.js e2e/*.js *.config.js",
+    "lint": "eslint test/*.js e2e/*.js *.config.js",
     "label:evaluation": "python3 scripts/label_evaluation.py",
-    "prettier": "prettier src/*.js test/*.js --write",
+    "prettier": "prettier test/*.js --write",
     "test": "jest ./test/",
     "test:e2e:counter": "playwright test e2e/live-counter.spec.js",
     "test:e2e:counter:side-view": "playwright test e2e/live-counter-side-view.spec.js --config playwright.side-view.config.js",
@@ -30,10 +25,6 @@
   },
   "author": "Jacob",
   "license": "ISC",
-  "dependencies": {
-    "heatmap.js": "^2.0.5",
-    "lodash": "^4.17.21"
-  },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
     "esbuild": "^0.19.11",

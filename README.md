@@ -1,25 +1,15 @@
-# Download your logs off your device
-For the quest plug you into your computer and click the popup that says allow this pc to connect.
-Then navigate in explorer to `\This PC\Quest 3\Internal shared storage\Android\data\quest.eleven.forfunlabs\logs`
+# Eleven Practice
 
-These logs get deleted after some period of time so if you want to keep track of all your data you will need to copy them to a folder on your computer.  Click the upload button.  The logs aren't actually uploaded, they are processed locally in your browser.
+## Run tests
 
-# run console version
-npm run console
-
-# run build
-npm run build
-
-# run build dev server
-npm run build:watch
-
-# run tests
 npm run test
 
-# prettier
+## Format JavaScript tests
+
 npm run prettier
 
-# lint
+## Lint
+
 npm run lint
 
 ## Ball-machine video analysis
@@ -314,9 +304,8 @@ magenta physical net-base line, and projected log-space grid must align with
 the table. An explicitly reviewed calibration can still be exported with
 `scripts/auto_calibrate.py` and supplied with `--calibration` for diagnostic
 work, but automatic analysis does not cache one. The geometry
-maps to the same
-player-relative convention used by `src/parser.js`: `posz > 0` is the
-far/opponent side and `posy` is the 0.7786m table surface. The physical image
+uses a player-relative convention: `posz > 0` is the far/opponent side and
+`posy` is the 0.7786m table surface. The physical image
 direction of each axis is per-camera calibration data, never a global rule.
 An explicitly supplied JSON is rejected if its `image_size` does not match the
 input video. When requested, the generated annotated video shows
